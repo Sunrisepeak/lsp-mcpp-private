@@ -113,6 +113,7 @@ private:
     std::unique_ptr<lsp::Connection> connection_;
     std::shared_ptr<lspmcpp::platform::Channel<Json>> inbox_ { std::make_shared<lspmcpp::platform::Channel<Json>>() };
     std::int64_t nextId_ { 1 };
+    int unanswered_ { 0 }; // consecutive requests that reached their deadline
     bool verbose_ { false };
 
 public:
@@ -160,6 +161,7 @@ public:
             auto message = inbox_->pop_until(deadline);
             if (!message) break;
             if (lsp::kind_of(*message) == lsp::Kind::response && (*message)["id"] == Json(id)) {
+                unanswered_ = 0;
                 if (message->contains("error")) {
                     if (verbose_) say("  error response to {}: {}", method, lsp::dump((*message)["error"]));
                     return Json(nullptr);
@@ -168,7 +170,20 @@ public:
             }
             dispatch(*message);
         }
+        if (!inbox_->closed()) ++unanswered_;
         return std::nullopt;
+    }
+
+    // Why the remaining checks cannot run, or empty while the server is usable:
+    // a server that exited, or one that let two requests in a row reach their
+    // deadline, would only make every later check wait out its own.
+    std::string unusable() {
+        if (inbox_->closed() && inbox_->size() == 0) {
+            const auto code = connection_->exit_code();
+            return code ? std::format("the server exited with status {}", *code) : std::string { "the server closed its output" };
+        }
+        if (unanswered_ >= 2) return std::format("the server answered none of the last {} requests", unanswered_);
+        return {};
     }
 
     // Processes incoming messages until `done` holds or the deadline passes.
@@ -518,10 +533,15 @@ int run(const Options& options) {
     Scenario runner { client, workspace, options.timeout };
     int failures { advertised ? 0 : 1 };
     for (const auto& check : scenario.value("checks", Json::array())) {
-        const auto started = Clock::now();
-        auto [ok, detail] = runner.run(check);
         const std::string id { check.value("id", std::string { "-" }) };
         const bool optional { check.value("optional", false) };
+        if (const auto reason = client.unusable(); !reason.empty()) {
+            if (!optional) ++failures;
+            say("{} {} {} (not run) {}", optional ? "SKIP" : "FAIL", id, check.value("kind", std::string {}), reason);
+            continue;
+        }
+        const auto started = Clock::now();
+        auto [ok, detail] = runner.run(check);
         if (!ok && !optional) ++failures;
         say("{} {} {} ({:.1f}s) {}", ok ? "PASS" : (optional ? "SKIP" : "FAIL"), id, check.value("kind", std::string {}),
                      std::chrono::duration<double>(Clock::now() - started).count(), detail);
