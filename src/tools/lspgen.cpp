@@ -218,20 +218,25 @@ int generate(const std::string& metaModelPath, const std::string& outDirectory) 
 int main(int argc, char* argv[]) {
     using namespace mcpplibs;
     int status { 0 };
-    auto app = cmdline::App("lsp-mcpp-lspgen")
-        .version(std::string { lspmcpp::base::VERSION })
-        .description("Generate lspmcpp.lsp.protocol from the LSP meta model")
-        .subcommand("version")
-            .description("Print the version")
-            .action([](const cmdline::ParsedArgs&) { std::println("lsp-mcpp-lspgen {}", lspmcpp::base::VERSION); })
-        .subcommand("generate")
-            .description("Write protocol.cppm and protocol.cpp")
-            .option("meta-model").takes_value().help("Path to metaModel.json")
-            .option("out").takes_value().help("Output directory")
-            .action([&](const cmdline::ParsedArgs& args) {
-                status = generate(args.value("meta-model").value_or("tools/lspgen/metaModel-3.18.json"),
-                                  args.value("out").value_or("src/lsp"));
-            });
+    // Built statement by statement: builders keep pointers into the App they extend.
+    cmdline::App app { "lsp-mcpp-lspgen" };
+    (void)app.version(std::string { lspmcpp::base::VERSION });
+    (void)app.description("Generate lspmcpp.lsp.protocol from the LSP meta model");
+
+    cmdline::App versionCommand { "version" };
+    (void)versionCommand.description("Print the version");
+    (void)versionCommand.action([](const cmdline::ParsedArgs&) { std::println("lsp-mcpp-lspgen {}", lspmcpp::base::VERSION); });
+    (void)app.subcommand(std::move(versionCommand));
+
+    cmdline::App generateCommand { "generate" };
+    (void)generateCommand.description("Write protocol.cppm and protocol.cpp");
+    (void)generateCommand.option("meta-model").takes_value().help("Path to metaModel.json");
+    (void)generateCommand.option("out").takes_value().help("Output directory");
+    (void)generateCommand.action([&](const cmdline::ParsedArgs& args) {
+        status = generate(args.value("meta-model").value_or("tools/lspgen/metaModel-3.18.json"), args.value("out").value_or("src/lsp"));
+    });
+    (void)app.subcommand(std::move(generateCommand));
+
     const int parsed { app.run(argc, argv) };
     return parsed != 0 ? parsed : status;
 }
