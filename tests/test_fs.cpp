@@ -1,5 +1,5 @@
 import std;
-import boost.ut;
+import lspmcpp.testing;
 import lspmcpp.base.path;
 import lspmcpp.platform.fs;
 import lspmcpp.platform.dirs;
@@ -8,7 +8,7 @@ namespace fs = lspmcpp::platform::fs;
 namespace base = lspmcpp::base;
 
 int main() {
-    using namespace boost::ut;
+    using namespace lspmcpp::testing;
     const std::string root { base::join_path(lspmcpp::platform::dirs::temp_directory(),
         std::format("lsp-mcpp-test-fs-{}", std::chrono::steady_clock::now().time_since_epoch().count())) };
 
@@ -83,4 +83,6 @@ int main() {
 
     fs::remove_all(root);
     "removal is complete"_test = [&] { expect(!fs::exists(root)); };
+
+    return report();
 }

@@ -1,5 +1,5 @@
 import std;
-import boost.ut;
+import lspmcpp.testing;
 import lspmcpp.os;
 import lspmcpp.base.path;
 import lspmcpp.base.uri;
@@ -7,7 +7,7 @@ import lspmcpp.base.uri;
 using namespace lspmcpp::base;
 
 int main() {
-    using namespace boost::ut;
+    using namespace lspmcpp::testing;
 
     "POSIX URIs round-trip with percent encoding"_test = [] {
         expect(uri_to_path("file:///home/u/a%20b.cpp", PathStyle::posix).value_or("") == "/home/u/a b.cpp");
@@ -35,4 +35,6 @@ int main() {
             expect(NATIVE_PATH_STYLE == PathStyle::posix);
         }
     };
+
+    return report();
 }

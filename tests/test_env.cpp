@@ -1,5 +1,5 @@
 import std;
-import boost.ut;
+import lspmcpp.testing;
 import lspmcpp.os;
 import lspmcpp.base.path;
 import lspmcpp.platform.env;
@@ -9,7 +9,7 @@ namespace env = lspmcpp::platform::env;
 namespace base = lspmcpp::base;
 
 int main() {
-    using namespace boost::ut;
+    using namespace lspmcpp::testing;
 
     "the environment is visible"_test = [] {
         expect(!env::variables().empty());
@@ -44,4 +44,6 @@ int main() {
         expect(base::is_absolute_path(cache)) << cache;
         expect(cache.ends_with("lsp-mcpp") || env::get("LSP_MCPP_CACHE_DIR").has_value()) << cache;
     };
+
+    return report();
 }

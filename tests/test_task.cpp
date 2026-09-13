@@ -1,9 +1,9 @@
 import std;
-import boost.ut;
+import lspmcpp.testing;
 import lspmcpp.platform.task;
 
 int main() {
-    using namespace boost::ut;
+    using namespace lspmcpp::testing;
     using lspmcpp::platform::Channel;
 
     "values cross threads in order"_test = [] {
@@ -38,4 +38,6 @@ int main() {
         expect(!channel.pop().has_value());
         expect(!channel.push(1));
     };
+
+    return report();
 }

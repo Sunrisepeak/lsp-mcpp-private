@@ -1,6 +1,6 @@
 // S1 database, P3286 metadata, S4 kits and S2 discovery.
 import std;
-import boost.ut;
+import lspmcpp.testing;
 import nlohmann.json;
 import lspmcpp.base.path;
 import lspmcpp.platform.fs;
@@ -37,7 +37,7 @@ std::string scratch(std::string_view name) {
 } // namespace
 
 int main() {
-    using namespace boost::ut;
+    using namespace lspmcpp::testing;
     const std::string root { repository_root() };
 
     "the level 3 GCC example loads"_test = [&] {
@@ -196,4 +196,6 @@ int main() {
         expect(request["profile-version"] == "0.2.0");
         expect(request["files"].size() == 1u);
     };
+
+    return report();
 }

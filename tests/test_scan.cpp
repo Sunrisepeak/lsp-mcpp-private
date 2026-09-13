@@ -1,5 +1,5 @@
 import std;
-import boost.ut;
+import lspmcpp.testing;
 import lspmcpp.base.text;
 import lspmcpp.spec.database;
 import lspmcpp.project.scan;
@@ -10,7 +10,7 @@ using lspmcpp::base::Range;
 using lspmcpp::spec::Role;
 
 int main() {
-    using namespace boost::ut;
+    using namespace lspmcpp::testing;
 
     "the fixture's primary interface"_test = [] {
         const auto result = scan_source("export module hello.greet;\nexport import :detail;\nimport std;\n\n"
@@ -120,4 +120,6 @@ import real;
         expect(is_cxx_source_name("/a/b.cppm") && is_cxx_source_name("x.CPP") && is_cxx_source_name("m.ixx"));
         expect(!is_cxx_source_name("a.h") && !is_cxx_source_name("CMakeLists.txt"));
     };
+
+    return report();
 }

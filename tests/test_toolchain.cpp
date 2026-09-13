@@ -1,6 +1,6 @@
 // Compile databases, driver classification and probing with recorded answers.
 import std;
-import boost.ut;
+import lspmcpp.testing;
 import nlohmann.json;
 import lspmcpp.base.error;
 import lspmcpp.platform.process;
@@ -36,7 +36,7 @@ toolchain::Runner recorded(std::map<std::string, std::string> answers, std::map<
 } // namespace
 
 int main() {
-    using namespace boost::ut;
+    using namespace lspmcpp::testing;
 
     "POSIX command splitting"_test = [] {
         using project::CommandSyntax;
@@ -195,4 +195,6 @@ int main() {
         expect(restored->gccInstallDirectory == "/lib/gcc");
         expect(restored->toolchain.stdlib->moduleMetadata == "/m.json");
     };
+
+    return report();
 }

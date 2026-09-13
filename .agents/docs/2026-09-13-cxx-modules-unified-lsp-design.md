@@ -135,7 +135,7 @@ lsp-mcpp 采用的做法：
 | D21 | 规范放在仓库根目录的 `specs/`，设计、调研、实验等文档放在 `.agents/docs/` | 2026-09-14 |
 | D22 | 语义工具包命名为 `lsp-mcpp-kit`（原 Q1） | 2026-09-14 |
 | D23 | 服务端核心代码不使用头文件与宏：全部是 `.cppm` 接口 + `.cpp` 实现单元，平台差异用 `if constexpr` 判断，平台常量由按目标选择的 `lspmcpp.os` 模块提供 | 2026-09-14 |
-| D24 | 通用库优先复用 mcpp 生态（mcpp-index）中的模块化库，不使用 compat 形态的包：JSON 用 `nlohmann.json`，命令行用 `mcpplibs.cmdline`，单元测试用 `boost.ut`（见 12.8） | 2026-09-14 |
+| D24 | 通用库优先复用 mcpp 生态（mcpp-index）中的模块化库，不使用 compat 形态的包：JSON 用 `nlohmann.json`，命令行用 `mcpplibs.cmdline`；`boost.ut` 因 Windows 主机编译崩溃暂不采用（见 12.8、12.9） | 2026-09-14 |
 | D25 | openkal 体系的问题分两类处理：缺陷级别直接向对应仓库提 PR 修复；需求级别只记录，不改动 openkal 规范（见 12.9） | 2026-09-14 |
 
 ## 4. 问题、范围与平台矩阵
@@ -612,7 +612,7 @@ starting ──> loading ──> preparing ──> ready
 | LSP 类型 | 从 LSP 3.18 官方 metaModel.json 生成 |
 | JSON | mcpp-index 的模块化库 `nlohmann.json`（`import nlohmann.json;`） |
 | 命令行 | mcpp-index 的模块化库 `mcpplibs.cmdline`（`import mcpplibs.cmdline;`） |
-| 单元测试 | mcpp-index 的模块化库 `boost.ut`，作为 dev-dependency（`import boost.ut;`），由 `mcpp test` 发现 |
+| 单元测试 | 仓库内的测试支持包 `testing/`（模块 `lspmcpp.testing`），以 path dev-dependency 引入，由 `mcpp test` 发现；`boost.ut` 因 Windows 主机编译崩溃未采用（12.9 K5） |
 | 并发 | 线程 + 阻塞流 + 主线程消息队列 |
 | VS Code 扩展 | TypeScript + vscode-languageclient |
 
@@ -631,7 +631,7 @@ starting ──> loading ──> preparing ──> ready
 |---|---|---|---|
 | JSON | `nlohmann:json` | 3.12.0 | 采用；三个目标构建通过（依赖 12.9 的修复） |
 | 命令行 | `mcpplibs:cmdline` | 0.0.2 | 采用；纯模块，三个目标构建通过 |
-| 单元测试 | `boost-ext:ut` | 2.3.1 | 采用，作为 dev-dependency |
+| 单元测试 | `boost-ext:ut` | 2.3.1 | 不采用；Linux 与交叉构建通过，Windows 主机上 clang 22.1.8 编译该模块时崩溃（12.9 K5）。测试改用仓库内约 150 行的 `lspmcpp.testing`，接口形状与 ut 相同，便于将来切回 |
 | TOML | `marzer:tomlplusplus` | — | 不采用；Windows 目标构建失败（见 12.9 第 2 项），读取 `mcpp.toml` 改为调用 mcpp 自身的机器输出 |
 
 ### 12.9 openkal 体系问题的处理与记录
@@ -648,6 +648,7 @@ starting ──> loading ──> preparing ──> ready
 | K1 | 缺陷 | 含标准库头文件的翻译单元（所有头文件库的模块封装都是如此，例如 `nlohmann.json`）在 Linux 目标构建通过，在 `x86_64-windows-gnu` 与 `aarch64-macos` 目标报 `no member named 'strtof_l' in the global namespace` | libc++ 的 musl 本地化支持调用 `strtof_l`、`strtod_l`、`strtold_l`、`vasprintf`，musl 只在 `_GNU_SOURCE` 下声明它们；Clang 只在 Linux 目标为 C++ 预定义 `_GNU_SOURCE`。`import std` 不暴露该问题，因为 std 模块用运行时包自己的参数编译 | 已提 PR：openkal-llvm-runtime 0.9.2 在 `__config_site` 中声明 `_GNU_SOURCE`，CI 增加两个交叉目标的 `examples/cxx` 构建；合入后向 mcpp-index 提交 0.9.2 |
 | K2 | 缺陷 | `marzer:tomlplusplus` 在 `x86_64-windows-gnu` 目标报 `__mingw_aligned_malloc` 未声明 | Clang 自带的 `mm_malloc.h` 在 `__MINGW32__` 下调用 MinGW CRT 的 `__mingw_aligned_malloc`，openkal-musl 的 Windows 实现没有提供 | 已记录；本项目不依赖 tomlplusplus，暂不修复，待确认修复位置（openkal-musl 补函数，或运行时包调整 `mm_malloc.h` 路径）后再提 PR |
 | K3 | 需求 | openkal 没有 poll/select 类多路复用 | 规范范围 | 只记录；服务端用线程加阻塞读（12.3） |
+| K5 | 缺陷（生态，非 openkal） | `boost-ext:ut` 2.3.1 的模块 `boost.ut` 在 windows-2022 主机上以 `x86_64-windows-gnu` 为目标编译时，clang 22.1.8 在代码生成阶段崩溃（`Exception Code: 0xC0000005`），dev 与 release 配置都复现；同一命令在 Linux 主机交叉编译通过 | 未定位；只在 Windows 主机出现，指向 Windows 版 clang 本身 | 已记录；测试不依赖 `boost.ut`。定位到根因后向对应仓库（LLVM 或 mcpp-index 的包描述）报告 |
 | K4 | 需求 | `kal_process_spawn` 的 `envp` 为空时子进程得到空环境，而不是继承父进程环境 | 规范语义 | 只记录；平台层显式传入从 `kal_env_var_at` 读到的完整环境 |
 
 ## 13. 关键流程

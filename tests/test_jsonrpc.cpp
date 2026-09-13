@@ -1,5 +1,5 @@
 import std;
-import boost.ut;
+import lspmcpp.testing;
 import nlohmann.json;
 import lspmcpp.lsp.jsonrpc;
 import lspmcpp.lsp.protocol;
@@ -7,7 +7,7 @@ import lspmcpp.lsp.protocol;
 using namespace lspmcpp::lsp;
 
 int main() {
-    using namespace boost::ut;
+    using namespace lspmcpp::testing;
 
     "frames split across feeds"_test = [] {
         const std::string frame { encode_frame(make_request(1, "initialize", Json { { "rootUri", nullptr } })) };
@@ -100,4 +100,6 @@ int main() {
         expect(markup_kind::MARKDOWN == "markdown");
         expect(std::ranges::is_sorted(methods(), {}, &MethodInfo::name));
     };
+
+    return report();
 }

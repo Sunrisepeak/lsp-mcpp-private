@@ -66,20 +66,6 @@ jobs:
       - name: Build
         run: mcpp build ${{ matrix.target }}
 
-      - name: Probe - unit tests in the release profile (Windows)
-        if: runner.os == 'Windows'
-        continue-on-error: true
-        run: mcpp test ${{ matrix.target }} --profile release test_os
-
-      - name: Unit tests
-        run: mcpp test ${{ matrix.target }}
-
-      - name: Generated protocol is fresh
-        if: runner.os == 'Linux'
-        run: |
-          mcpp run lsp-mcpp-lspgen -- generate --meta-model tools/lspgen/metaModel-3.18.json --out src/lsp
-          git diff --exit-code src/lsp
-
       - name: Executables run
         run: |
           set -euo pipefail
@@ -88,6 +74,24 @@ jobs:
             echo "$exe -> $path"
             "$path" version
           done
+
+      - name: Unit tests
+        run: mcpp test ${{ matrix.target }}
+
+      - name: Diagnose a crashing test binary (macOS)
+        if: failure() && runner.os == 'macOS'
+        run: |
+          bin=$(find target -type f -name test_os -path '*/bin/*' | head -1)
+          echo "binary: $bin"
+          otool -L "$bin" || true
+          codesign -dv "$bin" 2>&1 || true
+          lldb --batch -k 'register read pc lr sp' -k 'image lookup --address $lr' -k 'thread backtrace all' -o run -- "$bin" 2>&1 | tail -60 || true
+
+      - name: Generated protocol is fresh
+        if: runner.os == 'Linux'
+        run: |
+          mcpp run lsp-mcpp-lspgen -- generate --meta-model tools/lspgen/metaModel-3.18.json --out src/lsp
+          git diff --exit-code src/lsp
 
   cross-build:
     name: cross-build from Linux (${{ matrix.target }})

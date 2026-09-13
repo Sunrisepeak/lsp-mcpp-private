@@ -1,11 +1,11 @@
 import std;
-import boost.ut;
+import lspmcpp.testing;
 import lspmcpp.base.text;
 
 using namespace lspmcpp::base;
 
 int main() {
-    using namespace boost::ut;
+    using namespace lspmcpp::testing;
 
     "UTF-16 columns count surrogate pairs twice"_test = [] {
         const std::string_view text { "a\xF0\x9F\x98\x80" "b" };   // a😀b
@@ -44,4 +44,6 @@ int main() {
         expect(is_identifier_start('_') && is_identifier_start('z') && !is_identifier_start('1'));
         expect(is_identifier_char('1') && !is_identifier_char('.'));
     };
+
+    return report();
 }

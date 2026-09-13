@@ -1,6 +1,6 @@
 // Project detection, inference from sources and compile databases, and model loading.
 import std;
-import boost.ut;
+import lspmcpp.testing;
 import nlohmann.json;
 import lspmcpp.base.path;
 import lspmcpp.platform.fs;
@@ -46,7 +46,7 @@ void write_fixture(const std::string& root) {
 } // namespace
 
 int main() {
-    using namespace boost::ut;
+    using namespace lspmcpp::testing;
 
     "detection order"_test = [] {
         const std::string mcpp { make_root("mcpp") };
@@ -154,4 +154,6 @@ int main() {
         expect(p::workspace_key("/home/u/project") != p::workspace_key("/home/u/project2"));
         expect(p::workspace_key("/home/u/project").starts_with("project-"));
     };
+
+    return report();
 }

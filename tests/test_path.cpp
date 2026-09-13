@@ -1,11 +1,11 @@
 import std;
-import boost.ut;
+import lspmcpp.testing;
 import lspmcpp.base.path;
 
 using namespace lspmcpp::base;
 
 int main() {
-    using namespace boost::ut;
+    using namespace lspmcpp::testing;
     constexpr auto WIN { PathStyle::windows };
     constexpr auto POSIX { PathStyle::posix };
 
@@ -44,4 +44,6 @@ int main() {
         expect(path_key("C:/A", true) == "c:/a");
         expect(same_path("/a/B", "/a/B", false) && !same_path("/a/B", "/a/b", false));
     };
+
+    return report();
 }

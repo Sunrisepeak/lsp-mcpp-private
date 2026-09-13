@@ -33,8 +33,8 @@ cmdline              = "0.0.2"
 [dependencies.nlohmann]
 json = "3.12.0"
 
-[dev-dependencies.boost-ext]
-ut = "2.3.1"
+[dev-dependencies]
+lsp-mcpp-testing = { path = "testing" }
 
 # Platform facts are a package chosen by the target, consumed with `if constexpr`.
 [target.'cfg(os = "linux")'.dependencies]

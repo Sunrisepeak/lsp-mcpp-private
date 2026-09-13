@@ -1,6 +1,6 @@
 // Dialect translation rules (design section 14.4) and engine database plans.
 import std;
-import boost.ut;
+import lspmcpp.testing;
 import nlohmann.json;
 import lspmcpp.base.path;
 import lspmcpp.platform.fs;
@@ -44,7 +44,7 @@ ToolchainFacts gcc_facts(std::string target = "x86_64-linux-gnu") {
 } // namespace
 
 int main() {
-    using namespace boost::ut;
+    using namespace lspmcpp::testing;
 
     "P1: GCC on Linux"_test = [] {
         const auto facts = gcc_facts();
@@ -225,4 +225,6 @@ int main() {
         expect(contains(std.arguments, "/kit/share/libc++/v1"));
         expect(plan.issues.empty());
     };
+
+    return report();
 }

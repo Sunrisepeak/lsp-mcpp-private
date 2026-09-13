@@ -1,7 +1,7 @@
 // The test program starts copies of itself as the child, so the same test runs
 // on every system without depending on a shell or a system utility.
 import std;
-import boost.ut;
+import lspmcpp.testing;
 import lspmcpp.base.path;
 import lspmcpp.platform.process;
 import lspmcpp.platform.env;
@@ -61,7 +61,7 @@ int main() {
     // A child leaves without running the test framework's report at exit.
     if (arguments.size() >= 2 && arguments[1].starts_with("--")) std::_Exit(child_main(arguments));
 
-    using namespace boost::ut;
+    using namespace lspmcpp::testing;
     const std::string self { self_path() };
 
     "self path is an existing absolute file"_test = [&] {
@@ -142,4 +142,6 @@ int main() {
     "every absolute path of this program matches a preopen"_test = [&] {
         expect(platform::match_preopen(self).has_value()) << self;
     };
+
+    return report();
 }
