@@ -49,11 +49,17 @@ int main() {
         expect(content.has_value() && content->size() == 100000u);
     };
 
-    "a large atomic write leaves no temporary file"_test = [&] {
+    "a large atomic write replaces an existing file"_test = [&] {
         const std::string file { base::join_path(root, "a/data.json") };
         expect(fatal(fs::write_file_atomic(file, std::string(100000, 'y')).has_value()));
-        auto content = fs::read_file(file);
+    };
+
+    "the large replacement reads back"_test = [&] {
+        auto content = fs::read_file(base::join_path(root, "a/data.json"));
         expect(content.has_value() && content->size() == 100000u);
+    };
+
+    "a directory lists its children and no temporary file"_test = [&] {
         std::vector<std::string> names;
         for (const auto& entry : fs::list_directory(base::join_path(root, "a"))) names.emplace_back(base::file_name(entry));
         const std::vector<std::string> expected { "b", "data.json", "large.bin", "small.txt" };
