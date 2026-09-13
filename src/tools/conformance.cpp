@@ -63,11 +63,28 @@ void copy_tree(const std::string& from, const std::string& to) {
     }
 }
 
-// Runs a prepare step in the workspace; "{exe}" expands to the platform suffix.
+// "{exe}" is the executable suffix; "{env:NAME|fallback}" is a variable or the fallback.
+std::string expand(std::string word) {
+    word = base::replace_all(word, "{exe}", lspmcpp::os::EXECUTABLE_SUFFIX);
+    for (std::size_t at { word.find("{env:") }; at != std::string::npos; at = word.find("{env:", at)) {
+        const std::size_t close { word.find('}', at) };
+        if (close == std::string::npos) break;
+        const std::string body { word.substr(at + 5, close - at - 5) };
+        const std::size_t bar { body.find('|') };
+        const std::string name { body.substr(0, bar) };
+        std::string value { lspmcpp::platform::env::get(name).value_or("") };
+        if (value.empty() && bar != std::string::npos) value = body.substr(bar + 1);
+        word.replace(at, close - at + 1, value);
+        at += value.size();
+    }
+    return word;
+}
+
+// Runs a prepare step in the workspace.
 bool run_prepare(const Json& command, const std::string& workspace, bool verbose) {
     if (!command.is_array() || command.empty()) return true;
     std::vector<std::string> argv;
-    for (const auto& word : command) argv.push_back(base::replace_all(word.get<std::string>(), "{exe}", lspmcpp::os::EXECUTABLE_SUFFIX));
+    for (const auto& word : command) argv.push_back(expand(word.get<std::string>()));
     std::string program { argv.front() };
     if (!base::is_absolute_path(program)) {
         auto found = lspmcpp::platform::env::find_executable(program);

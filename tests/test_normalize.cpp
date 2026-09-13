@@ -120,6 +120,7 @@ int main() {
         (void)lspmcpp::platform::fs::create_directories(root);
         const std::map<std::string, std::string> sources {
             { "/p/src/main.cpp", "import std;\nimport hello.greet;\nimport missing.module;\nint main() {}\n" },
+            { "/p/src/app.cpp", "import std;\nimport hello.greet;\nint run() { return 0; }\n" },
             { "/p/src/greet.cppm", "export module hello.greet;\nexport import :detail;\nimport std;\n" },
             { "/p/src/detail.cppm", "export module hello.greet:detail;\nimport std;\n" },
             { "/p/src/broken.cppm", "export module broken;\nimport nowhere;\n" },
@@ -160,7 +161,8 @@ int main() {
         const auto plan = n::plan_engine(input);
         std::set<std::string> files;
         for (const auto& entry : plan.entries) files.insert(entry.file);
-        expect(files.contains("/p/src/main.cpp")) << "non-module units are always written";
+        expect(!files.contains("/p/src/main.cpp")) << "a unit importing a module that cannot resolve is left out";
+        expect(files.contains("/p/src/app.cpp")) << "a non-module unit whose imports resolve is written";
         expect(files.contains("/p/src/greet.cppm") && files.contains("/p/src/detail.cppm"));
         expect(!files.contains("/p/src/broken.cppm")) << "an interface with an unresolvable import is left out";
         expect(!files.contains("/p/src/user.cppm")) << "and so is an interface importing it";

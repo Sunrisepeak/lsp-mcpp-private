@@ -180,7 +180,9 @@ EnginePlan plan_engine(const PlanInput& input) {
                 resolved = resolution.from == spec::ResolvedFrom::module_metadata;
             }
             if (resolved) continue;
-            if (spec::is_importable(candidates[i].role)) excluded[i] = true;
+            // Any unit with an import that cannot resolve stays out of the engine database:
+            // clangd 23.1 can stop answering for it (experiment E13), module unit or not.
+            excluded[i] = true;
             if (reported.insert(candidates[i].source + "\n" + name).second) {
                 plan.issues.push_back(PlanIssue { "unresolved-module", std::format("module {} cannot be resolved", name), candidates[i].source, name });
             }
@@ -189,7 +191,7 @@ EnginePlan plan_engine(const PlanInput& input) {
     for (bool changed { true }; changed;) {
         changed = false;
         for (std::size_t i { 0 }; i < candidates.size(); ++i) {
-            if (excluded[i] || !spec::is_importable(candidates[i].role)) continue;
+            if (excluded[i]) continue;
             for (const auto& name : candidates[i].required) {
                 const auto it = providers.find(name);
                 if (it == providers.end()) continue;

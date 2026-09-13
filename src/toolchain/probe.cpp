@@ -76,6 +76,36 @@ std::optional<spec::Stdlib> stdlib_from_manifest(std::string_view manifest) {
     return spec::Stdlib { "other", {}, base::normalize_path(manifest) };
 }
 
+// <prefix>/include/c++/v1 among the arguments -> <prefix>/lib[/<target>]/libc++.modules.json when it exists.
+std::optional<std::string> manifest_from_include_paths(std::span<const std::string> arguments, std::string_view target) {
+    for (std::size_t i { 0 }; i < arguments.size(); ++i) {
+        std::string_view value { arguments[i] };
+        if (value == "-isystem" || value == "-I") {
+            if (i + 1 >= arguments.size()) break;
+            value = arguments[++i];
+        } else if (value.starts_with("-isystem")) {
+            value.remove_prefix(8);
+        } else if (value.starts_with("-I")) {
+            value.remove_prefix(2);
+        } else {
+            continue;
+        }
+        const std::string directory { base::normalize_path(value) };
+        if (!directory.ends_with("/include/c++/v1")) continue;
+        const std::string prefix { base::parent_path(base::parent_path(base::parent_path(directory))) };
+        std::vector<std::string> candidates;
+        if (!target.empty()) candidates.push_back(base::join_path(prefix, std::format("lib/{}/libc++.modules.json", target)));
+        candidates.push_back(base::join_path(prefix, "lib/libc++.modules.json"));
+        for (const auto& child : platform::fs::list_directory(base::join_path(prefix, "lib"))) {
+            candidates.push_back(base::join_path(child, "libc++.modules.json"));
+        }
+        for (const auto& candidate : candidates) {
+            if (platform::fs::is_regular_file(candidate)) return candidate;
+        }
+    }
+    return std::nullopt;
+}
+
 void probe_gcc(std::string_view driver, std::span<const std::string> relevant, const Runner& runner, ToolchainFacts& facts) {
     if (auto target = query(runner, driver, relevant, { "-dumpmachine" })) facts.toolchain.target = *target;
     else facts.problems.push_back(target.error().message);
@@ -111,6 +141,8 @@ void probe_clang(std::string_view driver, std::span<const std::string> relevant,
     if (auto manifest = query(runner, driver, relevant, { "-print-library-module-manifest-path" });
         manifest && is_manifest_answer(*manifest, "")) {
         facts.toolchain.stdlib = stdlib_from_manifest(*manifest);
+    } else if (auto libcxx = manifest_from_include_paths(relevant, facts.toolchain.target)) {
+        facts.toolchain.stdlib = spec::Stdlib { "libc++", {}, *libcxx };
     } else if (auto gnu = query(runner, driver, relevant, { "-print-file-name=libstdc++.modules.json" });
                gnu && is_manifest_answer(*gnu, "libstdc++.modules.json")) {
         facts.toolchain.stdlib = spec::Stdlib { "libstdc++", {}, base::normalize_path(*gnu) };
@@ -185,6 +217,17 @@ std::vector<std::string> probe_relevant_arguments(std::span<const std::string> a
         if (withValue && i + 1 < arguments.size()) {
             relevant.emplace_back(argument);
             relevant.push_back(arguments[++i]);
+            continue;
+        }
+        // A standard library selected by explicit include paths (-nostdinc++ -isystem <prefix>/include/c++/v1).
+        const bool includeOption { argument == "-isystem" || argument == "-I" };
+        if (includeOption && i + 1 < arguments.size() && base::normalize_path(arguments[i + 1]).ends_with("/c++/v1")) {
+            relevant.emplace_back(argument);
+            relevant.push_back(arguments[++i]);
+            continue;
+        }
+        if ((argument.starts_with("-isystem") || argument.starts_with("-I")) && base::normalize_path(argument).ends_with("/c++/v1")) {
+            relevant.emplace_back(argument);
             continue;
         }
         if (argument.starts_with("--target=") || argument.starts_with("-stdlib=") || argument.starts_with("--sysroot=")

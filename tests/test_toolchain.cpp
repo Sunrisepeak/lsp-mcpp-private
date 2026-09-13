@@ -4,6 +4,9 @@ import lspmcpp.testing;
 import nlohmann.json;
 import lspmcpp.base.error;
 import lspmcpp.platform.process;
+import lspmcpp.platform.fs;
+import lspmcpp.platform.dirs;
+import lspmcpp.base.path;
 import lspmcpp.spec.database;
 import lspmcpp.toolchain.probe;
 import lspmcpp.project.compdb;
@@ -140,6 +143,32 @@ int main() {
         expect(facts->toolchain.stdlib->name == "libc++" && facts->toolchain.stdlib->version == "22.1.8");
         expect(facts->toolchain.stdlib->moduleMetadata == "/opt/llvm/22.1.8/lib/x86_64-unknown-linux-gnu/libc++.modules.json");
         expect(!facts->appleClang);
+    };
+
+    "Clang with libc++ chosen by include paths"_test = [] {
+        const std::string root { lspmcpp::base::join_path(lspmcpp::platform::dirs::temp_directory(),
+            std::format("lsp-mcpp-test-probe-{}", std::chrono::steady_clock::now().time_since_epoch().count())) };
+        const std::string manifest { lspmcpp::base::join_path(root, "llvm/lib/x86_64-unknown-linux-gnu/libc++.modules.json") };
+        (void)lspmcpp::platform::fs::create_directories(lspmcpp::base::parent_path(manifest));
+        (void)lspmcpp::platform::fs::write_file(manifest, "{}");
+        const std::string c { lspmcpp::base::join_path(root, "llvm/bin/clang++") };
+        const std::vector<std::string> command { c, "-std=c++23", "--no-default-config", "-nostdinc++",
+                                                 "-isystem" + lspmcpp::base::join_path(root, "llvm/include/c++/v1"), "-c", "a.cpp" };
+        const auto relevant = toolchain::probe_relevant_arguments(command);
+        expect(relevant.size() == 3u) << std::format("{}", relevant);
+        std::string prefix { c };
+        for (const auto& argument : relevant) prefix += " " + argument;
+        const auto runner = recorded({
+            { prefix + " --version", "clang version 22.1.8 (https://github.com/llvm/llvm-project ca7933e47d3a)\n" },
+            { prefix + " -print-target-triple", "x86_64-unknown-linux-gnu" },
+            { prefix + " -print-library-module-manifest-path", "<NOT PRESENT>" },
+        });
+        auto facts = toolchain::probe_toolchain(c, relevant, runner);
+        expect(fatal(facts.has_value()));
+        expect(fatal(facts->toolchain.stdlib.has_value()));
+        expect(facts->toolchain.stdlib->name == "libc++");
+        expect(facts->toolchain.stdlib->moduleMetadata == manifest) << facts->toolchain.stdlib->moduleMetadata;
+        lspmcpp::platform::fs::remove_all(root);
     };
 
     "Clang building against libstdc++"_test = [] {
