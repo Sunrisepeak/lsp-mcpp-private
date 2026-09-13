@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -15,8 +16,11 @@ env:
   LLVM_VERSION: 22.1.8
   XLINGS_VERSION: v2026.8.17.2
   XLINGS_NON_INTERACTIVE: '1'
+  PAYLOAD_CACHE: ${{ github.workspace }}/.payload-cache
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Unit tests on each host, and every executable starts.
   build-test:
     name: build and unit tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -37,35 +41,9 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install xlings (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
-            https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh \
-            | bash -s "$XLINGS_VERSION"
-          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
-
-      - name: Install xlings (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          irm https://d2learn.org/xlings-install.ps1.txt | iex
-          "$env:USERPROFILE\.xlings\subos\current\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: Cache mcpp registry
-        uses: actions/cache@v4
-        with:
-          path: ~/.mcpp/registry/data/xpkgs
-          key: mcpp-xpkgs-${{ runner.os }}-${{ env.MCPP_VERSION }}-${{ hashFiles('mcpp.toml', 'mcpp.lock') }}
-          restore-keys: mcpp-xpkgs-${{ runner.os }}-${{ env.MCPP_VERSION }}-
-
-      - name: Install mcpp and LLVM
-        run: bash .github/scripts/install-mcpp.sh
-
+      - uses: ./.github/actions/setup-mcpp
       - name: Build
         run: mcpp build ${{ matrix.target }}
-
       - name: Executables run
         run: |
           set -euo pipefail
@@ -74,25 +52,16 @@ jobs:
             echo "$exe -> $path"
             "$path" version
           done
-
       - name: Unit tests
         run: mcpp test ${{ matrix.target }}
-
-      - name: Diagnose a crashing test binary (macOS)
-        if: failure() && runner.os == 'macOS'
-        run: |
-          bin=$(find target -type f -name test_os -path '*/bin/*' | head -1)
-          echo "binary: $bin"
-          otool -L "$bin" || true
-          codesign -dv "$bin" 2>&1 || true
-          lldb --batch -k 'register read pc lr sp' -k 'image lookup --address $lr' -k 'thread backtrace all' -o run -- "$bin" 2>&1 | tail -60 || true
-
       - name: Generated protocol is fresh
         if: runner.os == 'Linux'
         run: |
           mcpp run lsp-mcpp-lspgen -- generate --meta-model tools/lspgen/metaModel-3.18.json --out src/lsp
           git diff --exit-code src/lsp
 
+  # ---------------------------------------------------------------------------
+  # One Linux host builds the server for every platform (design 12.4).
   cross-build:
     name: cross-build from Linux (${{ matrix.target }})
     runs-on: ubuntu-24.04
@@ -103,20 +72,7 @@ jobs:
         target: [x86_64-windows-gnu, aarch64-macos]
     steps:
       - uses: actions/checkout@v4
-      - name: Install xlings
-        run: |
-          curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
-            https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh \
-            | bash -s "$XLINGS_VERSION"
-          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
-      - name: Cache mcpp registry
-        uses: actions/cache@v4
-        with:
-          path: ~/.mcpp/registry/data/xpkgs
-          key: mcpp-xpkgs-cross-${{ matrix.target }}-${{ env.MCPP_VERSION }}-${{ hashFiles('mcpp.toml', 'mcpp.lock') }}
-          restore-keys: mcpp-xpkgs-cross-${{ matrix.target }}-${{ env.MCPP_VERSION }}-
-      - name: Install mcpp and LLVM
-        run: bash .github/scripts/install-mcpp.sh
+      - uses: ./.github/actions/setup-mcpp
       - name: Build for ${{ matrix.target }}
         run: mcpp build --target ${{ matrix.target }}
       - name: Artifacts have the expected format
@@ -130,3 +86,167 @@ jobs:
               *macos*)   file "$path" | grep -q 'Mach-O 64-bit arm64' ;;
             esac
           done
+
+  # ---------------------------------------------------------------------------
+  # Payloads: the server, trimmed clangd 23.1 and the lsp-mcpp-kit (design 15.2).
+  # linux-x64 and win32-x64 are assembled on Linux (the Windows server is
+  # cross-built); darwin-arm64 needs a macOS host for lipo and the libc++ configure.
+  payload:
+    name: payload (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x64,    os: ubuntu-24.04, target: '',                              exe: '' }
+          - { platform: win32-x64,    os: ubuntu-24.04, target: '--target x86_64-windows-gnu',   exe: '.exe' }
+          - { platform: darwin-arm64, os: macos-14,     target: '--target aarch64-macos',        exe: '' }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-mcpp
+      - name: Build tools for the kit configure
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -q && sudo apt-get install -y -q ninja-build; fi
+          if [ "$RUNNER_OS" = macOS ]; then brew install ninja; fi
+          cmake --version | head -1; ninja --version
+      - name: Cache upstream inputs
+        uses: actions/cache@v4
+        with:
+          path: .payload-cache
+          key: payload-inputs-${{ matrix.platform }}-${{ hashFiles('packaging/payload.lock.json') }}
+      - name: Build the server
+        run: mcpp build --release ${{ matrix.target }}
+      - name: Trim clangd
+        run: python3 packaging/scripts/trim_clangd.py --platform ${{ matrix.platform }} --out work/clangd --cache "$PAYLOAD_CACHE"
+      - name: Build the semantic kit
+        run: python3 packaging/scripts/build_kit.py --platform ${{ matrix.platform }} --out work/kit --cache "$PAYLOAD_CACHE" --work work/kit-build
+      - name: Assemble
+        run: |
+          set -euo pipefail
+          server=$(find target -type f -name "lsp-mcpp${{ matrix.exe }}" -path '*/bin/*' | head -1)
+          runner=$(find target -type f -name "lsp-mcpp-conformance${{ matrix.exe }}" -path '*/bin/*' | head -1)
+          python3 packaging/scripts/assemble_payload.py --platform ${{ matrix.platform }} --server "$server" \
+              --clangd work/clangd --kit work/kit --out payload
+          python3 packaging/scripts/assemble_payload.py --verify payload
+          mkdir -p tools && cp "$runner" tools/
+          # A tarball keeps executable bits and links, which an artifact zip does not.
+          tar -czf payload-${{ matrix.platform }}.tar.gz payload tools
+          du -sh payload payload-${{ matrix.platform }}.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: payload-${{ matrix.platform }}
+          path: payload-${{ matrix.platform }}.tar.gz
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # The specifications' executable part, against real toolchains (conformance/README.md).
+  conformance:
+    name: conformance (${{ matrix.platform }})
+    needs: payload
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            os: ubuntu-24.04
+            fixtures: inferred untrusted mcpp-gcc mcpp-llvm mingw cmake-clang
+          - platform: darwin-arm64
+            os: macos-14
+            fixtures: inferred untrusted mcpp-llvm
+          - platform: win32-x64
+            os: windows-2022
+            fixtures: inferred untrusted mingw
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-mcpp
+      - name: Toolchains the fixtures build with
+        run: |
+          set -euo pipefail
+          case " ${{ matrix.fixtures }} " in *" mcpp-gcc "*|*" mingw "*) mcpp toolchain install gcc 16.1.0 ;; esac
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -q && sudo apt-get install -y -q ninja-build; fi
+      - uses: actions/download-artifact@v4
+        with:
+          name: payload-${{ matrix.platform }}
+      - name: Unpack the payload
+        run: tar -xzf payload-${{ matrix.platform }}.tar.gz && ls payload tools
+      - name: Run the fixtures
+        env:
+          CONFORMANCE_CLANGXX: ${{ runner.os == 'Linux' && '~/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/bin/clang++' || '' }}
+        run: |
+          set -euo pipefail
+          export CONFORMANCE_CLANGXX="${CONFORMANCE_CLANGXX/#\~/$HOME}"
+          exe=''; [ "$RUNNER_OS" = Windows ] && exe='.exe'
+          failed=''
+          for fixture in ${{ matrix.fixtures }}; do
+            echo "::group::$fixture"
+            if ! "tools/lsp-mcpp-conformance$exe" run --server "payload/bin/lsp-mcpp$exe" --payload payload \
+                   --fixture "conformance/fixtures/$fixture" --timeout 180; then
+              failed="$failed $fixture"
+            fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::failed fixtures:$failed"
+            # Rerun the first failure with the server's log, for the record.
+            first=${failed# }; first=${first%% *}
+            "tools/lsp-mcpp-conformance$exe" run --server "payload/bin/lsp-mcpp$exe" --payload payload \
+                --fixture "conformance/fixtures/$first" --timeout 60 --verbose 2>&1 | tail -200 || true
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
+  # VS Code → extension → lsp-mcpp → clangd, and the platform VSIX (design 16).
+  vscode-e2e:
+    name: VS Code end to end (${{ matrix.platform }})
+    needs: payload
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x64,    os: ubuntu-24.04 }
+          - { platform: darwin-arm64, os: macos-14 }
+          - { platform: win32-x64,    os: windows-2022 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - uses: actions/download-artifact@v4
+        with:
+          name: payload-${{ matrix.platform }}
+      - name: Put the payload into the extension
+        run: |
+          set -euo pipefail
+          tar -xzf payload-${{ matrix.platform }}.tar.gz
+          rm -rf editors/vscode/payload && mv payload editors/vscode/payload
+      - name: Install and compile
+        working-directory: editors/vscode
+        run: npm ci && npm run compile
+      - name: End-to-end tests
+        working-directory: editors/vscode
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a npm test; else npm test; fi
+      - name: Package the VSIX
+        working-directory: editors/vscode
+        run: npx --no-install vsce package --target ${{ matrix.platform }} --out lsp-mcpp-${{ matrix.platform }}.vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix-${{ matrix.platform }}
+          path: editors/vscode/lsp-mcpp-${{ matrix.platform }}.vsix
+          retention-days: 7
