@@ -37,8 +37,13 @@ async function main(): Promise<void> {
     const extensionTestsPath = path.resolve(__dirname, 'suite', 'index');
     const workspace = prepareWorkspace(extensionDevelopmentPath);
     const cacheDirectory = process.env.LSP_MCPP_CACHE_DIR ?? fs.mkdtempSync(path.join(os.tmpdir(), 'lsp-mcpp-e2e-cache-'));
+    // A short user data directory of its own. VS Code listens on a socket inside
+    // it, and macOS limits a socket path to 104 bytes: the default under
+    // .vscode-test in a CI checkout is longer and fails with `listen EINVAL`.
+    const userDataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'lsp-mcpp-ud-'));
     console.log(`workspace: ${workspace}`);
     console.log(`server cache: ${cacheDirectory}`);
+    console.log(`user data: ${userDataDirectory}`);
 
     const exitCode = await runTests({
         version: process.env.VSCODE_TEST_VERSION ?? 'stable',
@@ -46,6 +51,7 @@ async function main(): Promise<void> {
         extensionTestsPath,
         launchArgs: [
             workspace,
+            `--user-data-dir=${userDataDirectory}`,
             '--disable-extensions',
             '--disable-workspace-trust',
             '--skip-welcome',
