@@ -14,7 +14,9 @@ $bin/lsp-mcpp-conformance run --server $bin/lsp-mcpp --fixture conformance/fixtu
 The runner copies the fixture to a scratch directory, runs its `prepare`
 commands there, starts the server with a private cache directory
 (`LSP_MCPP_CACHE_DIR`), advertises `experimental.cxxModules`, and prints one
-`PASS`/`FAIL` line per check. It exits non-zero when a check fails.
+`PASS`/`FAIL` line per check. It exits non-zero when a check fails. Once the
+server has exited, or has left two requests in a row unanswered, the remaining
+checks fail at once with that reason instead of each waiting out its timeout.
 
 ## Fixtures
 
