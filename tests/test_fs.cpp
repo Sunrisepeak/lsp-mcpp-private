@@ -22,16 +22,42 @@ int main() {
         expect(fs::create_directories(base::join_path(root, "a/b/c")).has_value());
     };
 
-    "atomic write replaces content"_test = [&] {
+    "a small file is written and read"_test = [&] {
+        const std::string file { base::join_path(root, "a/small.txt") };
+        expect(fatal(fs::write_file(file, "first").has_value()));
+        expect(fs::read_file(file).value_or("") == "first");
+        expect(fs::is_regular_file(file));
+        expect(!fs::is_directory(file));
+    };
+
+    "an atomic write creates a file"_test = [&] {
         const std::string file { base::join_path(root, "a/data.json") };
         expect(fatal(fs::write_file_atomic(file, "first").has_value()));
         expect(fs::read_file(file).value_or("") == "first");
-        expect(fatal(fs::write_file_atomic(file, std::string(100000, 'x')).has_value()));
+    };
+
+    "an atomic write replaces an existing file"_test = [&] {
+        const std::string file { base::join_path(root, "a/data.json") };
+        expect(fatal(fs::write_file_atomic(file, "second").has_value()));
+        expect(fs::read_file(file).value_or("") == "second");
+    };
+
+    "a large file is written in one call"_test = [&] {
+        const std::string file { base::join_path(root, "a/large.bin") };
+        expect(fatal(fs::write_file(file, std::string(100000, 'x')).has_value()));
         auto content = fs::read_file(file);
         expect(content.has_value() && content->size() == 100000u);
-        expect(fs::is_regular_file(file));
-        expect(!fs::is_directory(file));
-        expect(fs::list_directory(base::join_path(root, "a")).size() == 2u);   // b/ and data.json, no leftovers
+    };
+
+    "a large atomic write leaves no temporary file"_test = [&] {
+        const std::string file { base::join_path(root, "a/data.json") };
+        expect(fatal(fs::write_file_atomic(file, std::string(100000, 'y')).has_value()));
+        auto content = fs::read_file(file);
+        expect(content.has_value() && content->size() == 100000u);
+        std::vector<std::string> names;
+        for (const auto& entry : fs::list_directory(base::join_path(root, "a"))) names.emplace_back(base::file_name(entry));
+        const std::vector<std::string> expected { "b", "data.json", "large.bin", "small.txt" };
+        expect(names == expected) << std::format("{}", names);
     };
 
     "binary content survives"_test = [&] {
