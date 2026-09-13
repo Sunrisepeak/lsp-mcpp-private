@@ -81,6 +81,23 @@ std::string workspace_key(std::string_view root) {
     return std::format("{}-{:016x}", name.empty() ? std::string { "root" } : name, hash);
 }
 
+std::vector<ModuleManifest> module_manifests(const ProjectModel& model, const spec::Kit* kit) {
+    std::vector<ModuleManifest> manifests;
+    auto add = [&](const std::string& path, std::string_view origin) {
+        if (path.empty()) return;
+        if (std::ranges::any_of(manifests, [&](const ModuleManifest& manifest) { return base::same_path(manifest.path, path); })) return;
+        manifests.push_back(ModuleManifest { path, std::string { origin } });
+    };
+    for (const auto& [id, facts] : model.facts) {
+        if (facts.toolchain.stdlib) add(facts.toolchain.stdlib->moduleMetadata, "stdlib");
+    }
+    if (model.usesKit && kit != nullptr) add(kit->moduleMetadata, "stdlib");
+    for (const auto& set : model.database.sets) {
+        for (const auto& manifest : set.moduleMetadata) add(manifest, "module-metadata");
+    }
+    return manifests;
+}
+
 ProjectModel load_project(std::string_view rootInput, const LoadOptions& options) {
     ProjectModel model;
     model.root = base::normalize_path(rootInput);

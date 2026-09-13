@@ -1,0 +1,167 @@
+// Document store, module index and routing, without processes.
+import std;
+import nlohmann.json;
+import lspmcpp.testing;
+import lspmcpp.base.text;
+import lspmcpp.base.uri;
+import lspmcpp.index.modules;
+import lspmcpp.server.documents;
+import lspmcpp.server.router;
+
+using Json = nlohmann::json;
+using lspmcpp::base::Position;
+namespace idx = lspmcpp::index;
+namespace srv = lspmcpp::server;
+
+namespace {
+
+idx::ModuleIndex fixture_index() {
+    idx::ModuleIndex index;
+    index.update("/p/src/main.cpp", "import std;\nimport hello.greet;\n\nint main() {\n    return 0;\n}\n");
+    index.update("/p/src/greet/greet.cppm", "export module hello.greet;\nexport import :detail;\nimport std;\n");
+    index.update("/p/src/greet/detail.cppm", "export module hello.greet:detail;\nimport std;\n");
+    index.update("/p/src/greet/impl.cpp", "module hello.greet;\nimport missing;\n");
+    index.set_external({ idx::ExternalModule { "std", "/kit/share/libc++/v1/std.cppm", "stdlib" },
+                         idx::ExternalModule { "std.compat", "/kit/share/libc++/v1/std.compat.cppm", "stdlib" } });
+    index.set_profile_label("libc++ 23.1.0 (semantic kit)");
+    return index;
+}
+
+} // namespace
+
+int main() {
+    using namespace lspmcpp::testing;
+
+    "incremental changes use UTF-16 positions"_test = [] {
+        srv::DocumentStore store;
+        store.open("file:///p/a.cpp", "/p/a.cpp", "cpp", 1, "int a\xF0\x9F\x98\x80 = 1;\nint b = 2;\n");
+        const Json changes = Json::parse(R"([
+            {"range": {"start": {"line": 0, "character": 7}, "end": {"line": 0, "character": 8}}, "text": "3"},
+            {"range": {"start": {"line": 1, "character": 4}, "end": {"line": 1, "character": 5}}, "text": "bee"},
+            {"range": {"start": {"line": 2, "character": 0}, "end": {"line": 2, "character": 0}}, "text": "// end\n"}
+        ])");
+        // "int a😀 = 1;": the emoji takes characters 5 and 6, so character 7 is the space before '='.
+        expect(store.change("file:///p/a.cpp", 2, changes));
+        const auto* document = store.find("file:///p/a.cpp");
+        expect(fatal(document != nullptr));
+        expect(document->text == "int a\xF0\x9F\x98\x80" "3= 1;\nint bee = 2;\n// end\n") << document->text;
+        expect(document->version == 2);
+        expect(store.change("file:///p/a.cpp", 3, Json::parse(R"([{"text": "whole"}])")));
+        expect(store.find("file:///p/a.cpp")->text == "whole");
+        expect(store.find_by_path("/p/a.cpp") != nullptr);
+        store.close("file:///p/a.cpp");
+        expect(store.find("file:///p/a.cpp") == nullptr);
+        expect(!store.change("file:///p/a.cpp", 4, Json::array()));
+    };
+
+    "module names navigate"_test = [] {
+        const auto index = fixture_index();
+        const Json toInterface = index.definition("/p/src/main.cpp", Position { 1, 9 });
+        expect(fatal(toInterface.is_array() && toInterface.size() == 1u));
+        expect(toInterface[0]["uri"] == lspmcpp::base::path_to_uri("/p/src/greet/greet.cppm"));
+        expect(toInterface[0]["range"]["start"]["character"] == 14);
+        const Json toPartition = index.definition("/p/src/greet/greet.cppm", Position { 1, 15 });
+        expect(fatal(toPartition.size() == 1u));
+        expect(toPartition[0]["uri"] == lspmcpp::base::path_to_uri("/p/src/greet/detail.cppm"));
+        const Json toStd = index.definition("/p/src/main.cpp", Position { 0, 8 });
+        expect(fatal(toStd.size() == 1u));
+        expect(toStd[0]["uri"] == lspmcpp::base::path_to_uri("/kit/share/libc++/v1/std.cppm"));
+        const Json implementation = index.definition("/p/src/greet/impl.cpp", Position { 0, 9 });
+        expect(fatal(implementation.size() == 1u));
+        expect(implementation[0]["uri"] == lspmcpp::base::path_to_uri("/p/src/greet/greet.cppm"));
+        expect(index.definition("/p/src/main.cpp", Position { 3, 5 }).is_null());
+    };
+
+    "hover, completion and symbols"_test = [] {
+        const auto index = fixture_index();
+        const std::string hover { index.hover("/p/src/main.cpp", Position { 1, 12 })["contents"]["value"].get<std::string>() };
+        expect(hover.find("module hello.greet") != std::string::npos && hover.find("greet.cppm") != std::string::npos) << hover;
+        expect(hover.find("libc++ 23.1.0") != std::string::npos);
+
+        const std::string text { "import std;\nexport import hel" };
+        const Json completion = index.completion("/p/src/new.cppm", text, Position { 1, 17 });
+        expect(fatal(completion.is_object()));
+        expect(completion["items"].size() == 1u && completion["items"][0]["label"] == "hello.greet") << completion.dump();
+        expect(completion["items"][0]["textEdit"]["range"]["start"]["character"] == 14);
+        const Json partitions = index.completion("/p/src/greet/greet.cppm", "export module hello.greet;\nimport :", Position { 1, 8 });
+        expect(partitions["items"].size() == 1u && partitions["items"][0]["label"] == ":detail") << partitions.dump();
+        const Json all = index.completion("/p/src/x.cpp", "import ", Position { 0, 7 });
+        expect(all["items"].size() == 3u) << all.dump();   // hello.greet, std, std.compat
+        expect(index.completion("/p/src/x.cpp", "int important = 1;", Position { 0, 10 }).is_null());
+        expect(index.completion("/p/src/x.cpp", "hello::", Position { 0, 7 }).is_null());
+
+        const Json symbols = index.document_symbols("/p/src/greet/detail.cppm");
+        expect(symbols.size() == 1u && symbols[0]["name"] == "hello.greet:detail" && symbols[0]["kind"] == 2);
+        expect(index.workspace_symbols("GREET").size() == 2u);
+        expect(index.workspace_symbols("detail").size() == 1u);
+    };
+
+    "module diagnostics"_test = [] {
+        auto index = fixture_index();
+        const Json impl = index.diagnostics("/p/src/greet/impl.cpp");
+        expect(impl.size() == 1u && impl[0]["code"] == "unresolved-module" && impl[0]["source"] == "lsp-mcpp") << impl.dump();
+        expect(index.diagnostics("/p/src/main.cpp").empty());
+        index.update("/p/src/loose.cpp", "import :part;\n");
+        expect(index.diagnostics("/p/src/loose.cpp")[0]["code"] == "partition-outside-module");
+        index.update("/p/src/copy.cppm", "export module hello.greet;\n");
+        expect(index.diagnostics("/p/src/main.cpp")[0]["code"] == "ambiguous-module");
+        index.remove("/p/src/copy.cppm");
+        expect(index.diagnostics("/p/src/main.cpp").empty());
+        index.update("/p/src/greet/noiface.cpp", "module nobody;\n");
+        expect(index.diagnostics("/p/src/greet/noiface.cpp")[0]["code"] == "unresolved-module");
+    };
+
+    "graph and module info"_test = [] {
+        const auto index = fixture_index();
+        const Json graph = index.graph();
+        bool sawStd { false };
+        for (const auto& module : graph["modules"]) {
+            if (module["name"] == "std") sawStd = module["external"].get<bool>();
+        }
+        expect(sawStd);
+        expect(graph["imports"].size() >= 5u);
+        const Json info = index.module_info("hello.greet");
+        expect(info["resolvedFrom"] == "set" && info["providers"].size() == 1u && !info["ambiguous"].get<bool>());
+        expect(index.module_info("std")["resolvedFrom"] == "stdlib");
+        expect(!index.module_info("nothing").contains("resolvedFrom"));
+    };
+
+    "routing sends module positions to the index"_test = [] {
+        const auto index = fixture_index();
+        const std::string text { "import std;\nimport hello.greet;\n" };
+        const Json onModule = Json::parse(R"({"textDocument": {"uri": "file:///p/src/main.cpp"}, "position": {"line": 1, "character": 10}})");
+        const Json elsewhere = Json::parse(R"({"textDocument": {"uri": "file:///p/src/main.cpp"}, "position": {"line": 3, "character": 1}})");
+        expect(srv::route_request("textDocument/definition", onModule, index, "/p/src/main.cpp", text).route == srv::Route::local);
+        expect(srv::route_request("textDocument/hover", onModule, index, "/p/src/main.cpp", text).route == srv::Route::local);
+        expect(srv::route_request("textDocument/definition", elsewhere, index, "/p/src/main.cpp", text).route == srv::Route::engine);
+        expect(srv::route_request("textDocument/references", onModule, index, "/p/src/main.cpp", text).route == srv::Route::engine);
+        expect(srv::route_request("textDocument/documentSymbol", onModule, index, "/p/src/main.cpp", text).merge == srv::Merge::document_symbols);
+        expect(srv::route_request("workspace/symbol", Json::object(), index, "", "").merge == srv::Merge::workspace_symbols);
+    };
+
+    "merging"_test = [] {
+        const Json engineSymbols = Json::parse(R"([{"name": "hello", "kind": 3, "range": {}, "selectionRange": {}}])");
+        const Json moduleSymbols = Json::parse(R"([{"name": "hello.greet", "kind": 2, "range": {}, "selectionRange": {}}])");
+        const Json merged = srv::merge_document_symbols(engineSymbols, moduleSymbols);
+        expect(merged.size() == 2u && merged[0]["name"] == "hello.greet");
+        const Json flat = Json::parse(R"([{"name": "hello", "kind": 3, "location": {}}])");
+        expect(srv::merge_document_symbols(flat, moduleSymbols).size() == 1u);
+        expect(srv::merge_workspace_symbols(nullptr, moduleSymbols).size() == 1u);
+
+        const Json range = Json::parse(R"({"start": {"line": 1, "character": 7}, "end": {"line": 1, "character": 18}})");
+        const Json moduleDiagnostics = Json::array({ Json { { "range", range }, { "message", "module 'x' not found" }, { "source", "lsp-mcpp" } } });
+        const Json engineDiagnostics = Json::array({ Json { { "range", range }, { "message", "module 'x' not found" }, { "source", "clang" } },
+                                                     Json { { "range", Json::parse(R"({"start": {"line": 4, "character": 0}, "end": {"line": 4, "character": 1}})") }, { "message", "other" }, { "source", "clang" } } });
+        const Json diagnostics = srv::merge_diagnostics(engineDiagnostics, moduleDiagnostics, "gcc 16.1.0");
+        expect(diagnostics.size() == 2u) << diagnostics.dump();
+        expect(diagnostics[1]["source"] == "clang \xC2\xB7 gcc 16.1.0") << diagnostics.dump();
+
+        const Json capabilities = srv::merge_capabilities(Json::parse(R"({"hoverProvider": true, "textDocumentSync": {"change": 2}})"));
+        expect(capabilities["experimental"]["cxxModules"]["version"] == 1);
+        expect(capabilities["definitionProvider"] == true && capabilities["textDocumentSync"]["change"] == 2);
+        const Json client = Json::parse(R"({"experimental": {"cxxModules": {"version": 1, "status": true}}})");
+        expect(srv::client_supports(client, "status") && !srv::client_supports(client, "graph"));
+    };
+
+    return report();
+}

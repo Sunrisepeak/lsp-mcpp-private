@@ -52,4 +52,13 @@ ProjectModel load_project(std::string_view root, const LoadOptions& options);
 // A stable directory name for a workspace root.
 std::string workspace_key(std::string_view root);
 
+struct ModuleManifest {
+    std::string path;
+    std::string origin;   // stdlib | module-metadata
+};
+
+// The P3286 manifests a model's modules may resolve through: each toolchain's
+// standard library, the kit's when the model uses it, and every set's metadata.
+std::vector<ModuleManifest> module_manifests(const ProjectModel& model, const spec::Kit* kit);
+
 } // namespace lspmcpp::project

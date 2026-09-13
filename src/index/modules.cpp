@@ -6,6 +6,7 @@ import lspmcpp.base.text;
 import lspmcpp.base.path;
 import lspmcpp.base.uri;
 import lspmcpp.spec.database;
+import lspmcpp.spec.metadata;
 import lspmcpp.project.scan;
 
 namespace lspmcpp::index {
@@ -44,6 +45,19 @@ Json diagnostic(const base::Range& range, int severity, std::string_view code, s
 }
 
 } // namespace
+
+std::vector<ExternalModule> external_modules(std::span<const std::pair<std::string, std::string>> manifests,
+                                             const std::function<std::vector<spec::ModuleEntry>(std::string_view)>& reader) {
+    std::vector<ExternalModule> modules;
+    for (const auto& [path, origin] : manifests) {
+        for (const auto& entry : reader(path)) {
+            if (std::ranges::none_of(modules, [&](const ExternalModule& module) { return module.name == entry.logicalName; })) {
+                modules.push_back(ExternalModule { entry.logicalName, entry.source, origin });
+            }
+        }
+    }
+    return modules;
+}
 
 Json to_json(const base::Range& range) {
     return Json { { "start", position_json(range.start) }, { "end", position_json(range.end) } };
@@ -169,17 +183,21 @@ Json ModuleIndex::completion(std::string_view path, std::string_view text, base:
     std::size_t lineStart { text.rfind('\n', *offset == 0 ? 0 : *offset - 1) };
     lineStart = (lineStart == std::string_view::npos || *offset == 0) ? 0 : lineStart + 1;
     std::string_view line { text.substr(lineStart, *offset - lineStart) };
-    // [export] import <partial>
-    std::string_view rest { base::trim(line) };
+    // [export] import <partial>, where only the left side is trimmed: the cursor may follow a space.
+    auto trim_left = [](std::string_view text) {
+        while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
+        return text;
+    };
+    std::string_view rest { trim_left(line) };
     if (rest.starts_with("export")) {
         rest.remove_prefix(6);
         if (rest.empty() || (rest.front() != ' ' && rest.front() != '\t')) return nullptr;
-        rest = base::trim(rest);
+        rest = trim_left(rest);
     }
     if (!rest.starts_with("import")) return nullptr;
     rest.remove_prefix(6);
     if (rest.empty() || (rest.front() != ' ' && rest.front() != '\t')) return nullptr;
-    const std::string_view partial { base::trim(rest) };
+    const std::string_view partial { trim_left(rest) };
     if (!std::ranges::all_of(partial, [](char c) { return base::is_identifier_char(c) || c == '.' || c == ':'; })) return nullptr;
     const std::size_t partialStart { *offset - partial.size() };
     const base::Range editRange { base::position_at(text, partialStart), position };

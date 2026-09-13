@@ -66,7 +66,9 @@ public:
 private:
     std::optional<T> take_(std::unique_lock<std::mutex>&) {
         if (items_.empty()) return std::nullopt;
-        T value { std::move(items_.front()) };
+        // Copy-initialization on purpose: braces would pick an initializer-list
+        // constructor for types that have one (nlohmann::json makes an array).
+        T value = std::move(items_.front());
         items_.pop_front();
         return value;
     }

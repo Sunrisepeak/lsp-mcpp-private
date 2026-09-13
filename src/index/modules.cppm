@@ -7,6 +7,7 @@ import std;
 import nlohmann.json;
 import lspmcpp.base.text;
 import lspmcpp.spec.database;
+import lspmcpp.spec.metadata;
 import lspmcpp.project.scan;
 
 export namespace lspmcpp::index {
@@ -62,6 +63,10 @@ public:
     nlohmann::json graph() const;
     nlohmann::json module_info(std::string_view name) const;
 };
+
+// External modules named by the entries of P3286 manifests; the first manifest naming a module wins.
+std::vector<ExternalModule> external_modules(std::span<const std::pair<std::string, std::string>> manifests,
+                                             const std::function<std::vector<spec::ModuleEntry>(std::string_view)>& reader);
 
 nlohmann::json to_json(const base::Range& range);
 nlohmann::json make_location(std::string_view path, const base::Range& range);
