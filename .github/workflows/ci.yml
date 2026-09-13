@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MCPP_VERSION: 2026.9.14.1
+  LLVM_VERSION: 22.1.8
+  XLINGS_VERSION: v2026.8.17.2
+  XLINGS_NON_INTERACTIVE: '1'
+
+jobs:
+  build-test:
+    name: build and unit tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xlings (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
+            https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh \
+            | bash -s "$XLINGS_VERSION"
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+
+      - name: Install xlings (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          irm https://d2learn.org/xlings-install.ps1.txt | iex
+          "$env:USERPROFILE\.xlings\subos\current\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Cache mcpp registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.mcpp/registry/data/xpkgs
+          key: mcpp-xpkgs-${{ runner.os }}-${{ env.MCPP_VERSION }}-${{ hashFiles('mcpp.toml', 'mcpp.lock') }}
+          restore-keys: mcpp-xpkgs-${{ runner.os }}-${{ env.MCPP_VERSION }}-
+
+      - name: Install mcpp and LLVM
+        run: bash .github/scripts/install-mcpp.sh
+
+      - name: Build
+        run: mcpp build
+
+      - name: Unit tests
+        run: mcpp test
+
+      - name: Generated protocol is fresh
+        if: runner.os == 'Linux'
+        run: |
+          mcpp run lsp-mcpp-lspgen -- generate --meta-model tools/lspgen/metaModel-3.18.json --out src/lsp
+          git diff --exit-code src/lsp
+
+      - name: Executables run
+        run: |
+          set -euo pipefail
+          for exe in lsp-mcpp lsp-mcpp-conformance lsp-mcpp-lspgen; do
+            path=$(find target -type f \( -name "$exe" -o -name "$exe.exe" \) -path '*/bin/*' | head -1)
+            echo "$exe -> $path"
+            "$path" version
+          done
+
+  cross-build:
+    name: cross-build from Linux (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-windows-gnu, aarch64-macos]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install xlings
+        run: |
+          curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
+            https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh \
+            | bash -s "$XLINGS_VERSION"
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+      - name: Cache mcpp registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.mcpp/registry/data/xpkgs
+          key: mcpp-xpkgs-cross-${{ matrix.target }}-${{ env.MCPP_VERSION }}-${{ hashFiles('mcpp.toml', 'mcpp.lock') }}
+          restore-keys: mcpp-xpkgs-cross-${{ matrix.target }}-${{ env.MCPP_VERSION }}-
+      - name: Install mcpp and LLVM
+        run: bash .github/scripts/install-mcpp.sh
+      - name: Build for ${{ matrix.target }}
+        run: mcpp build --target ${{ matrix.target }}
+      - name: Artifacts have the expected format
+        run: |
+          set -euo pipefail
+          for exe in lsp-mcpp lsp-mcpp-conformance lsp-mcpp-lspgen; do
+            path=$(find target -type f \( -name "$exe" -o -name "$exe.exe" \) -path '*/bin/*' | head -1)
+            file "$path"
+            case "${{ matrix.target }}" in
+              *windows*) file "$path" | grep -q 'PE32+ executable' ;;
+              *macos*)   file "$path" | grep -q 'Mach-O 64-bit arm64' ;;
+            esac
+          done

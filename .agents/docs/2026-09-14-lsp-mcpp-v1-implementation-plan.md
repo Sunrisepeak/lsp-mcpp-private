@@ -6,7 +6,7 @@
 
 **Architecture:** One mcpp package written only in C++23 modules produces three executables that share `src/` modules: the server `lsp-mcpp`, the conformance runner `lsp-mcpp-conformance` and the protocol generator `lsp-mcpp-lspgen`. The platform layer sits on openkal (`openkal.process` for child processes and pipes; the C++ standard library for threads, files and time), and platform facts come from a per-target `lspmcpp.os` package selected through `cfg` path dependencies and consumed with `if constexpr`. The server normalizes any build (mcpp, CMake, compile_commands.json, or nothing) into an engine database for a pinned clangd 23.1, adds module-level features from its own syntactic index, and ships with a thin VS Code extension that bundles clangd and the `lsp-mcpp-kit` semantic kits.
 
-**Tech Stack:** mcpp (2026.9.14.1+), LLVM 22.1.8 via `openkal-llvm-runtime` 0.9.1, openkal 0.12, clangd 23.1.0, TypeScript + vscode-languageclient + @vscode/test-electron, Python 3 for packaging scripts, GitHub Actions on ubuntu-24.04, macos-14 (arm64), windows-2022.
+**Tech Stack:** mcpp (2026.9.14.1+), LLVM 22.1.8 via `openkal-llvm-runtime` 0.9.2, mcpp-index modular libraries `nlohmann.json` 3.12.0, `mcpplibs.cmdline` 0.0.2, `boost.ut` 2.3.1, openkal 0.12, clangd 23.1.0, TypeScript + vscode-languageclient + @vscode/test-electron, Python 3 for packaging scripts, GitHub Actions on ubuntu-24.04, macos-14 (arm64), windows-2022.
 
 **Spec:** `.agents/docs/2026-09-13-cxx-modules-unified-lsp-design.md`, `.agents/docs/2026-09-13-cxx-module-build-database-ide-profile-spec.md`, evidence in `.agents/docs/2026-09-13-cxx-modules-lsp-experiments.md`.
 
@@ -37,8 +37,7 @@ lsp-mcpp-private/
 ├── src/
 │   ├── main.cpp                   lsp-mcpp CLI entry: serve | check | model | version
 │   ├── base/                      error.cppm/.cpp  log.cppm/.cpp  text.cppm/.cpp  uri.cppm/.cpp
-│   ├── json/                      value.cppm/.cpp (lspmcpp.json.value)
-│   ├── platform/                  process  stdio  fs  env  dirs            (.cppm/.cpp each)
+│   │   ├── platform/                  process  stdio  fs  env  dirs            (.cppm/.cpp each)
 │   ├── lsp/                       jsonrpc.cppm/.cpp  protocol.cppm/.cpp (generated)  client.cppm/.cpp
 │   ├── spec/                      database  metadata  kit  discovery        (.cppm/.cpp each)
 │   ├── project/                   scan  compdb  detect  mcpp  cmake  infer  model
@@ -124,44 +123,26 @@ export module lspmcpp.base.uri;     // Result<std::string> uri_to_path(std::stri
 
 - [ ] Tests `tests/test_text.cpp`, `tests/test_uri.cpp`: UTF-16 columns for `"a😀b"` (byte 5 → character 3), `file:///home/u/a%20b.cpp` ↔ `/home/u/a b.cpp`, Windows form `file:///c%3A/Users/x/m.cppm` ↔ `C:/Users/x/m.cppm` checked under `if constexpr (FAMILY == Family::windows)` and as pure string rules on every platform.
 
-### Task 1.2: `lspmcpp.json.value`
+### Task 1.2: JSON, command line and tests from the mcpp ecosystem
 
-**Produces:**
+JSON is not written by hand. Design D24 and §12.8: general-purpose libraries come from mcpp-index modular packages, never compat packages.
 
-```cpp
-export module lspmcpp.json.value;
-import std;
-import lspmcpp.base.error;
-export namespace lspmcpp::json {
-class Value;
-using Array = std::vector<Value>;
-using Object = std::vector<std::pair<std::string, Value>>;   // insertion order kept
-class Value {
-public:
-    Value();                          // null
-    Value(std::nullptr_t); Value(bool); Value(std::int64_t); Value(int); Value(double);
-    Value(std::string); Value(std::string_view); Value(const char*); Value(Array); Value(Object);
-public:
-    bool is_null() const; bool is_bool() const; bool is_int() const; bool is_number() const;
-    bool is_string() const; bool is_array() const; bool is_object() const;
-    bool as_bool() const; std::int64_t as_int() const; double as_number() const;
-    const std::string& as_string() const; const Array& as_array() const; Array& as_array();
-    const Object& as_object() const; Object& as_object();
-    const Value* find(std::string_view key) const;          // null when absent or not an object
-    std::optional<std::string_view> string_at(std::string_view key) const;
-    std::optional<std::int64_t> int_at(std::string_view key) const;
-    Value& set(std::string_view key, Value value);           // object; replaces existing key
-    Value& push(Value value);                               // array
-    bool operator==(const Value&) const;
-private:
-    std::variant<std::nullptr_t, bool, std::int64_t, double, std::string, Array, Object> data_;
-};
-base::Result<Value> parse(std::string_view text);
-std::string stringify(const Value& value, bool pretty = false);
-}
+**Produces:** dependencies in `mcpp.toml`:
+
+```toml
+[dependencies]
+cmdline = "0.0.2"                 # import mcpplibs.cmdline;
+
+[dependencies.nlohmann]
+json = "3.12.0"                   # import nlohmann.json;
+
+[dev-dependencies.boost-ext]
+ut = "2.3.1"                      # import boost.ut;
 ```
 
-- [ ] Tests `tests/test_json.cpp`: round-trip of LSP initialize payload; `\u00e9` and surrogate pair `\ud83d\ude00` decode to UTF-8; integers stay integers (`"id":42` → `is_int`); errors carry position for `{"a":}`; pretty output stable.
+- [ ] Every module that handles JSON uses `nlohmann::json` (`nlohmann::ordered_json` where key order is visible to users, e.g. S1 output); errors from `parse` are caught at the module boundary and converted to `base::Result`.
+- [ ] Unit tests use `boost.ut`.
+- [ ] Cross-building nlohmann.json for `x86_64-windows` and `aarch64-macos` needs openkal-llvm-runtime 0.9.2 (design §12.9 K1). Until mcpp-index carries 0.9.2 the dependency points at the fix branch.
 
 ### Task 1.3: Platform layer
 

@@ -133,6 +133,10 @@ lsp-mcpp 采用的做法：
 | D19 | 扩展发布者 `mcpp-community`，扩展 ID `lsp-mcpp`，显示名“C++ Modules” | 2026-09-14 |
 | D20 | 规范文本与代码统一使用 Apache-2.0，提交 EcoStd 时按其要求调整 | 2026-09-14 |
 | D21 | 规范放在仓库根目录的 `specs/`，设计、调研、实验等文档放在 `.agents/docs/` | 2026-09-14 |
+| D22 | 语义工具包命名为 `lsp-mcpp-kit`（原 Q1） | 2026-09-14 |
+| D23 | 服务端核心代码不使用头文件与宏：全部是 `.cppm` 接口 + `.cpp` 实现单元，平台差异用 `if constexpr` 判断，平台常量由按目标选择的 `lspmcpp.os` 模块提供 | 2026-09-14 |
+| D24 | 通用库优先复用 mcpp 生态（mcpp-index）中的模块化库，不使用 compat 形态的包：JSON 用 `nlohmann.json`，命令行用 `mcpplibs.cmdline`，单元测试用 `boost.ut`（见 12.8） | 2026-09-14 |
+| D25 | openkal 体系的问题分两类处理：缺陷级别直接向对应仓库提 PR 修复；需求级别只记录，不改动 openkal 规范（见 12.9） | 2026-09-14 |
 
 ## 4. 问题、范围与平台矩阵
 
@@ -506,13 +510,14 @@ flowchart TB
 | 层 | 模块 | 职责 |
 |---|---|---|
 | 基础 | `lspmcpp.base` | 错误约定（`std::expected`）、日志、取消令牌 |
-| 基础 | `lspmcpp.json` | JSON 读写 |
+| 基础 | mcpp-index 的 `nlohmann.json`（不自写 JSON 模块） | JSON 读写，见 12.8 |
 | 平台 | `lspmcpp.platform.process` | 基于 `openkal.process`：启动子进程、双向流、等待与终止、进程组 |
 | 平台 | `lspmcpp.platform.fs` | 基于 `openkal.fs`：路径与 URI 规范化、原子写入 |
 | 平台 | `lspmcpp.platform.task` | 基于 `openkal.task` 与 `openkal.time`：线程、消息队列、定时器 |
 | 平台 | `lspmcpp.platform.dirs` | 基于 `openkal.env`：用户缓存目录、扩展负载目录 |
 | 协议 | `lspmcpp.lsp.protocol` | 由 LSP 3.18 官方 metaModel.json 生成的类型 |
 | 协议 | `lspmcpp.lsp.jsonrpc` | 消息帧、请求表、取消、超时 |
+| 协议 | `lspmcpp.lsp.connection` | 以子进程运行的 LSP 对端：帧读写线程、标准错误行 |
 | 规范 | `lspmcpp.spec.database` | S1 数据结构、校验、编解码、导出 `compile_commands.json` |
 | 规范 | `lspmcpp.spec.discovery` | S2 发现协议客户端 |
 | 规范 | `lspmcpp.spec.kit` | S4 清单读取与校验 |
@@ -605,9 +610,45 @@ starting ──> loading ──> preparing ──> ready
 | 语言与构建 | C++23 全模块，mcpp，LLVM 编译 |
 | 平台层 | openkal（接口）+ openkal-linux、openkal-macos、openkal-windows（实现）+ openkal-llvm-runtime |
 | LSP 类型 | 从 LSP 3.18 官方 metaModel.json 生成 |
-| JSON | 能在 openkal-musl 与 libc++ 上编译的库，候选 yyjson，外加一层模块封装 |
+| JSON | mcpp-index 的模块化库 `nlohmann.json`（`import nlohmann.json;`） |
+| 命令行 | mcpp-index 的模块化库 `mcpplibs.cmdline`（`import mcpplibs.cmdline;`） |
+| 单元测试 | mcpp-index 的模块化库 `boost.ut`，作为 dev-dependency（`import boost.ut;`），由 `mcpp test` 发现 |
 | 并发 | 线程 + 阻塞流 + 主线程消息队列 |
 | VS Code 扩展 | TypeScript + vscode-languageclient |
+
+### 12.8 复用 mcpp 生态的模块化库
+
+原则：
+
+1. **先查 mcpp-index。** 需要通用能力（JSON、命令行、测试、TOML 等）时，先在 mcpp-index 中找已经提供命名模块的包，用 `import` 使用，不自己重写。
+2. **只用模块化形态。** 不使用 compat 形态（以头文件方式暴露）的包，保持服务端“全模块、无头文件”的约束。
+3. **必须能在 openkal 上交叉构建。** 选用前在 linux-x64、`x86_64-windows-gnu`、`aarch64-macos` 三个目标上各构建一次；任何一个目标失败都不引入，并按 12.9 处理根因。
+4. **生态里缺的通用能力。** 属于 mcpp 或 xlings 通用工具包的，先向对应仓库提 PR，CI 通过并合入后再在本项目使用；合入前本项目不自带一份临时实现。
+
+第一版选定：
+
+| 能力 | 包 | 版本 | 结论 |
+|---|---|---|---|
+| JSON | `nlohmann:json` | 3.12.0 | 采用；三个目标构建通过（依赖 12.9 的修复） |
+| 命令行 | `mcpplibs:cmdline` | 0.0.2 | 采用；纯模块，三个目标构建通过 |
+| 单元测试 | `boost-ext:ut` | 2.3.1 | 采用，作为 dev-dependency |
+| TOML | `marzer:tomlplusplus` | — | 不采用；Windows 目标构建失败（见 12.9 第 2 项），读取 `mcpp.toml` 改为调用 mcpp 自身的机器输出 |
+
+### 12.9 openkal 体系问题的处理与记录
+
+处理规则：
+
+- **缺陷级别**（实现与 openkal 规范或 C++ 标准不一致、同一份源码在某个目标上构建或运行失败）：定位根因后直接向对应仓库（openkal-musl、openkal-llvm-runtime、openkal-linux/macos/windows 等）提 PR 修复，附最小复现与 CI 覆盖；PR 合入并发布、mcpp-index 收录新版本后，本项目再升级依赖。
+- **需求级别**（openkal 规范目前没有的能力，例如 I/O 多路复用）：只在下表记录，不改动 openkal 规范，也不在本项目私自扩展接口；本项目按现有能力设计（例如 12.3 的线程加阻塞读模型）。
+
+问题记录：
+
+| 编号 | 类别 | 现象 | 根因 | 处理 |
+|---|---|---|---|---|
+| K1 | 缺陷 | 含标准库头文件的翻译单元（所有头文件库的模块封装都是如此，例如 `nlohmann.json`）在 Linux 目标构建通过，在 `x86_64-windows-gnu` 与 `aarch64-macos` 目标报 `no member named 'strtof_l' in the global namespace` | libc++ 的 musl 本地化支持调用 `strtof_l`、`strtod_l`、`strtold_l`、`vasprintf`，musl 只在 `_GNU_SOURCE` 下声明它们；Clang 只在 Linux 目标为 C++ 预定义 `_GNU_SOURCE`。`import std` 不暴露该问题，因为 std 模块用运行时包自己的参数编译 | 已提 PR：openkal-llvm-runtime 0.9.2 在 `__config_site` 中声明 `_GNU_SOURCE`，CI 增加两个交叉目标的 `examples/cxx` 构建；合入后向 mcpp-index 提交 0.9.2 |
+| K2 | 缺陷 | `marzer:tomlplusplus` 在 `x86_64-windows-gnu` 目标报 `__mingw_aligned_malloc` 未声明 | Clang 自带的 `mm_malloc.h` 在 `__MINGW32__` 下调用 MinGW CRT 的 `__mingw_aligned_malloc`，openkal-musl 的 Windows 实现没有提供 | 已记录；本项目不依赖 tomlplusplus，暂不修复，待确认修复位置（openkal-musl 补函数，或运行时包调整 `mm_malloc.h` 路径）后再提 PR |
+| K3 | 需求 | openkal 没有 poll/select 类多路复用 | 规范范围 | 只记录；服务端用线程加阻塞读（12.3） |
+| K4 | 需求 | `kal_process_spawn` 的 `envp` 为空时子进程得到空环境，而不是继承父进程环境 | 规范语义 | 只记录；平台层显式传入从 `kal_env_var_at` 读到的完整环境 |
 
 ## 13. 关键流程
 
@@ -1002,9 +1043,7 @@ cd editors/vscode && npm test                # VS Code 端到端测试
 
 ## 23. 待决问题（请 review）
 
-| 编号 | 问题 | 说明 | 建议 |
-|---|---|---|---|
-| Q1 | 语义工具包在 xlings 中叫什么 | 语义工具包是一个只含数据文件的包：某个平台的 libc++ 头文件、`std` 模块源码、C 库头文件，外加 `kit.json` 清单。没有编译器时，clangd 靠它解析 `import std` 与标准库。VS Code 扩展把它内置；其他编辑器通过 `xlings install lsp-mcpp` 作为依赖自动装上，所以它在 xlings 索引里需要一个包名 | `lsp-mcpp-kit`。S4 是本项目的接口规范，包名跟随项目，归属与用途一眼可见，也更简洁。若希望其他工具复用，可改用中立的 `cxx-semantic-kit` |
+暂无。原 Q1（语义工具包在 xlings 中的包名）已定为 `lsp-mcpp-kit`，见 D22。
 
 ---
 
