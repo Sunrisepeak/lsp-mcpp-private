@@ -24,7 +24,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-14, windows-2022]
+        include:
+          - { os: ubuntu-24.04, target: '' }
+          - { os: macos-14, target: '' }
+          # A Windows host defaults to the MSVC target; openkal's Windows
+          # implementation is reached through the GNU target.
+          - { os: windows-2022, target: '--target x86_64-windows-gnu' }
     defaults:
       run:
         shell: bash
@@ -57,10 +62,10 @@ jobs:
         run: bash .github/scripts/install-mcpp.sh
 
       - name: Build
-        run: mcpp build
+        run: mcpp build ${{ matrix.target }}
 
       - name: Unit tests
-        run: mcpp test
+        run: mcpp test ${{ matrix.target }}
 
       - name: Generated protocol is fresh
         if: runner.os == 'Linux'
