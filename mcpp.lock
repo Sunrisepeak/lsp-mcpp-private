@@ -25,15 +25,15 @@ hash    = "fnv1a:adfe3b5e0af73637"
 
 [package."openkal-llvm-runtime"]
 namespace = "mcpplibs"
-version = "0.9.3"
-source  = "index+mcpplibs@0.9.3"
-hash    = "fnv1a:b51e28c21b7b307b"
+version = "0.9.4"
+source  = "index+mcpplibs@0.9.4"
+hash    = "fnv1a:0c5f7bfe7dfd5dcd"
 
 [package."openkal-musl"]
 namespace = "mcpplibs"
-version = "0.13.2"
-source  = "index+mcpplibs@0.13.2"
-hash    = "fnv1a:49d2292a083aaf0b"
+version = "0.13.3"
+source  = "index+mcpplibs@0.13.3"
+hash    = "fnv1a:c082a19374ffad12"
 
 [package."nlohmann.json"]
 namespace = "nlohmann"
