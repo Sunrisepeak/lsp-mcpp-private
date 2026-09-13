@@ -414,6 +414,7 @@ private:
             }
         }
 
+        restore_cached_model_();
         start_model_load_();
         start_engine_();
         if (engineUnavailable_) {
@@ -924,6 +925,40 @@ private:
 
     // ---- model and plan -----------------------------------------------------------
 
+    // The last model that loaded, so module-level features answer before this one does (design 13.1).
+    std::string model_cache_path_() const { return base::join_path(cacheDirectory_, "model.json"); }
+
+    void restore_cached_model_() {
+        auto text = platform::fs::read_file(model_cache_path_());
+        if (!text) return;
+        const Json cached = Json::parse(*text, nullptr, false);
+        if (cached.is_discarded() || !cached.is_object() || !cached.contains("database")) return;
+        auto database = spec::from_json(cached["database"]);
+        if (!database) return;
+        std::size_t files { 0 };
+        for (const auto& set : database->sets) {
+            for (const auto& unit : set.units) {
+                const std::string path { spec::absolute_source(unit) };
+                if (index_.contains(path)) continue;
+                if (auto source = platform::fs::read_file(path)) {
+                    index_.update(path, *source);
+                    ++files;
+                }
+            }
+        }
+        log::info("restored the previous model's module index ({} files)", files);
+    }
+
+    void save_model_cache_() const {
+        if (!model_) return;
+        Json envelope {
+            { "source", std::string { project::to_string(model_->source) } },
+            { "level", model_->level },
+            { "database", Json::parse(spec::to_json(model_->database).dump()) },
+        };
+        (void)platform::fs::write_file_atomic(model_cache_path_(), envelope.dump());
+    }
+
     void start_model_load_() {
         if (loading_) {
             reloadAfterLoad_ = true;
@@ -960,6 +995,7 @@ private:
                   model_->database.sets.size(), model_->profile.kind, model_->profile.compiler, model_->profile.stdlib);
         for (const auto& issue : model_->issues) log::info("model issue [{}] {}", issue.code, issue.message);
 
+        save_model_cache_();
         index_.clear();
         for (const auto& set : model_->database.sets) {
             for (const auto& unit : set.units) {

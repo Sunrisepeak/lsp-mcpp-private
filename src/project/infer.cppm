@@ -19,7 +19,12 @@ struct InferredDatabase {
     spec::Database database;
     FactsMap facts;
     std::vector<std::string> problems;
+    std::vector<std::string> watch;   // extra paths to watch, from a discovery command
 };
+
+// Completes a database a producer wrote: probes each set's compiler when the
+// set names no toolchain the facts know, and scans units without a role.
+InferredDatabase enrich_database(spec::Database database, const Scanner& scanner, const Prober& prober);
 
 // One set per distinct toolchain; sets see each other. Units carry scanned roles.
 InferredDatabase database_from_commands(std::span<const CompileCommand> commands, std::string_view familyName,

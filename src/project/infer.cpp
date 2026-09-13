@@ -97,6 +97,49 @@ InferredDatabase database_from_commands(std::span<const CompileCommand> commands
     return result;
 }
 
+InferredDatabase enrich_database(spec::Database database, const Scanner& scanner, const Prober& prober) {
+    InferredDatabase result;
+    database.hasIde = true;
+    if (database.profileVersion.empty()) database.profileVersion = std::string { spec::PROFILE_VERSION };
+    // Facts for the toolchains a producer described.
+    for (const auto& [id, toolchain] : database.toolchains) {
+        if (toolchain.driver.empty()) continue;
+        if (auto facts = prober(toolchain.driver, std::vector<std::string> {})) {
+            // What the producer stated about the standard library wins over what a bare query says.
+            if (toolchain.stdlib && !toolchain.stdlib->moduleMetadata.empty()) facts->toolchain.stdlib = toolchain.stdlib;
+            result.facts.emplace(id, std::move(*facts));
+        }
+    }
+    for (auto& set : database.sets) {
+        set.hasIde = true;
+        if ((set.toolchain.empty() || !result.facts.contains(set.toolchain)) && !set.units.empty()) {
+            const auto& first = set.units.front();
+            std::string driver { first.arguments.front() };
+            if (!base::is_absolute_path(driver)) driver = base::join_path(first.workDirectory, driver);
+            const auto relevant = toolchain::probe_relevant_arguments(first.arguments);
+            if (auto facts = prober(driver, relevant)) {
+                set.toolchain = toolchain::toolchain_id(facts->toolchain);
+                if (spec::find_toolchain(database, set.toolchain) == nullptr) database.toolchains.emplace_back(set.toolchain, facts->toolchain);
+                result.facts.emplace(set.toolchain, std::move(*facts));
+            } else {
+                result.problems.push_back(std::format("cannot probe compiler {}", driver));
+            }
+        }
+        for (auto& unit : set.units) {
+            // A producer that stated a role also stated provides and requires (S1 level 2).
+            if (unit.role && *unit.role != spec::Role::unknown) continue;
+            const ScanResult scanned { scanner(spec::absolute_source(unit)) };
+            if (!unit.role) unit.role = role_of(scanned);
+            if (unit.requiredModules.empty()) unit.requiredModules = required_names(scanned);
+            if (unit.providedModules.empty()) {
+                if (const std::string provided { provided_name(scanned) }; !provided.empty()) unit.providedModules.emplace_back(provided, std::string {});
+            }
+        }
+    }
+    result.database = std::move(database);
+    return result;
+}
+
 InferredDatabase infer_database(std::string_view rootInput, const InferOptions& options, const Scanner& scanner) {
     InferredDatabase result;
     const std::string root { base::normalize_path(rootInput) };

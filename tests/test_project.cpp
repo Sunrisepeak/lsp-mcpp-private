@@ -144,6 +144,33 @@ int main() {
         fs::remove_all(root);
     };
 
+    "a producer's build database is completed, not replaced"_test = [] {
+        const std::string root { make_root("database") };
+        write_fixture(root);
+        const std::string main { b::join_path(root, "src/main.cpp") };
+        const std::string greet { b::join_path(root, "src/greet/greet.cppm") };
+        const std::string detail { b::join_path(root, "src/greet/detail.cppm") };
+        nlohmann::json document = nlohmann::json::parse(std::format(R"({{
+          "version": 1, "revision": 0,
+          "sets": [ {{ "name": "hello", "translation-units": [
+            {{ "source": "{}", "work-directory": "{}", "arguments": ["clang++", "-c", "{}"] }},
+            {{ "source": "{}", "work-directory": "{}", "arguments": ["clang++", "-c", "{}"] }},
+            {{ "source": "{}", "work-directory": "{}", "arguments": ["clang++", "-c", "{}"], "ide": {{ "role": "module-partition-interface" }},
+               "provides": {{ "hello.greet:detail": "" }}, "requires": ["std"] }}
+          ] }} ] }})", main, root, main, greet, root, greet, detail, root, detail));
+        write(root, "build/db.json", document.dump());
+        p::LoadOptions options;
+        options.trusted = false;
+        const auto model = p::load_project(root, p::LoadOptions { options.trusted, {}, "build/db.json" });
+        expect(model.source == p::SourceKind::build_database);
+        expect(fatal(model.database.sets.size() == 1u && model.database.sets[0].units.size() == 3u));
+        const auto& units = model.database.sets[0].units;
+        expect(units[1].role == std::optional<s::Role> { s::Role::module_interface }) << "scanned";
+        expect(units[1].providedModules.size() == 1u && units[1].providedModules[0].first == "hello.greet");
+        expect(units[2].requiredModules == std::vector<std::string> { "std" }) << "kept as the producer wrote it";
+        fs::remove_all(root);
+    };
+
     "mcpp manifests"_test = [] {
         expect(p::mcpp_package_name("# c\n[package]\nname        = \"lsp-mcpp\"\nversion = \"0.1.0\"\n[dependencies]\nname = \"x\"\n") == "lsp-mcpp");
         expect(p::mcpp_package_name("[dependencies]\nname = \"x\"\n").empty());

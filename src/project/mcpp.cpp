@@ -9,6 +9,7 @@ import lspmcpp.platform.fs;
 import lspmcpp.platform.dirs;
 import lspmcpp.platform.process;
 import lspmcpp.spec.database;
+import lspmcpp.spec.discovery;
 import lspmcpp.project.detect;
 import lspmcpp.project.compdb;
 import lspmcpp.project.infer;
@@ -42,6 +43,21 @@ base::Result<InferredDatabase> load_mcpp(const Detection& detection, const Provi
         const std::string home { platform::dirs::home_directory() };
         const std::vector<std::string> fallbacks { base::join_path(home, ".mcpp/bin/mcpp"), base::join_path(home, ".xlings/subos/current/bin/mcpp") };
         if (auto mcpp = find_tool("mcpp", fallbacks)) {
+            // S2 first: a producer that can describe the build answers at level 3.
+            const std::vector<std::string> discover { *mcpp, "emit", "build-database", "--format", "jsonl" };
+            auto discovered = spec::run_discovery(discover, spec::DiscoveryRequest { detection.root, {}, {} }, detection.root, std::chrono::minutes { 2 });
+            if (discovered) {
+                if (auto database = spec::load_database(discovered->database)) {
+                    auto enriched = enrich_database(std::move(*database), context.scanner, context.prober);
+                    enriched.watch = discovered->watch;
+                    enriched.watch.push_back(discovered->database);
+                    return enriched;
+                } else {
+                    base::log::warning("mcpp discovery named {} but it cannot be read: {}", discovered->database, database.error().message);
+                }
+            } else {
+                base::log::info("mcpp has no build-database producer ({}); using its compile database", discovered.error().message);
+            }
             platform::SpawnOptions options;
             options.program = *mcpp;
             options.arguments = { "build", "--configure-only" };

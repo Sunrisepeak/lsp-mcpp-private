@@ -129,12 +129,7 @@ ProjectModel load_project(std::string_view rootInput, const LoadOptions& options
     case SourceKind::build_database: {
         auto database = spec::load_database(detection.buildDatabase);
         if (database) {
-            InferredDatabase result;
-            result.database = std::move(*database);
-            for (const auto& [id, toolchain] : result.database.toolchains) {
-                if (auto facts = prober(toolchain.driver, std::vector<std::string> {})) result.facts.emplace(id, std::move(*facts));
-            }
-            loaded = std::move(result);
+            loaded = enrich_database(std::move(*database), scanner, prober);
             model.source = SourceKind::build_database;
         } else {
             model.issues.push_back(ModelIssue { database.error().code, database.error().message });
@@ -145,6 +140,7 @@ ProjectModel load_project(std::string_view rootInput, const LoadOptions& options
     case SourceKind::mcpp:
         accept(load_mcpp(detection, context), SourceKind::mcpp);
         model.watch = { "mcpp.toml", "mcpp.lock" };
+        if (loaded) model.watch.insert(model.watch.end(), loaded->watch.begin(), loaded->watch.end());
         break;
     case SourceKind::cmake: {
         const std::string privateBuild { base::join_path(options.cacheDirectory, "cmake") };
@@ -198,7 +194,8 @@ ProjectModel load_project(std::string_view rootInput, const LoadOptions& options
 
     model.database = std::move(loaded->database);
     model.facts = std::move(loaded->facts);
-    model.level = model.source == SourceKind::build_database ? spec::conformance_level(model.database) : 2;
+    model.level = (model.source == SourceKind::build_database || model.database.generator.value_or(spec::Generator {}).name == "mcpp")
+                      ? std::max(spec::conformance_level(model.database), 1) : 2;
     set_profile(model, options.kit);
     if (options.probeCache != nullptr) options.probeCache->save();
     return model;
