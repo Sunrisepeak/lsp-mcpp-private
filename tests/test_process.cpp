@@ -1,8 +1,12 @@
 // The test program starts copies of itself as the child, so the same test runs
-// on every system without depending on a shell or a system utility.
+// on every system without depending on a shell or a system utility. The one
+// exception is on Windows, where the command interpreter is itself the subject:
+// build tools there are often batch files, and those run through it.
 import std;
+import lspmcpp.os;
 import lspmcpp.testing;
 import lspmcpp.base.path;
+import lspmcpp.base.text;
 import lspmcpp.platform.process;
 import lspmcpp.platform.env;
 import lspmcpp.platform.fs;
@@ -47,6 +51,12 @@ int child_main(std::span<const std::string> arguments) {
         (void)platform::stdio::write_output(stream || !line.empty() ? line : std::string { "<missing>" });
         return 0;
     }
+    if (mode == "--arguments") {
+        std::string joined;
+        for (std::size_t i { 2 }; i < arguments.size(); ++i) joined += std::format("[{}]", arguments[i]);
+        (void)platform::stdio::write_output(joined);
+        return 0;
+    }
     if (mode == "--stderr") {
         (void)platform::stdio::write_error("to-stderr");
         return 3;
@@ -87,6 +97,20 @@ int main() {
         auto status = process->wait();
         expect(status.has_value() && *status == 0);
         expect(collected == "hello\nfrom the parent\n") << collected;
+    };
+
+    // Each argument arrives exactly as given, whatever the system does to pass a
+    // vector through one command line.
+    "arguments arrive unaltered"_test = [&] {
+        const std::vector<std::string> given { "plain", "two words", "", "C:\\dir\\file.txt", "trailing\\",
+                                               "quote\"inside", "back\\\"quote", "\\\\server\\share", "tab\there", "--flag=a b" };
+        std::vector<std::string> arguments { "--arguments" };
+        arguments.insert(arguments.end(), given.begin(), given.end());
+        auto result = platform::run({ .program = self, .arguments = arguments }, std::chrono::seconds { 60 });
+        expect(fatal(result.has_value()));
+        std::string expected;
+        for (const auto& argument : given) expected += std::format("[{}]", argument);
+        expect(result->output == expected) << result->output;
     };
 
     "exit status is propagated"_test = [&] {
@@ -132,6 +156,27 @@ int main() {
         expect(fatal(result.has_value()));
         expect(result->output == "marker-content") << result->output;
         platform::fs::remove_all(directory);
+    };
+
+    // The command interpreter refuses a current directory given in the `\\?\` form
+    // ("UNC paths are not supported") and runs in the Windows directory instead,
+    // so a batch file started in a project ran somewhere else.
+    "the command interpreter runs in the work directory"_test = [&] {
+        if constexpr (lspmcpp::os::FAMILY != lspmcpp::os::Family::windows) {
+            return;
+        } else {
+            const std::string directory { base::join_path(platform::dirs::temp_directory(),
+                std::format("lsp-mcpp-test-cmd-{}", std::chrono::steady_clock::now().time_since_epoch().count())) };
+            expect(fatal(platform::fs::create_directories(directory).has_value())) << directory;
+            expect(platform::fs::write_file(base::join_path(directory, "marker.txt"), "marker-content").has_value());
+            const std::string interpreter { base::normalize_path(platform::env::get("ComSpec").value_or("C:/Windows/System32/cmd.exe")) };
+            auto result = platform::run({ .program = interpreter, .arguments = { "/d", "/c", "type", "marker.txt" },
+                                          .workDirectory = directory }, std::chrono::seconds { 60 });
+            expect(fatal(result.has_value()));
+            expect(base::trim(result->output) == "marker-content") << result->output << result->error;
+            expect(!result->error.contains("UNC")) << result->error;
+            platform::fs::remove_all(directory);
+        }
     };
 
     "a relative program path is refused"_test = [] {

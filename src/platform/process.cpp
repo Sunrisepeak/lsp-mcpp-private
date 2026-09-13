@@ -185,7 +185,14 @@ base::Result<Process> Process::spawn(const SpawnOptions& options) {
 
     std::vector<std::string> argvStorage;
     argvStorage.reserve(options.arguments.size() + 1);
-    argvStorage.push_back(options.program);
+    // The name the program observes as its own, in its system's spelling. A
+    // Windows program that reads its own command line --- the command
+    // interpreter, and every batch file through it --- takes each slash in a
+    // forward-slashed name for a switch: `C:/Windows/System32/cmd.exe` ran
+    // `md.exe`.
+    std::string ownName { options.program };
+    if constexpr (base::NATIVE_PATH_STYLE == base::PathStyle::windows) std::ranges::replace(ownName, '/', '\\');
+    argvStorage.push_back(std::move(ownName));
     for (const auto& argument : options.arguments) argvStorage.push_back(argument);
     std::vector<const char*> argv;
     std::vector<kal_uintptr> argvLengths;
