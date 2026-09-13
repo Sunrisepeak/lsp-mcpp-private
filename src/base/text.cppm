@@ -12,6 +12,13 @@ struct Position {
     auto operator<=>(const Position&) const = default;
 };
 
+struct Range {
+    Position start;
+    Position end;
+    bool operator==(const Range&) const = default;
+    bool contains(Position position) const { return start <= position && position <= end; }
+};
+
 std::string_view trim(std::string_view text);
 std::vector<std::string_view> split(std::string_view text, char separator);
 std::vector<std::string_view> split_lines(std::string_view text);
