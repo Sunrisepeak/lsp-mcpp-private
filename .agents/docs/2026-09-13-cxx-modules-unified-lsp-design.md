@@ -532,6 +532,10 @@ flowchart TB
 | 索引 | `lspmcpp.index.modules` | 语法模块索引与模块级功能 |
 | 服务 | `lspmcpp.server.session` | 工作区会话、状态机、S3 状态通知 |
 | 服务 | `lspmcpp.server.router` | 请求路由与结果合并 |
+| 服务 | `lspmcpp.server.documents`、`.payload`、`.cli` | 打开的文档与增量修改；负载与工具包定位；命令行 |
+| 工程 | `lspmcpp.project.provider` | 数据来源共用的执行、扫描与探测上下文 |
+| 平台 | `lspmcpp.platform.env`、`.stdio` | 环境变量与可执行文件查找；标准输入输出字节流 |
+| 工具 | `src/tools/lspgen.cpp`、`src/tools/conformance.cpp` | 协议生成器与一致性运行器，两个独立可执行文件 |
 
 ### 12.2 命令行
 
@@ -550,7 +554,7 @@ openkal 不提供 poll 或 select 这类多路复用，设计据此选择最简�
 1. **主线程**运行事件循环，只做一件事：从消息队列取消息并修改会话状态。状态只在主线程修改，不需要锁。
 2. **读线程**：编辑器 stdin 一个、每个 clangd 的 stdout 一个，阻塞读取完整消息后放入队列。
 3. **工作线程池**：源码扫描、解析大型数据库、编译器查询，完成后把结果放入队列。
-4. **定时器线程**：驱动防抖、看门狗与退避重启。
+4. **定时器**：不单独开线程。主线程取消息时以最近的截止时间为超时（请求看门狗、防抖、退避重启、模型加载上限），醒来后统一处理到期项。
 5. **文件变化**：请编辑器代为监视，通过 LSP 的 `workspace/didChangeWatchedFiles` 通知；编辑器不支持时，对少量构建描述文件做低频检查。
 
 ### 12.4 平台层基于 openkal
@@ -589,7 +593,7 @@ starting ──> loading ──> preparing ──> ready
 | loading | 识别工程、加载或推断模型 | 忙碌 |
 | preparing | clangd 构建前置模块 | 忙碌，悬停显示进度 |
 | ready | 全部功能可用 | 普通 |
-| degraded | 部分降级，例如推断模式、引擎超时 | 警告，悬停显示原因与修复命令 |
+| degraded | 存在问题：构建系统数据不可用而回退到推断、模块无法解析、引擎超时或崩溃、工作区不受信任。推断模式本身（没有构建系统）不算降级 | 警告，悬停显示原因与修复命令 |
 | error | 只剩语法级功能 | 错误，悬停显示原因与修复命令 |
 
 ### 12.6 路由规则
@@ -648,7 +652,7 @@ starting ──> loading ──> preparing ──> ready
 | K1 | 缺陷 | 含标准库头文件的翻译单元（所有头文件库的模块封装都是如此，例如 `nlohmann.json`）在 Linux 目标构建通过，在 `x86_64-windows-gnu` 与 `aarch64-macos` 目标报 `no member named 'strtof_l' in the global namespace` | libc++ 的 musl 本地化支持调用 `strtof_l`、`strtod_l`、`strtold_l`、`vasprintf`，musl 只在 `_GNU_SOURCE` 下声明它们；Clang 只在 Linux 目标为 C++ 预定义 `_GNU_SOURCE`。`import std` 不暴露该问题，因为 std 模块用运行时包自己的参数编译 | 已提 PR：openkal-llvm-runtime 0.9.2 在 `__config_site` 中声明 `_GNU_SOURCE`，CI 增加两个交叉目标的 `examples/cxx` 构建；合入后向 mcpp-index 提交 0.9.2 |
 | K2 | 缺陷 | `marzer:tomlplusplus` 在 `x86_64-windows-gnu` 目标报 `__mingw_aligned_malloc` 未声明 | Clang 自带的 `mm_malloc.h` 在 `__MINGW32__` 下调用 MinGW CRT 的 `__mingw_aligned_malloc`，openkal-musl 的 Windows 实现没有提供 | 已记录；本项目不依赖 tomlplusplus，暂不修复，待确认修复位置（openkal-musl 补函数，或运行时包调整 `mm_malloc.h` 路径）后再提 PR |
 | K3 | 需求 | openkal 没有 poll/select 类多路复用 | 规范范围 | 只记录；服务端用线程加阻塞读（12.3） |
-| K5 | 缺陷（生态，非 openkal） | `boost-ext:ut` 2.3.1 的模块 `boost.ut` 在 windows-2022 主机上以 `x86_64-windows-gnu` 为目标编译时，clang 22.1.8 在代码生成阶段崩溃（`Exception Code: 0xC0000005`），dev 与 release 配置都复现；同一命令在 Linux 主机交叉编译通过 | 未定位；只在 Windows 主机出现，指向 Windows 版 clang 本身 | 已记录；测试不依赖 `boost.ut`。定位到根因后向对应仓库（LLVM 或 mcpp-index 的包描述）报告 |
+| K5 | 缺陷（生态，非 openkal） | `boost-ext:ut` 2.3.1 的模块 `boost.ut` 在 windows-2022 主机上以 `x86_64-windows-gnu` 为目标编译时，clang 22.1.8 在代码生成阶段崩溃（`Exception Code: 0xC0000005`），dev 与 release 配置都复现；同一命令在 Linux 主机交叉编译通过；macOS 主机（`aarch64-macos`）上所有链接了该模块的测试程序（包括不 import 它的）启动即段错误（exit 139），移除后全部通过 | 未定位。Windows 上只在 Windows 主机出现，指向 Windows 版 clang；macOS 上的崩溃发生在进程启动时，指向该模块的静态初始化与 openkal-macos 启动序列的交互 | 已记录；测试不依赖 `boost.ut`。定位到根因后向对应仓库（LLVM 或 mcpp-index 的包描述）报告 |
 | K4 | 需求 | `kal_process_spawn` 的 `envp` 为空时子进程得到空环境，而不是继承父进程环境 | 规范语义 | 只记录；平台层显式传入从 `kal_env_var_at` 读到的完整环境 |
 
 ## 13. 关键流程
@@ -692,7 +696,7 @@ starting ──> loading ──> preparing ──> ready
 |---|---|---|
 | 工程模型加载失败 | 回退到推断 | 语言状态项警告 |
 | 找不到编译器 | 使用语义工具包 | 语言状态项显示工具包语义 |
-| 导入无法解析 | 语法索引报诊断；不写入引擎数据库，避开 clangd 23.1 的挂起问题（E13） | 该 import 处的诊断 |
+| 导入无法解析 | 语法索引报诊断；该单元以及传递地依赖它的单元都不写入引擎数据库，也不把它们的文档交给 clangd，对它们的语义请求就地应答。实现中确认 clangd 23.1 对导入无法解析的非模块单元同样会停止应答（E13 的扩展） | 该 import 处的诊断 |
 | 引擎请求超时 | 返回降级结果；同一文件连续超时则重启引擎 | 语言状态项警告 |
 | 引擎崩溃 | 退避重启并重放文档；连续失败三次后停在语法模式 | 语言状态项错误 |
 | 负载损坏 | 校验失败时报告并引导重新安装扩展 | 语言状态项错误 |
@@ -741,7 +745,12 @@ mcpp emit build-database [--toolchain SPEC] [--target TRIPLE] [--format json|jso
 | 安装位置 | `-print-libgcc-file-name` 所在目录；MinGW 为工具链根目录 | `-print-resource-dir` | vswhere 找到的 Visual Studio；`VCToolsInstallDir`、`WindowsSdkDir` |
 | 隐式配置 | specs 文件 | 驱动旁 `.cfg` | `INCLUDE`、`CL`、`_CL_` 等环境变量 |
 
-发现顺序：构建系统记录的编译器 → mcpp 默认工具链 → PATH、xlings、mcpp 工具链目录、Homebrew LLVM、vswhere → 语义工具包。只执行白名单中的驱动，结果按驱动路径、大小与修改时间缓存。
+发现顺序：构建系统记录的编译器 → mcpp 默认工具链 → PATH、xlings、mcpp 工具链目录、Homebrew LLVM、vswhere → 语义工具包。只执行白名单中的驱动，结果按驱动路径、大小、修改时间与影响查询的参数缓存。
+
+实现补充：
+
+- 没有构建系统时，发现的编译器只有在其标准库提供模块清单（`*.modules.json`）时才用于语义；Apple clang 与 MSVC 不参与这一步（MSVC 语义只在构建系统记录了 cl.exe 或 clang-cl 时使用，P6/P7 仍待验证），否则使用语义工具包。
+- 构建以 `-nostdinc++ -isystem <前缀>/include/c++/v1` 显式选择 libc++ 时（mcpp 的 LLVM 工具链即如此），驱动查询回答不出清单，探测从该包含目录推出 `<前缀>/lib[/<target>]/libc++.modules.json`。
 
 ### 14.4 归一化规则
 
@@ -934,7 +943,7 @@ lsp-mcpp/
 ├── conformance/                    一致性测试，规范的可执行部分
 │   ├── fixtures/                   用例工程，一个目录一个用例
 │   ├── expected/                   按构建组合与工具包的期望结果
-│   └── runner/                     运行器（C++23 模块），直接驱动 LSP
+│   └── README.md                   运行器在 src/tools/conformance.cpp（C++23 模块），直接驱动 LSP
 │
 ├── src/                            服务端，目录与模块一一对应
 │   ├── main.cpp
@@ -944,8 +953,10 @@ lsp-mcpp/
 │
 ├── tests/                          服务端单元测试，mcpp test 自动发现
 │
+├── testing/                        测试支持包 lspmcpp.testing，以 path dev-dependency 引入
+│
 ├── tools/
-│   └── lspgen/                     由 LSP metaModel.json 生成协议模块
+│   └── lspgen/                     LSP 3.18 metaModel.json 与说明；生成器在 src/tools/lspgen.cpp
 │
 ├── editors/
 │   └── vscode/                     VS Code 扩展
