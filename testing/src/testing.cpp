@@ -53,6 +53,8 @@ void TestCase::operator=(const std::function<void()>& body) const {
     ++state.cases;
     state.currentFailed = false;
     state.currentName = name_;
+    // Unbuffered, so that a test that ends the process still shows where it was.
+    print_error(std::format("[ run ] {}\n", name_));
     try {
         body();
     } catch (const AbortCase&) {
