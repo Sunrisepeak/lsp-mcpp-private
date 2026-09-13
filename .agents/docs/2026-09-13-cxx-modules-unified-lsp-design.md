@@ -653,6 +653,7 @@ starting ──> loading ──> preparing ──> ready
 | K2 | 缺陷 | `marzer:tomlplusplus` 在 `x86_64-windows-gnu` 目标报 `__mingw_aligned_malloc` 未声明 | Clang 自带的 `mm_malloc.h` 在 `__MINGW32__` 下调用 MinGW CRT 的 `__mingw_aligned_malloc`，openkal-musl 的 Windows 实现没有提供 | 已记录；本项目不依赖 tomlplusplus，暂不修复，待确认修复位置（openkal-musl 补函数，或运行时包调整 `mm_malloc.h` 路径）后再提 PR |
 | K3 | 需求 | openkal 没有 poll/select 类多路复用 | 规范范围 | 只记录；服务端用线程加阻塞读（12.3） |
 | K5 | 缺陷（生态，非 openkal） | `boost-ext:ut` 2.3.1 的模块 `boost.ut` 在 windows-2022 主机上以 `x86_64-windows-gnu` 为目标编译时，clang 22.1.8 在代码生成阶段崩溃（`Exception Code: 0xC0000005`），dev 与 release 配置都复现；同一命令在 Linux 主机交叉编译通过；macOS 主机（`aarch64-macos`）上所有链接了该模块的测试程序（包括不 import 它的）启动即段错误（exit 139），移除后全部通过 | 未定位。Windows 上只在 Windows 主机出现，指向 Windows 版 clang；macOS 上的崩溃发生在进程启动时，指向该模块的静态初始化与 openkal-macos 启动序列的交互 | 已记录；测试不依赖 `boost.ut`。定位到根因后向对应仓库（LLVM 或 mcpp-index 的包描述）报告 |
+| K6 | 缺陷 | Windows 上所有 `std::thread` 在 join 时访问违例（`0xC0000005`）：lsp-mcpp 的线程与进程单元测试只在 windows-2022 崩溃，Wine 下复现为 `pthread_join` 读取被截断的指针 | musl 为 C++ 声明的 `pthread_t` 是 `unsigned long`，在 LLP64 的 Windows 上只有 32 位，libc++ 的 `std::thread` 保存它时丢掉了线程地址的高半部分 | 已提 PR：openkal-musl 0.13.2 把该声明改为 `unsigned _Addr`（其他目标上仍是 `long`），并新增 `examples/threads-cxx` 在每个 CI 行编译期断言宽度、运行时创建并 join 线程；openkal-llvm-runtime 以 `^0.13.1` 依赖，无需另发版本 |
 | K4 | 需求 | `kal_process_spawn` 的 `envp` 为空时子进程得到空环境，而不是继承父进程环境 | 规范语义 | 只记录；平台层显式传入从 `kal_env_var_at` 读到的完整环境 |
 
 ## 13. 关键流程
