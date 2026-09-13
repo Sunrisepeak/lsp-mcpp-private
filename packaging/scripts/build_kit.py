@@ -270,6 +270,33 @@ def copy_tree(source, destination):
     shutil.copytree(source, destination, dirs_exist_ok=True)
 
 
+def drop_case_collisions(kit_dir):
+    """Keeps one file of every group whose paths differ only in case.
+
+    A kit is unpacked on case-insensitive file systems (Windows, macOS) and
+    shipped inside a VSIX, which rejects such names outright; the Linux kernel
+    headers have several pairs (xt_mark.h and xt_MARK.h). The all-lowercase
+    name wins, the others are removed and listed.
+    """
+    groups = {}
+    for base, _, files in os.walk(kit_dir):
+        for name in files:
+            rel = os.path.relpath(os.path.join(base, name), kit_dir).replace(os.sep, "/")
+            groups.setdefault(rel.lower(), []).append(rel)
+    dropped = []
+    for names in groups.values():
+        if len(names) < 2:
+            continue
+        keep = sorted(names, key=lambda rel: (posixpath.basename(rel) != posixpath.basename(rel).lower(), rel))[0]
+        for rel in names:
+            if rel != keep:
+                os.remove(os.path.join(kit_dir, *rel.split("/")))
+                dropped.append(rel)
+    if dropped:
+        log(f"dropped {len(dropped)} files whose names differ only in case from a kept file: {', '.join(sorted(dropped))}")
+    return dropped
+
+
 def sysroot_headers_from_dpkg():
     """glibc and Linux kernel headers as the Debian packages install them."""
     if not shutil.which("dpkg"):
@@ -384,6 +411,7 @@ def recipe_libcxx_source(args, lock, spec, kit_dir, work_dir):
             shutil.copyfile(path, os.path.join(licenses_dir, name))
             licenses.append(f"licenses/{name}")
         data["sysroot"] = "sysroot"
+        drop_case_collisions(kit_dir)
     else:
         # Apple's SDK license does not allow redistributing the C library headers.
         data["requires"] = [{"kind": "macos-sdk"}]
@@ -413,24 +441,11 @@ def recipe_llvm_mingw(args, lock, spec, kit_dir, work_dir):
                 or (rel.startswith(copyright_prefix) and posixpath.basename(rel).startswith("COPYING")))
 
     log(f"extracting headers, module sources and manifest from {os.path.basename(archive)}")
-    written = extract_selected(archive, kit_dir, select)
+    extract_selected(archive, kit_dir, select)
 
-    # Windows file systems ignore case; two names that differ only in case
-    # would silently collapse into one when the kit is unpacked there.
-    by_key = {}
-    for rel in written:
-        by_key.setdefault(rel.lower(), []).append(rel)
-    collisions = [names for names in by_key.values() if len(names) > 1]
-    for names in collisions:
-        contents = set()
-        for name in names:
-            with open(os.path.join(kit_dir, *name.split("/")), "rb") as f:
-                contents.add(f.read())
-        if len(contents) == 1:
-            for extra in sorted(names)[1:]:
-                os.remove(os.path.join(kit_dir, *extra.split("/")))
-        else:
-            log(f"warning: names differing only in case with different content: {names}")
+    # Windows file systems ignore case; names that differ only in case would
+    # silently collapse into one when the kit is unpacked there.
+    drop_case_collisions(kit_dir)
 
     licenses_dir = os.path.join(kit_dir, "licenses")
     os.makedirs(licenses_dir, exist_ok=True)

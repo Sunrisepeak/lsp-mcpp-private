@@ -145,6 +145,16 @@ def verify(payload_dir):
 
     for name in ("lsp-mcpp-LICENSE.txt", "LLVM-LICENSE.TXT"):
         need_file(f"licenses/{name}", "license")
+
+    # A VSIX cannot hold two paths that differ only in case, and neither can
+    # the file systems of Windows and macOS.
+    seen = {}
+    for base, _, files in os.walk(payload_dir):
+        for name in files:
+            rel = os.path.relpath(os.path.join(base, name), payload_dir).replace(os.sep, "/")
+            other = seen.setdefault(rel.lower(), rel)
+            if other != rel:
+                problems.append(f"paths differ only in case: {other} and {rel}")
     return problems
 
 
