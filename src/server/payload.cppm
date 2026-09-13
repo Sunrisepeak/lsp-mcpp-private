@@ -21,8 +21,9 @@ struct PayloadRequest {
     std::string kit;                // --kit
 };
 
-// Explicit paths win; then payload.json; then the payload's conventional layout;
-// then clangd on PATH.
+// Explicit paths win; then the payload named or enclosing this executable
+// (payload.json, else the conventional layout); then clangd on PATH and a kit
+// installed by xlings (design 15.3).
 PayloadPaths resolve_payload(const PayloadRequest& request);
 // The macOS SDK path for kits that need one, or empty.
 std::string macos_sdk_path();

@@ -53,11 +53,13 @@ jobs:
           extension=$(node -p "require('./editors/vscode/package.json').version")
           echo "tag $tag, mcpp.toml $version, extension $extension"
           [ "$tag" = "v$version" ] && [ "$version" = "$extension" ]
-      - name: Checksums
+      - name: Collect, split for xlings, checksum
         run: |
           set -euo pipefail
           mkdir -p release
           find artifacts -type f \( -name '*.vsix' -o -name 'payload-*.tar.gz' \) -exec cp {} release/ \;
+          # xlings-res archives and the rendered xim-pkgindex descriptors (design 17.1).
+          python3 packaging/scripts/xlings_artifacts.py --payloads release --out release
           (cd release && sha256sum * > SHA256SUMS && cat SHA256SUMS)
       - name: GitHub release
         env:
@@ -80,5 +82,9 @@ jobs:
           GH_TOKEN: ${{ env.XLINGS_RES_TOKEN }}
         run: |
           tag='${{ github.event.inputs.tag || github.ref_name }}'
-          gh release create "$tag" release/payload-*.tar.gz release/SHA256SUMS -R xlings-res/lsp-mcpp --title "$tag" --notes "Mirror of lsp-mcpp $tag" \
-            || gh release upload "$tag" release/payload-*.tar.gz release/SHA256SUMS -R xlings-res/lsp-mcpp --clobber
+          version="${tag#v}"
+          kit=$(python3 -c "import json; print(json.load(open('packaging/payload.lock.json'))['libcxx-version'])")
+          gh release create "$version" release/lsp-mcpp-"$version"-*.tar.gz -R xlings-res/lsp-mcpp --title "$version" --notes "Mirror of lsp-mcpp $tag" \
+            || gh release upload "$version" release/lsp-mcpp-"$version"-*.tar.gz -R xlings-res/lsp-mcpp --clobber
+          gh release create "$kit" release/lsp-mcpp-kit-"$kit"-*.tar.gz -R xlings-res/lsp-mcpp-kit --title "$kit" --notes "lsp-mcpp-kit $kit, from lsp-mcpp $tag" \
+            || gh release upload "$kit" release/lsp-mcpp-kit-"$kit"-*.tar.gz -R xlings-res/lsp-mcpp-kit --clobber

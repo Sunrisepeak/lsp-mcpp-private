@@ -653,7 +653,8 @@ starting ──> loading ──> preparing ──> ready
 | K2 | 缺陷 | `marzer:tomlplusplus` 在 `x86_64-windows-gnu` 目标报 `__mingw_aligned_malloc` 未声明 | Clang 自带的 `mm_malloc.h` 在 `__MINGW32__` 下调用 MinGW CRT 的 `__mingw_aligned_malloc`，openkal-musl 的 Windows 实现没有提供 | 已记录；本项目不依赖 tomlplusplus，暂不修复，待确认修复位置（openkal-musl 补函数，或运行时包调整 `mm_malloc.h` 路径）后再提 PR |
 | K3 | 需求 | openkal 没有 poll/select 类多路复用 | 规范范围 | 只记录；服务端用线程加阻塞读（12.3） |
 | K5 | 缺陷（生态，非 openkal） | `boost-ext:ut` 2.3.1 的模块 `boost.ut` 在 windows-2022 主机上以 `x86_64-windows-gnu` 为目标编译时，clang 22.1.8 在代码生成阶段崩溃（`Exception Code: 0xC0000005`），dev 与 release 配置都复现；同一命令在 Linux 主机交叉编译通过；macOS 主机（`aarch64-macos`）上所有链接了该模块的测试程序（包括不 import 它的）启动即段错误（exit 139），移除后全部通过 | 未定位。Windows 上只在 Windows 主机出现，指向 Windows 版 clang；macOS 上的崩溃发生在进程启动时，指向该模块的静态初始化与 openkal-macos 启动序列的交互 | 已记录；测试不依赖 `boost.ut`。定位到根因后向对应仓库（LLVM 或 mcpp-index 的包描述）报告 |
-| K6 | 缺陷 | Windows 上所有 `std::thread` 在 join 时访问违例（`0xC0000005`）：lsp-mcpp 的线程与进程单元测试只在 windows-2022 崩溃，Wine 下复现为 `pthread_join` 读取被截断的指针 | musl 为 C++ 声明的 `pthread_t` 是 `unsigned long`，在 LLP64 的 Windows 上只有 32 位，libc++ 的 `std::thread` 保存它时丢掉了线程地址的高半部分 | 已提 PR：openkal-musl 0.13.2 把该声明改为 `unsigned _Addr`（其他目标上仍是 `long`），并新增 `examples/threads-cxx` 在每个 CI 行编译期断言宽度、运行时创建并 join 线程；openkal-llvm-runtime 以 `^0.13.1` 依赖，无需另发版本 |
+| K6 | 缺陷 | Windows 上所有 `std::thread` 在 join 时访问违例（`0xC0000005`）：lsp-mcpp 的线程与进程单元测试只在 windows-2022 崩溃，Wine 下复现为 `pthread_join` 读取被截断的指针 | musl 为 C++ 声明的 `pthread_t` 是 `unsigned long`，在 LLP64 的 Windows 上只有 32 位，libc++ 的 `std::thread` 保存它时丢掉了线程地址的高半部分 | 已提 PR：openkal-musl 0.13.2 把该声明改为 `unsigned _Addr`（其他目标上仍是 `long`），并新增 `examples/threads-cxx` 在每个 CI 行编译期断言宽度、运行时创建并 join 线程；openkal-llvm-runtime 对 openkal-musl 的版本要求是精确的（在其旁边声明 0.13.2 会被判为不可调和），因此另提 PR：openkal-llvm-runtime 0.9.3 跟随 openkal-musl 0.13.2，`examples/cxx` 增加线程 join，macOS 与 Windows 主机任务原生运行它 |
+| K7 | 缺陷（待定位） | 以 release（`-O2`）配置构建、运行在 openkal-windows 与 openkal-macos 上的程序启动即异常：Windows 上 `argv` 各参数被截去若干字节、标准输出没有内容（Wine 可复现），macOS 上段错误；同一源码 dev（`-O0`）配置在三个平台都正常，Linux 的 release 构建正常 | 未定位。最小复现只需打印 `argv`，与 lsp-mcpp 代码无关，指向 openkal 在这两个平台的启动路径在优化后的行为 | 已记录，定位后按缺陷流程提 PR；在此之前负载与一致性运行器用 dev 配置构建 |
 | K4 | 需求 | `kal_process_spawn` 的 `envp` 为空时子进程得到空环境，而不是继承父进程环境 | 规范语义 | 只记录；平台层显式传入从 `kal_env_var_at` 读到的完整环境 |
 
 ## 13. 关键流程
@@ -801,7 +802,7 @@ mcpp emit build-database [--toolchain SPEC] [--target TRIPLE] [--format json|jso
 | 运行形态 | clangd 与工具包的位置 |
 |---|---|
 | VS Code 扩展 | 扩展安装目录下的 `payload/`，只读使用，不复制 |
-| xlings 安装 | 服务端包依赖的 clangd 与工具包的安装目录 |
+| xlings 安装 | 服务端包依赖的 clangd（`llvm-tools`，经 xvm 在 PATH 上）与工具包（`<xlings 仓库>/xim-x-lsp-mcpp-kit/<版本>`）；可执行文件位于某个负载的 `bin/` 下时，自动使用该负载 |
 | 用户显式指定 | 设置项覆盖，仅用于排障 |
 
 ### 15.4 状态目录
@@ -874,9 +875,9 @@ mcpp emit build-database [--toolchain SPEC] [--target TRIPLE] [--format json|jso
 
 | 产物 | 生成方式 | xlings 中的形态 |
 |---|---|---|
-| lsp-mcpp 服务端 | mcpp 基于 openkal 交叉构建的静态二进制 | `xim:lsp-mcpp`，参照 `pkgs/m/mcpp.lua`；产物镜像到 `xlings-res/lsp-mcpp` |
+| lsp-mcpp 服务端 | mcpp 基于 openkal 交叉构建的静态二进制 | `xim:lsp-mcpp`，依赖 `xim:llvm-tools@23.1.0` 与 `xim:lsp-mcpp-kit@23.1.0`；描述模板 `packaging/xlings/lsp-mcpp.lua.in`，发布时由 `packaging/scripts/xlings_artifacts.py` 按 `{name}-{version}-{os}-{arch}.tar.gz` 拆分产物并填入 sha256；产物镜像到 `xlings-res/lsp-mcpp` |
 | clangd 23.1 负载 | 官方发行包剥离符号、删除 sanitizer 运行库 | 按 xim-pkgindex 的 LLVM 分包流程更新 `xim:llvm-tools@23.1.0`，补齐各架构 sha256 |
-| 语义工具包 | 按 S4 组装的纯数据包 | 新增一个数据包，包名待定（第 23 节）；参照 `pkgs/l/linux-headers.lua`，不声明可执行程序；一个包名下按 linux、windows、macosx 分别提供产物，版本号跟随 libc++ |
+| 语义工具包 | 按 S4 组装的纯数据包 | `xim:lsp-mcpp-kit`（D22）；参照 `pkgs/l/linux-headers.lua`，不声明可执行程序；一个包名下按 linux、windows、macosx 分别提供产物，版本号跟随 libc++；描述模板 `packaging/xlings/lsp-mcpp-kit.lua.in`，镜像到 `xlings-res/lsp-mcpp-kit` |
 
 | 渠道 | 做法 |
 |---|---|

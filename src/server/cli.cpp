@@ -194,6 +194,9 @@ int run_cli(int argc, char* argv[]) {
     (void)app.option("no-discover").global(true).help("Do not look for compilers; loose sources use the semantic kit");
     (void)app.option("log-level").takes_value().global(true).help("debug | info | warning | error");
     (void)app.option("request-timeout").takes_value().global(true).help("Seconds before an engine request is answered without it");
+    // Language clients pass these by convention; this server always speaks over its standard streams.
+    (void)app.option("stdio").global(true).help("Accepted for language clients; standard input and output are always used");
+    (void)app.option("clientProcessId").takes_value().global(true).help("Accepted for language clients; not used");
     (void)app.action(serve);
 
     cmdline::App serveCommand { "serve" };

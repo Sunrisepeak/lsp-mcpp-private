@@ -118,8 +118,10 @@ jobs:
         with:
           path: .payload-cache
           key: payload-inputs-${{ matrix.platform }}-${{ hashFiles('packaging/payload.lock.json') }}
+      # The dev profile, not release: optimized builds over openkal-windows and
+      # openkal-macos misbehave at startup (design 12.9, K7).
       - name: Build the server
-        run: mcpp build --release ${{ matrix.target }}
+        run: mcpp build ${{ matrix.target }}
       - name: Trim clangd
         run: python3 packaging/scripts/trim_clangd.py --platform ${{ matrix.platform }} --out work/clangd --cache "$PAYLOAD_CACHE"
       - name: Build the semantic kit
