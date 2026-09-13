@@ -213,9 +213,50 @@ private:
 
     void notify_client_(std::string_view method, Json params) { send_client_(lsp::make_notification(method, std::move(params))); }
 
+    // clangd names a Windows file "file:///C:/dir/f.cppm" and editors write
+    // "file:///c%3A/dir/f.cppm". The engine database uses the first form, and
+    // clangd matches unsaved buffers to module sources by exact path, so URIs
+    // are given to the engine in its own form.
+    std::string engine_uri_(std::string_view uri) const {
+        auto path = base::uri_to_path(uri);
+        if (!path || path->size() < 2 || (*path)[1] != ':') return std::string { uri };
+        return "file:///" + path->substr(0, 2) + base::percent_encode_path(std::string_view { *path }.substr(2));
+    }
+
+    Json engine_view_(const Json& message) const {
+        if constexpr (lspmcpp::os::FAMILY != lspmcpp::os::Family::windows) {
+            return message;
+        } else {
+            Json copy = message;
+            const auto fix = [&](Json& uri) {
+                if (uri.is_string()) uri = engine_uri_(uri.get<std::string>());
+            };
+            if (copy.contains("params") && copy["params"].is_object()) {
+                Json& params = copy["params"];
+                if (params.contains("textDocument") && params["textDocument"].is_object() && params["textDocument"].contains("uri")) {
+                    fix(params["textDocument"]["uri"]);
+                }
+                if (params.contains("changes") && params["changes"].is_array()) {
+                    for (auto& change : params["changes"]) {
+                        if (change.is_object() && change.contains("uri")) fix(change["uri"]);
+                    }
+                }
+            }
+            return copy;
+        }
+    }
+
+    // The client's URI for a document the engine names in its own form.
+    std::string client_uri_(std::string_view engineUri) const {
+        if (documents_.find(engineUri) != nullptr) return std::string { engineUri };
+        const std::string path { path_of_uri_(engineUri) };
+        if (const Document* document = path.empty() ? nullptr : documents_.find_by_path(path)) return document->uri;
+        return std::string { engineUri };
+    }
+
     bool send_engine_(const Json& message) {
         if (!clangd_.running()) return false;
-        if (auto sent = clangd_.send(message); !sent) {
+        if (auto sent = clangd_.send(engine_view_(message)); !sent) {
             log::warning("cannot write to clangd: {}", sent.error().message);
             return false;
         }
@@ -791,7 +832,7 @@ private:
         const std::string method { message.value("method", std::string {}) };
         if (method == lsp::method::TEXT_DOCUMENT_PUBLISH_DIAGNOSTICS) {
             const Json& params { message["params"] };
-            const std::string uri { params.value("uri", std::string {}) };
+            const std::string uri { client_uri_(params.value("uri", std::string {})) };
             awaitingDiagnostics_.erase(uri);
             if (documents_.find(uri) == nullptr) {
                 send_client_(message);
