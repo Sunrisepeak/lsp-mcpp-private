@@ -713,7 +713,9 @@ public:
             open(file);
             if (auto insert = check.find("insert"); insert != check.end()) {
                 // [line, text]: the text is inserted as a new line before `line`.
-                auto lines = base::split_lines(text_of(file));
+                // The views split_lines returns point into `current`, which must outlive them.
+                const std::string current { text_of(file) };
+                const auto lines = base::split_lines(current);
                 std::vector<std::string> copy { lines.begin(), lines.end() };
                 const std::size_t at { std::min<std::size_t>(insert->at(0).get<std::size_t>(), copy.size()) };
                 copy.insert(copy.begin() + static_cast<std::ptrdiff_t>(at), insert->at(1).get<std::string>());
