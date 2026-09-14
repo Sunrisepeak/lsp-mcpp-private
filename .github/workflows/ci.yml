@@ -1,0 +1,568 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MCPP_VERSION: 2026.9.15.1
+  LLVM_VERSION: 22.1.8
+  XLINGS_VERSION: v2026.8.17.2
+  XLINGS_NON_INTERACTIVE: '1'
+  PAYLOAD_CACHE: ${{ github.workspace }}/.payload-cache
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # The specifications' schemas, examples and the fixtures' simulated producer data (specs/tools/validate.py).
+  specifications:
+    name: specifications
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Schemas, examples, text blocks and links
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/specs"
+          "$RUNNER_TEMP/specs/bin/pip" install --quiet 'jsonschema>=4.18'
+          "$RUNNER_TEMP/specs/bin/python" specs/tools/validate.py | grep -v '^PASS'
+
+  # ---------------------------------------------------------------------------
+  # Unit tests on each host, and every executable starts.
+  build-test:
+    name: build and unit tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, target: '' }
+          # A macOS host resolves the Apple-native triple by default; openkal's
+          # macOS implementation is reached through aarch64-macos.
+          - { os: macos-14, target: '--target aarch64-macos' }
+          # A Windows host defaults to the MSVC target; openkal's Windows
+          # implementation is reached through the GNU target.
+          - { os: windows-2022, target: '--target x86_64-windows-gnu' }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-mcpp
+      - name: Build
+        run: mcpp build ${{ matrix.target }}
+      - name: Executables run
+        run: |
+          set -euo pipefail
+          for exe in lsp-mcpp lsp-mcpp-conformance lsp-mcpp-lspgen; do
+            path=$(find target -type f \( -name "$exe" -o -name "$exe.exe" \) -path '*/bin/*' | head -1)
+            echo "$exe -> $path"
+            "$path" version
+          done
+      - name: Unit tests
+        run: mcpp test ${{ matrix.target }}
+      # The payloads ship release builds, and every release-only defect found so
+      # far (design 12.9, K7 and K13) was invisible to the dev profile.
+      - name: Unit tests (release)
+        run: mcpp test --profile release ${{ matrix.target }}
+      - name: Generated protocol is fresh
+        if: runner.os == 'Linux'
+        run: |
+          mcpp run lsp-mcpp-lspgen -- generate --meta-model tools/lspgen/metaModel-3.18.json --out src/lsp
+          git diff --exit-code src/lsp
+
+  # ---------------------------------------------------------------------------
+  # One Linux host builds the server for every platform (design 12.4, usable plan W11):
+  # the release executables built here are the ones the Windows and macOS payloads
+  # carry, so conformance, clean-machine and end-to-end jobs test what was cross-built.
+  cross-build:
+    name: cross-build from Linux (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-windows-gnu, exe: '.exe' }
+          - { target: aarch64-macos,      exe: '' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-mcpp
+      - name: Build for ${{ matrix.target }}
+        run: mcpp build --profile release --target ${{ matrix.target }}
+      - name: Artifacts have the expected format
+        run: |
+          set -euo pipefail
+          mkdir -p cross
+          for exe in lsp-mcpp lsp-mcpp-conformance lsp-mcpp-lspgen lsp-mcpp-mock-mcpp; do
+            path=$(find target -type f -name "$exe${{ matrix.exe }}" -path '*/bin/*' -newer mcpp.toml | head -1)
+            file "$path"
+            case "${{ matrix.target }}" in
+              *windows*) file "$path" | grep -q 'PE32+ executable' ;;
+              *macos*)   file "$path" | grep -q 'Mach-O 64-bit arm64' ;;
+            esac
+            cp "$path" cross/
+          done
+          (cd cross && sha256sum * | tee SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cross-${{ matrix.target }}
+          path: cross
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Payloads: the server, trimmed clangd 23.1 and the lsp-mcpp-kit (design 15.2).
+  # linux-x64 and win32-x64 are assembled on Linux; darwin-arm64 needs a macOS host
+  # for lipo and the libc++ configure. The Windows and macOS executables come from
+  # the cross-build job, unchanged (W11).
+  payload:
+    name: payload (${{ matrix.platform }})
+    needs: cross-build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x64,    os: ubuntu-24.04, cross: '',                   exe: '' }
+          - { platform: win32-x64,    os: ubuntu-24.04, cross: x86_64-windows-gnu,   exe: '.exe' }
+          - { platform: darwin-arm64, os: macos-14,     cross: aarch64-macos,        exe: '' }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-mcpp
+      - name: Build tools for the kit configure
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -q && sudo apt-get install -y -q ninja-build; fi
+          if [ "$RUNNER_OS" = macOS ]; then brew install ninja; fi
+          cmake --version | head -1; ninja --version
+      - name: Cache upstream inputs
+        uses: actions/cache@v4
+        with:
+          path: .payload-cache
+          key: payload-inputs-${{ matrix.platform }}-${{ hashFiles('packaging/payload.lock.json') }}
+      # Release builds: openkal-llvm-runtime 0.9.6 carries the fixes for the two
+      # release-only defects beneath the server (design 12.9, K7 and K13).
+      - name: Build the server
+        if: matrix.cross == ''
+        run: |
+          set -euo pipefail
+          mcpp build --profile release
+          mkdir -p cross
+          for exe in lsp-mcpp lsp-mcpp-conformance lsp-mcpp-mock-mcpp; do
+            cp "$(find target -type f -name "$exe" -path '*/bin/*' -newer mcpp.toml | head -1)" cross/
+          done
+      - name: The cross-built server
+        if: matrix.cross != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: cross-${{ matrix.cross }}
+          path: cross
+      - name: Trim clangd
+        run: python3 packaging/scripts/trim_clangd.py --platform ${{ matrix.platform }} --out work/clangd --cache "$PAYLOAD_CACHE"
+      - name: Build the semantic kit
+        run: python3 packaging/scripts/build_kit.py --platform ${{ matrix.platform }} --out work/kit --cache "$PAYLOAD_CACHE" --work work/kit-build
+      - name: Assemble
+        run: |
+          set -euo pipefail
+          server="cross/lsp-mcpp${{ matrix.exe }}"
+          runner="cross/lsp-mcpp-conformance${{ matrix.exe }}"
+          mock="cross/lsp-mcpp-mock-mcpp${{ matrix.exe }}"
+          chmod +x cross/*
+          python3 packaging/scripts/assemble_payload.py --platform ${{ matrix.platform }} --server "$server" \
+              --clangd work/clangd --kit work/kit --out payload
+          python3 packaging/scripts/assemble_payload.py --verify payload
+          if [ -f cross/SHA256SUMS ]; then
+            # The payload carries the cross-built executable byte for byte.
+            want=$(grep " lsp-mcpp${{ matrix.exe }}\$" cross/SHA256SUMS | cut -d' ' -f1)
+            got=$(python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "payload/bin/lsp-mcpp${{ matrix.exe }}")
+            echo "cross-built $want, payload $got"
+            [ "$want" = "$got" ]
+          fi
+          mkdir -p tools && cp "$runner" "$mock" tools/
+          # A tarball keeps executable bits and links, which an artifact zip does not.
+          tar -czf payload-${{ matrix.platform }}.tar.gz payload tools
+          du -sh payload payload-${{ matrix.platform }}.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: payload-${{ matrix.platform }}
+          path: payload-${{ matrix.platform }}.tar.gz
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # The specifications' executable part, against real toolchains (conformance/README.md).
+  conformance:
+    name: conformance (${{ matrix.platform }})
+    needs: payload
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            os: ubuntu-24.04
+            fixtures: inferred untrusted mcpp-gcc mcpp-llvm mcpp-split mcpp-split-gcc mcpp-all-cppm mcpp-watch mcpp-watch@polling mcpp-emit mcpp-emit-package-std mcpp-emit-broken mcpp-emit-unavailable mcpp-emit-watch mcpp-emit-watch@polling mingw cmake-clang cmake-clang-bdb s1-two-sets watch-polling payload-corrupt multi-root
+          - platform: darwin-arm64
+            os: macos-14
+            fixtures: inferred untrusted mcpp-llvm mcpp-split mcpp-all-cppm mcpp-watch multi-root
+          - platform: win32-x64
+            os: windows-2022
+            fixtures: inferred inferred-msvc untrusted mingw cmake-msvc cmake-msvc-bdb cmake-msvc-std cmake-clangxx-msvc cmake-clang-cl compdb-clangxx-msvc-std compdb-clang-cl-std mcpp-msvc mcpp-llvm-msvc mcpp-split mcpp-split-msvc mcpp-all-cppm mcpp-watch multi-root
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-mcpp
+      - name: Toolchains the fixtures build with
+        run: |
+          set -euo pipefail
+          case " ${{ matrix.fixtures }} " in *" mcpp-gcc "*|*" mcpp-split-gcc "*|*" mingw "*) mcpp toolchain install gcc 16.1.0 ;; esac
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -q && sudo apt-get install -y -q ninja-build; fi
+      # usable plan W3, closing the loop with mcpp itself: what `mcpp emit build-database` prints for
+      # each of this host's mcpp fixtures, against the S1 and S2 schemas, S1's semantic rules and the
+      # contract of mcpp-community/mcpp#636 (specs/tools/validate.py). The fixtures below then have the
+      # server consume the same answers. A fixture with mcpp-mock.json simulates mcpp and is skipped.
+      - name: mcpp's own build databases against the specifications
+        env:
+          PYTHONUTF8: '1'
+        run: |
+          set -euo pipefail
+          temp="$RUNNER_TEMP"; python=python3
+          if [ "$RUNNER_OS" = Windows ]; then temp=$(cygpath -u "$RUNNER_TEMP"); python=python; fi
+          "$python" -m venv "$temp/specs"
+          venv="$temp/specs/bin/python"; [ "$RUNNER_OS" = Windows ] && venv="$temp/specs/Scripts/python.exe"
+          "$venv" -m pip install --quiet --disable-pip-version-check 'jsonschema>=4.18'
+          envelopes=()
+          for fixture in ${{ matrix.fixtures }}; do
+            fixture=${fixture%@*}
+            case "$fixture" in mcpp-*) ;; *) continue ;; esac
+            source="conformance/fixtures/$fixture"
+            [ -f "$source/mcpp.toml" ] && [ ! -f "$source/mcpp-mock.json" ] || continue
+            [ -e "$temp/mcpp-emit/$fixture.json" ] && continue
+            mkdir -p "$temp/mcpp-emit" && cp -R "$source" "$temp/mcpp-emit/$fixture"
+            (cd "$temp/mcpp-emit/$fixture" && mcpp emit build-database --format json > "$temp/mcpp-emit/$fixture.json")
+            envelopes+=("$temp/mcpp-emit/$fixture.json")
+          done
+          "$venv" specs/tools/validate.py ${envelopes[@]+"${envelopes[@]}"} | grep -v '^PASS'
+      # cmake-clang-bdb and cmake-msvc-bdb need CMake's build-database export,
+      # which only merges correctly from CMake 4.4 on (usable plan W4, E16);
+      # these hosts' own CMake is the 3.31.6 the runner images ship, so a
+      # matching official build is installed just for those two fixtures.
+      # It is deliberately NOT put first on PATH for the whole job: CMake
+      # rotates its experimental-feature UUIDs on its own schedule, and
+      # cmake-msvc-std already pins 3.31.6's CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
+      # UUID as its default, which differs under 4.4 (E1/E7-E11); each
+      # bdb fixture gets CMake 4.4.2 individually below instead.
+      - name: Cache CMake 4.4.2 (cmake-clang-bdb, cmake-msvc-bdb)
+        if: matrix.platform == 'linux-x64' || matrix.platform == 'win32-x64'
+        id: cmake-bdb-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/cmake-4.4.2
+          key: cmake-bdb-4.4.2-${{ runner.os }}
+      - name: Install CMake 4.4.2
+        if: (matrix.platform == 'linux-x64' || matrix.platform == 'win32-x64') && steps.cmake-bdb-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/cmake-4.4.2"
+          if [ "$RUNNER_OS" = Linux ]; then
+            curl -sfL https://github.com/Kitware/CMake/releases/download/v4.4.2/cmake-4.4.2-linux-x86_64.tar.gz -o "$RUNNER_TEMP/cmake-4.4.2.tar.gz"
+            tar -xzf "$RUNNER_TEMP/cmake-4.4.2.tar.gz" -C "$RUNNER_TEMP/cmake-4.4.2" --strip-components 1
+          else
+            curl -sfL https://github.com/Kitware/CMake/releases/download/v4.4.2/cmake-4.4.2-windows-x86_64.zip -o "$RUNNER_TEMP/cmake-4.4.2.zip"
+            # A bash step, so $RUNNER_TEMP (bash-expanded below) rather than
+            # pwsh's own $env:RUNNER_TEMP, which bash would try to expand itself.
+            pwsh -NoProfile -Command "Expand-Archive -Path '$RUNNER_TEMP/cmake-4.4.2.zip' -DestinationPath '$RUNNER_TEMP/cmake-4.4.2-zip' -Force"
+            mv "$RUNNER_TEMP"/cmake-4.4.2-zip/cmake-4.4.2-windows-x86_64/* "$RUNNER_TEMP/cmake-4.4.2/"
+          fi
+      - name: CMake 4.4.2 is there and reports its version
+        if: matrix.platform == 'linux-x64' || matrix.platform == 'win32-x64'
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = Windows ]; then "$RUNNER_TEMP/cmake-4.4.2/bin/cmake.exe" --version; else "$RUNNER_TEMP/cmake-4.4.2/bin/cmake" --version; fi
+      # The MSVC fixtures build inside a developer environment; the server under test
+      # runs without one, as it does when an editor starts it (usable plan D30).
+      - name: The MSVC developer environment, for the fixtures' own builds
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          Set-Content -Path "$env:RUNNER_TEMP\capture-msvc.cmd" -Value "@call `"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul`r`n@set"
+          cmd /d /c "$env:RUNNER_TEMP\capture-msvc.cmd" | Out-File -Encoding utf8 "$env:RUNNER_TEMP\msvc.env"
+          Select-String -Path "$env:RUNNER_TEMP\msvc.env" -Pattern '^(VCToolsInstallDir|WindowsSDKVersion)='
+          # A second snapshot, only for cmake-msvc-bdb and cmake-clang-cl: the same developer
+          # environment with CMake 4.4.2 first on PATH, so that fixture's own
+          # prepare steps use it while every other MSVC fixture keeps using
+          # the runner's own CMake untouched.
+          $env:PATH = "$env:RUNNER_TEMP\cmake-4.4.2\bin;$env:PATH"
+          cmd /d /c "$env:RUNNER_TEMP\capture-msvc.cmd" | Out-File -Encoding utf8 "$env:RUNNER_TEMP\msvc-bdb.env"
+      - uses: actions/download-artifact@v4
+        with:
+          name: payload-${{ matrix.platform }}
+      - name: Unpack the payload
+        run: tar -xzf payload-${{ matrix.platform }}.tar.gz && ls payload tools
+      - name: Run the fixtures
+        env:
+          CONFORMANCE_CLANGXX: ${{ runner.os == 'Linux' && '~/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/bin/clang++' || '' }}
+        run: |
+          set -euo pipefail
+          export CONFORMANCE_CLANGXX="${CONFORMANCE_CLANGXX/#\~/$HOME}"
+          exe=''; extra=()
+          if [ "$RUNNER_OS" = Windows ]; then exe='.exe'; extra=(--msvc-env "$RUNNER_TEMP/msvc.env"); fi
+          # cmake-clang-bdb and cmake-msvc-bdb are the only fixtures that need
+          # CMake 4.4.2 (see the steps above): a PATH prefix for the former, a
+          # developer environment captured with it first on PATH for the
+          # latter, so every other fixture keeps using the runner's own CMake.
+          run_fixture() {
+            local fixture="$1"; shift
+            local path_prefix=''
+            local -a fixture_extra=(${extra[@]+"${extra[@]}"})
+            case "$fixture" in
+              cmake-clang-bdb) path_prefix="$RUNNER_TEMP/cmake-4.4.2/bin:" ;;
+              cmake-msvc-bdb|cmake-clang-cl) fixture_extra=(--msvc-env "$RUNNER_TEMP/msvc-bdb.env") ;;
+              # usable plan W9.3: the fallback runs only when the client never declares
+              # didChangeWatchedFiles.dynamicRegistration. NAME@polling runs fixture NAME that way.
+              watch-polling|*@polling) fixture_extra+=(--no-dynamic-watch) ;;
+            esac
+            PATH="$path_prefix$PATH" "tools/lsp-mcpp-conformance$exe" run --server "payload/bin/lsp-mcpp$exe" --payload payload \
+                ${fixture_extra[@]+"${fixture_extra[@]}"} --fixture "conformance/fixtures/${fixture%@*}" "$@"
+          }
+          failed=''
+          for fixture in ${{ matrix.fixtures }}; do
+            echo "::group::$fixture"
+            if ! run_fixture "$fixture" --timeout 180; then
+              failed="$failed $fixture"
+            fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::failed fixtures:$failed"
+            # Rerun the first failure with the server's log, for the record.
+            first=${failed# }; first=${first%% *}
+            run_fixture "$first" --timeout 60 --verbose 2>&1 | tail -200 || true
+            exit 1
+          fi
+
+      # Startup timing (usable plan W7): the timing fixture cold, then warm with the same
+      # workspace and cache. A warm start must reuse the std module the cold one built
+      # (SC4). Only severe regressions fail here; nightly.yml records the medians. The
+      # budgets hold on every host: first runs measured cold 6.2, 4.5 and 8.7 s and warm
+      # 1.8, 1.9 and 3.5 s on Linux, macOS and Windows runners.
+      - name: Cold and warm start
+        run: |
+          set -euo pipefail
+          exe=''; [ "$RUNNER_OS" = Windows ] && exe='.exe'
+          timing="$RUNNER_TEMP/timing"
+          rm -rf "$timing"
+          start() {
+            "tools/lsp-mcpp-conformance$exe" run --server "payload/bin/lsp-mcpp$exe" --payload payload --fixture conformance/fixtures/timing \
+                --workspace-dir "$timing/workspace" --cache-dir "$timing/cache" --timeout 120 "$@"
+          }
+          start --measure "$timing/cold.json" --navigation-budget 15
+          start --measure "$timing/warm.json" --navigation-budget 5 --expect-warm
+          cat "$timing/cold.json" "$timing/warm.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: timing-${{ matrix.platform }}
+          path: ${{ runner.temp }}/timing/*.json
+          if-no-files-found: ignore
+
+      # A workspace reached through a symbolic link, which is where every macOS
+      # temporary directory is (/var is /private/var): mcpp names files by their
+      # resolved path, and an unsaved edit must still reach the modules that
+      # import it (check C7).
+      - name: A workspace reached through a symbolic link
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/real"
+          ln -sfn "$RUNNER_TEMP/real" "$RUNNER_TEMP/link"
+          TMPDIR="$RUNNER_TEMP/link" tools/lsp-mcpp-conformance run --server payload/bin/lsp-mcpp --payload payload \
+              --fixture conformance/fixtures/mcpp-llvm --timeout 180
+
+  # ---------------------------------------------------------------------------
+  # Clean machines (usable plan W5, design 20.2): no compiler, no Visual Studio, no
+  # Command Line Tools. Linux runs in a bare container; the Windows and macOS images
+  # cannot be emptied, so their toolchains are hidden and asserted invisible first.
+  # The conformance fixture and the packaged extension's end-to-end suite both run there.
+  clean-machine:
+    name: clean machine (${{ matrix.platform }})
+    needs: payload
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x64,    os: ubuntu-24.04 }
+          - { platform: win32-x64,    os: windows-2022 }
+          - { platform: darwin-arm64, os: macos-14 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: payload-${{ matrix.platform }}
+      - name: Unpack the payload
+        run: tar -xzf payload-${{ matrix.platform }}.tar.gz
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - name: Package the extension, as the other end-to-end jobs do
+        run: |
+          set -euo pipefail
+          cp -r payload editors/vscode/payload
+          cd editors/vscode
+          npm ci && npm run compile
+          npx --no-install vsce package --target ${{ matrix.platform }} --out "$RUNNER_TEMP/lsp-mcpp.vsix"
+      - name: A container without a compiler
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w ubuntu:24.04 bash -c '
+            set -euo pipefail
+            for tool in c++ g++ gcc cc clang++ clang; do
+              if command -v "$tool"; then echo "::error::$tool is on PATH"; exit 1; fi
+            done
+            tools/lsp-mcpp-conformance run --server payload/bin/lsp-mcpp --payload payload \
+                --fixture conformance/fixtures/inferred-discover --timeout 180'
+      - name: The extension in the same kind of container
+        if: runner.os == 'Linux'
+        timeout-minutes: 40
+        run: |
+          # Each phase is timed and bounded, so a stall names itself: this step sat silent for the
+          # whole job timeout twice, in package configuration. Non-interactive: libgtk-3-0's
+          # dependencies would otherwise ask. PKGSYSTEM_ENABLE_FSYNC=0: shared-mime-info's
+          # update-mime-database syncs every file it writes, which on a container's overlay file
+          # system can take longer than the job; dpkg's own syncs are skipped the same way.
+          docker run --rm -e DEBIAN_FRONTEND=noninteractive -e PKGSYSTEM_ENABLE_FSYNC=0 -v "$PWD:/w" -v "$RUNNER_TEMP:/t" -w /w/editors/vscode \
+              node:22-bookworm-slim bash -c '
+            set -euo pipefail
+            phase() { echo "[$(date +%T)] $*"; }
+            phase "apt-get update"
+            timeout -k 30s 5m apt-get update -qq
+            phase "apt-get install"
+            if ! timeout -k 30s 15m apt-get install -y -q --no-install-recommends -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-unsafe-io \
+                xvfb xauth ca-certificates libnss3 libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libgbm1 libasound2 libxss1 libxkbfile1 \
+                libsecret-1-0 > /t/apt.log 2>&1; then
+              tail -60 /t/apt.log; echo "::error::the packages the extension host needs did not install"; exit 1
+            fi
+            phase "no compiler on PATH"
+            for tool in c++ g++ gcc cc clang++ clang; do
+              if command -v "$tool"; then echo "::error::$tool is on PATH"; exit 1; fi
+            done
+            phase "npm test"
+            LSP_MCPP_E2E_VSIX=/t/lsp-mcpp.vsix timeout -k 30s 20m xvfb-run -a npm test
+            phase "done"'
+      - name: Visual Studio hidden and no compiler on PATH
+        if: runner.os == 'Windows'
+        run: |
+          set -euo pipefail
+          NODE_PATH_FOR_E2E="$(command -v node)"
+          mv "/c/Program Files (x86)/Microsoft Visual Studio/Installer" "/c/Program Files (x86)/Microsoft Visual Studio/Installer.hidden"
+          export PATH="/c/Windows/system32:/c/Windows:/c/Windows/System32/Wbem:/usr/bin"
+          for tool in vswhere cl clang-cl clang++ g++ c++ gcc; do
+            if command -v "$tool"; then echo "::error::$tool is still visible"; exit 1; fi
+          done
+          tools/lsp-mcpp-conformance.exe run --server payload/bin/lsp-mcpp.exe --payload payload \
+              --fixture conformance/fixtures/inferred-discover --timeout 180
+          # The packaged extension with the same machine view; node stays reachable for the test runner.
+          # Git's /usr/bin goes first: npm starts through `env bash`, and System32's bash.exe is WSL's.
+          export PATH="/usr/bin:$(dirname "$NODE_PATH_FOR_E2E"):/c/Windows/system32:/c/Windows:/c/Windows/System32/Wbem"
+          cd editors/vscode && LSP_MCPP_E2E_VSIX="$RUNNER_TEMP/lsp-mcpp.vsix" npm test
+
+      # U7: the kit needs the macOS SDK, which is gone with the Command Line Tools. The server
+      # degrades with the install command and runs no developer-tool shim; the extension asks
+      # once and not again after a restart.
+      - name: Command Line Tools and Xcode hidden
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          sudo mv /Library/Developer/CommandLineTools /Library/Developer/CommandLineTools.hidden
+          for app in /Applications/Xcode*.app; do sudo mv "$app" "${app%.app}.hidden"; done
+          sudo xcode-select --reset || true
+          if [ -e /Library/Developer/CommandLineTools ] || compgen -G "/Applications/Xcode*.app" > /dev/null; then
+            echo "::error::developer tools are still visible"; exit 1
+          fi
+          tools/lsp-mcpp-conformance run --server payload/bin/lsp-mcpp --payload payload \
+              --fixture conformance/fixtures/inferred-no-sdk --timeout 120
+          cd editors/vscode
+          LSP_MCPP_E2E_VSIX="$RUNNER_TEMP/lsp-mcpp.vsix" LSP_MCPP_E2E_ONLY=sdk-missing.test.js LSP_MCPP_E2E_EXPECT_SDK_MISSING=1 npm test
+
+  # ---------------------------------------------------------------------------
+  # VS Code → extension → lsp-mcpp → clangd, and the platform VSIX (design 16).
+  vscode-e2e:
+    name: VS Code end to end (${{ matrix.platform }})
+    needs: payload
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x64,    os: ubuntu-24.04 }
+          - { platform: darwin-arm64, os: macos-14 }
+          - { platform: win32-x64,    os: windows-2022 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - uses: actions/download-artifact@v4
+        with:
+          name: payload-${{ matrix.platform }}
+      - name: Put the payload into the extension
+        run: |
+          set -euo pipefail
+          tar -xzf payload-${{ matrix.platform }}.tar.gz
+          rm -rf editors/vscode/payload && mv payload editors/vscode/payload
+      - name: Install and compile
+        working-directory: editors/vscode
+        run: npm ci && npm run compile
+      # Packaged first (W6.3): the suites below test the installed VSIX, not
+      # the development folder, so the package has to exist before they run.
+      - name: Package the VSIX
+        working-directory: editors/vscode
+        run: npx --no-install vsce package --target ${{ matrix.platform }} --out lsp-mcpp-${{ matrix.platform }}.vsix
+      - name: End-to-end tests (VSIX form)
+        working-directory: editors/vscode
+        env:
+          LSP_MCPP_E2E_VSIX: ${{ github.workspace }}/editors/vscode/lsp-mcpp-${{ matrix.platform }}.vsix
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a npm test; else npm test; fi
+      # Conflicting-extension detection (W6.4/U10): a separate scenario, its
+      # own pair of stub extensions, and its own workspace-unchanged
+      # allowance for .vscode/settings.json (see test/runTest.ts).
+      - name: End-to-end tests (conflicts scenario)
+        working-directory: editors/vscode
+        env:
+          LSP_MCPP_E2E_VSIX: ${{ github.workspace }}/editors/vscode/lsp-mcpp-${{ matrix.platform }}.vsix
+          LSP_MCPP_E2E_SCENARIO: conflicts
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a npm test; else npm test; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix-${{ matrix.platform }}
+          path: editors/vscode/lsp-mcpp-${{ matrix.platform }}.vsix
+          retention-days: 7

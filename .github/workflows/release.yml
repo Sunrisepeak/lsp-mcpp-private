@@ -1,0 +1,90 @@
+name: Release
+
+# A tag v<version> builds every platform payload, runs the conformance fixtures
+# and the VS Code end-to-end tests on each platform, and publishes the VSIX files
+# and payload tarballs as a GitHub release (design 17.2). The Marketplace, Open
+# VSX and xlings-res steps run only when their credentials are configured.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  MCPP_VERSION: 2026.9.15.1
+  LLVM_VERSION: 22.1.8
+  XLINGS_VERSION: v2026.8.17.2
+  XLINGS_NON_INTERACTIVE: '1'
+  PAYLOAD_CACHE: ${{ github.workspace }}/.payload-cache
+
+jobs:
+  # The same jobs CI runs, so a release is exactly what was tested.
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: publish ${{ github.event.inputs.tag || github.ref_name }}
+    needs: verify
+    runs-on: ubuntu-24.04
+    # Credentials at job level: a step's own env is not visible to its `if`.
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+      XLINGS_RES_TOKEN: ${{ secrets.XLINGS_RES_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Version agrees with the tag
+        run: |
+          set -euo pipefail
+          tag='${{ github.event.inputs.tag || github.ref_name }}'
+          version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' mcpp.toml | head -1)
+          extension=$(node -p "require('./editors/vscode/package.json').version")
+          echo "tag $tag, mcpp.toml $version, extension $extension"
+          [ "$tag" = "v$version" ] && [ "$version" = "$extension" ]
+      - name: Collect, split for xlings, checksum
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          find artifacts -type f \( -name '*.vsix' -o -name 'payload-*.tar.gz' \) -exec cp {} release/ \;
+          # xlings-res archives and the rendered xim-pkgindex descriptors (design 17.1).
+          python3 packaging/scripts/xlings_artifacts.py --payloads release --out release
+          (cd release && sha256sum * > SHA256SUMS && cat SHA256SUMS)
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag='${{ github.event.inputs.tag || github.ref_name }}'
+          gh release create "$tag" release/* --title "lsp-mcpp $tag" --notes "Platform VSIX files for the C++ Modules extension, and the payloads (server, clangd 23.1, lsp-mcpp-kit) they carry. SHA256SUMS lists every file." \
+            || gh release upload "$tag" release/* --clobber
+      - name: Visual Studio Marketplace
+        if: env.VSCE_PAT != ''
+        run: |
+          for vsix in release/*.vsix; do npx --yes @vscode/vsce publish --packagePath "$vsix" --pat "$VSCE_PAT"; done
+      - name: Open VSX
+        if: env.OVSX_PAT != ''
+        run: |
+          for vsix in release/*.vsix; do npx --yes ovsx publish "$vsix" --pat "$OVSX_PAT"; done
+      - name: xlings-res mirror
+        if: env.XLINGS_RES_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ env.XLINGS_RES_TOKEN }}
+        run: |
+          tag='${{ github.event.inputs.tag || github.ref_name }}'
+          version="${tag#v}"
+          kit=$(python3 -c "import json; print(json.load(open('packaging/payload.lock.json'))['libcxx-version'])")
+          gh release create "$version" release/lsp-mcpp-"$version"-*.tar.gz -R xlings-res/lsp-mcpp --title "$version" --notes "Mirror of lsp-mcpp $tag" \
+            || gh release upload "$version" release/lsp-mcpp-"$version"-*.tar.gz -R xlings-res/lsp-mcpp --clobber
+          gh release create "$kit" release/lsp-mcpp-kit-"$kit"-*.tar.gz -R xlings-res/lsp-mcpp-kit --title "$kit" --notes "lsp-mcpp-kit $kit, from lsp-mcpp $tag" \
+            || gh release upload "$kit" release/lsp-mcpp-kit-"$kit"-*.tar.gz -R xlings-res/lsp-mcpp-kit --clobber

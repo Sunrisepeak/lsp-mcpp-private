@@ -1,0 +1,136 @@
+# Conformance
+
+The executable part of the specifications: each fixture is a small project and
+a `scenario.json` that drives a language server through the Language Server
+Protocol and checks what comes back. The same fixtures run locally and in CI.
+
+```bash
+mcpp build
+bin=target/<triple>/<fingerprint>/bin
+$bin/lsp-mcpp-conformance run --server $bin/lsp-mcpp --fixture conformance/fixtures/inferred \
+    --payload editors/vscode/payload            # or --clangd PATH --kit DIR
+```
+
+The runner copies the fixture to a scratch directory, runs its `prepare`
+commands there, starts the server with a private cache directory
+(`LSP_MCPP_CACHE_DIR`), advertises `experimental.cxxModules`, and prints one
+`PASS`/`FAIL` line per check. It exits non-zero when a check fails. Once the
+server has exited, or has left two requests in a row unanswered, the remaining
+checks fail at once with that reason instead of each waiting out its timeout.
+
+## Fixtures
+
+| Fixture | What it covers |
+|---|---|
+| `inferred` | Loose module sources, no build system and no compiler: the semantic kit provides libc++ semantics (design 13.5) |
+| `untrusted` | An mcpp package in an untrusted workspace: nothing is executed, the kit answers, the status is `degraded` with the reason |
+| `mcpp-gcc` | mcpp with GCC 16, described by mcpp's own `emit build-database` (mcpp 2026.9.15.1): level 3 once the S1 library has structured mcpp's level 2 document, GCC arguments translated for clangd (P1), libstdc++'s `std` from its manifest, a test that imports the package's module across sets, and the workspace unchanged |
+| `mcpp-llvm` | The same with LLVM 22: libc++ selected through include paths, BMI arguments removed (P3) |
+| `mcpp-split` | The shape of a project that separates interfaces from implementations: interface units and an interface partition in `.cppm`, two implementation units (`module hello.greet;`) in `.cpp`, and an implementation partition; from mcpp's own build database. Declarations and definitions are reached from importers, implementation units navigate into partitions and complete module-internal names, and edits reach importers. `mcpp-split-gcc` (Linux) and `mcpp-split-msvc` (Windows) are the same project with GCC 16 and with `msvc@system` |
+| `mcpp-all-cppm` | The shape of a project whose module units are all `.cppm`, implementations written inside the interfaces: a primary interface re-exporting two partitions and a second module; navigation into partitions and through the re-exports, completion through the re-exported module, edits propagated to importers |
+| `mcpp-watch` | S2 5 with mcpp itself: a new module interface, a broken `mcpp.toml` and its repair are inputs mcpp names in `watch`; the broken manifest keeps the last model, `degraded` with `model-stale` and mcpp's own `MCPP_BUILD_DATABASE_PLAN_FAILED` (S2-5-9). CI also runs it as `mcpp-watch@polling` on Linux |
+| `mcpp-emit` | mcpp's `emit build-database --format json` (mcpp-community/mcpp#636), simulated by `lsp-mcpp-mock-mcpp` from `mcpp-mock.json`, which records what mcpp 2026.9.15.1 prints for the project (paths as `${root}` and `${env:HOME}`): a level 2 document without `ide.options`, one set per package plus `hello:test` and `mcpp:std`, each seeing every other set. The S1 library completes it to a level 3 model; a test imports the package's module across sets, and the workspace stays unchanged. The simulated fixtures cover what a real mcpp cannot be made to do on demand |
+| `mcpp-emit-package-std` | The same with `std` and `std.compat` provided by translation units of `mcpp:std` from a dependency package instead of by the toolchain's manifest, built in an mcpp std cache directory that does not exist yet |
+| `mcpp-emit-broken` | The same mcpp answering with an error: the status carries mcpp's own diagnostic, sources are scanned meanwhile, and nothing is configured in its place (the mock's `build` would leave a `compile_commands.json` that `workspace-unchanged` sees) |
+| `mcpp-emit-unavailable` | A project whose `.xlings.json` asks for an mcpp that is not installed: xlings answers every mcpp command in its place and runs nothing, and the status carries xlings's explanation (`mcpp-no-database`) while sources are scanned |
+| `mcpp-emit-watch` | The inputs mcpp names in `watch` (S2 5, S2-5-1): writing one loads the model again, and an unchanged answer is recognized without rebuilding the index; when mcpp then fails the last model is kept, `degraded` with `model-stale` (S2-5-9), until it answers again. CI also runs it as `mcpp-emit-watch@polling`, with `--no-dynamic-watch` |
+| `mingw` | A compile database for `x86_64-windows-gnu`: MinGW-w64 GCC semantics through `--sysroot` (P2) |
+| `cmake-clang` | CMake 3.28+ with `FILE_SET CXX_MODULES`, Clang and Ninja: `@modmap` expansion, partitions |
+| `cmake-clang-bdb` | The same project, but the prepare steps configure with CMake's experimental build database (`CMAKE_EXPERIMENTAL_EXPORT_BUILD_DATABASE`, CMake 4.4+ only) and build its `build_database.json` target: the model is read from that file instead of `compile_commands.json` (usable plan W4) |
+| `cmake-msvc` | The same project built by cl.exe on Windows: cl.exe arguments translated into clang++ arguments, `-interface`, `-ifcOutput` and `-reference` removed from the expanded `.modmap` files, the Visual Studio toolset and Windows SDK passed explicitly (P7) |
+| `cmake-msvc-bdb` | `cmake-msvc`'s build-database counterpart: the prepare steps build `build_database.json` with cl.exe and CMake 4.4+, the server under test still without a developer environment (D30) |
+| `cmake-msvc-std` | CMake's `import std` with cl.exe and an `.ixx` interface: the build's own `std.ixx` units are replaced by the MSVC STL manifest's (P7) |
+| `cmake-clangxx-msvc` | CMake modules built by clang++ for the MSVC ABI (P5) |
+| `cmake-clang-cl` | CMake 4.4 modules built by clang-cl (P6), the first CMake that scans clang-cl module sources |
+| `compdb-clangxx-msvc-std` | clang++ for the MSVC ABI with `import std`, built by the fixture's own script (P5) |
+| `compdb-clang-cl-std` | clang-cl with `import std`, built by the fixture's own script (P6) |
+| `mcpp-msvc` | mcpp with `msvc@system` and `import std`, described by mcpp's own `emit build-database`: level 3, a test across sets, the workspace unchanged |
+| `mcpp-llvm-msvc` | mcpp's default Windows toolchain, LLVM for `x86_64-windows-msvc`, with the MSVC STL (P5), described the same way |
+| `inferred-msvc` | Loose module sources on a machine with Visual Studio: MSVC STL semantics without a build system (design 9.3, D27) |
+| `inferred-no-sdk` | macOS with the Command Line Tools and Xcode hidden: degraded with `sdk-missing` and its install command, a file importing `std` answered at once, module-level features (usable plan W5, U7) |
+| `inferred-discover` | The `inferred` project with compiler discovery on, on clean machines: a Linux container without a compiler and Windows with Visual Studio hidden (usable plan W5) |
+| `self-lsp-mcpp` | This repository at a fixed commit: `std` from the openkal-llvm-runtime package, units of `mcpp:std` in mcpp's own build database (nightly, W8) |
+| `self-mcpp` | The mcpp repository at a fixed commit, about 170 modules (nightly, W8). Its `.xlings.json` asks for mcpp 2026.9.14.1, which xlings runs inside it: an mcpp without `emit build-database`, so this fixture also covers the `mcpp build --configure-only` fallback |
+| `timing` | Startup timing (usable plan W7): the `inferred` project opened and navigated at once; run cold, then warm with the same workspace and cache |
+| `s1-two-sets` | A workspace carrying its own S1 build database (`--database`, usable plan W9.2): two sets compile the same file under `-DVARIANT=1` and `-DVARIANT=2`; `cxxModules/setContext` switches which one answers |
+| `watch-polling` | Run with `--no-dynamic-watch` (usable plan W9.3): a new module interface written straight into the workspace must still reach the module graph within seconds, through the polling fallback rather than a client-driven `workspace/didChangeWatchedFiles` |
+| `payload-corrupt` | Its `prepare` step copies the payload the runner was given and truncates clangd in the copy (usable plan W9.4); `server-arguments` then points `--payload` at that broken copy, and status must reach `error` with issue `payload-corrupt` |
+| `multi-root` | Two workspace folders (usable plan W9.1): an `inferred` root and an mcpp-built `mcpp-llvm` root (level 3, from mcpp's own build database), each getting its own project model and clangd, each `cxxModules/status` telling them apart by `project.root` |
+
+Before the fixtures run, CI records what `mcpp emit build-database --format json` prints for each of the host's mcpp fixtures that has no `mcpp-mock.json` and passes those envelopes to `specs/tools/validate.py`, which checks them like the simulated data: the S2 envelope and S1 schemas, S1's semantic rules and the contract of mcpp-community/mcpp#636 (level 2, sets per package, every set seeing every other). The producer's side and the consumer's side of the loop are thus both checked against the same mcpp.
+
+On Windows every server runs without a developer environment, as it does when an editor starts it. Fixtures whose own build needs one declare `"prepare-environment": "msvc"`, and the runner is given the environment with `--msvc-env FILE` (`NAME=value` lines, the output of `set` after `vcvars64.bat`); only the prepare steps see it. `--no-dynamic-watch` makes the runner declare no `workspace.didChangeWatchedFiles.dynamicRegistration` support at all, the way an editor without it would, exercising the server's own polling fallback (usable plan W9.3) instead of dynamic registration. Without it the runner acts as an editor's file watcher: it keeps the watchers the server registers (glob strings and relative patterns alike) and reports its own `write-file` writes that they cover through `workspace/didChangeWatchedFiles`. In CI's fixture lists, `NAME@polling` runs fixture `NAME` with `--no-dynamic-watch`.
+
+## Startup timing
+
+A run can reuse its workspace and the server's cache, so a second run measures a warm start:
+
+```bash
+$bin/lsp-mcpp-conformance run --server $bin/lsp-mcpp --payload payload --fixture conformance/fixtures/timing \
+    --workspace-dir /tmp/timing/workspace --cache-dir /tmp/timing/cache --measure cold.json --navigation-budget 15
+$bin/lsp-mcpp-conformance run --server $bin/lsp-mcpp --payload payload --fixture conformance/fixtures/timing \
+    --workspace-dir /tmp/timing/workspace --cache-dir /tmp/timing/cache --measure warm.json --navigation-budget 2 --expect-warm
+```
+
+| Option | Effect |
+|---|---|
+| `--workspace-dir DIR` | The fixture is copied to `DIR/<name>` and prepared once; later runs use it as it is |
+| `--cache-dir DIR` | The server's cache directory, instead of a fresh one per run |
+| `--measure FILE` | JSON with seconds from `initialize` to the first `ready` state, the first diagnostics and the first navigation that answered, and each check's duration |
+| `--navigation-budget SECONDS` | The run fails when the first navigation took longer |
+| `--expect-warm` | A `module-cache-reused` check fails unless an earlier run left the module's files in the cache |
+
+CI runs the pair on every host with budgets of 15 and 5 seconds and uploads the measure files; nightly records three runs per host.
+
+## Scenario format
+
+```json
+{
+  "name": "inferred",
+  "prepare": [["cmake", "-S", ".", "-B", "build"]],
+  "remove": ["mcpp.toml"],
+  "server-arguments": ["--no-discover"],
+  "checks": [ { "id": "C2", "kind": "definition", "file": "src/main.cpp", "at": [4, 31], "expect": "src/greet/greet.cppm" } ]
+}
+```
+
+In `prepare` and `server-arguments`, `{exe}` expands to the platform executable suffix,
+`{env:NAME|fallback}` to an environment variable, `{workspace}` to the fixture's scratch copy,
+`{runner-dir}` to the directory of the runner executable, and `{payload}` to the runner's own
+`--payload` directory (usable plan W9.4: a fixture's `prepare` step can copy and mutate it, then
+point `server-arguments`' own `--payload` at the mutated copy — a later `--payload` wins). Positions
+are `[line, character]`, zero-based, UTF-16. A check with `"text"` opens its file with that unsaved
+content; a check with `"optional": true` reports `SKIP` instead of failing, and `"timeout": SECONDS`
+waits less than the run's `--timeout`. `"file"` and `"folder"` on a check, like every other path a
+scenario names, are relative to the fixture's own root, never to a specific workspace folder.
+
+A fixture with more than one workspace folder (usable plan W9.1) names them, relative to its own
+root, in a top-level `"folders"` array; without one, the fixture's root is the only folder, as it
+always has been.
+
+```json
+{ "name": "multi-root", "folders": ["inferred", "mcpp-llvm"], "checks": [
+  { "id": "S1", "kind": "status", "folder": "mcpp-llvm", "state": "ready" } ] }
+```
+
+| Kind | Passes when |
+|---|---|
+| `status` | `cxxModules/status` reaches `ready`, `degraded` or `error` and matches `source`, `profile-kind`, `state`, `level`, `issue-code` (with `issue-command`, that issue's command; with `issue-message`, a part of its message) when given, and a `profile-compiler` prefix (a settled status that does not match yet is looked at again for up to three seconds, since a server coalesces changes that keep its state); `"folder"` picks one root's own status in a multi-root fixture (usable plan W9.1), absent picks whichever root's arrived most recently |
+| `workspace-unchanged` | no file under the workspace was added, changed or removed after the prepare steps |
+| `responds` | a request (`method`, default `textDocument/definition`) at `at` is answered, empty answers included, within the check's time |
+| `module-cache-reused` | every file clangd published for `module` (default `std`) before the server started is still there unchanged, and none was added (SC4); passes on a cold start unless `--expect-warm` |
+| `diagnostics-empty` | the file's diagnostics, after the engine has published them, contain no errors |
+| `diagnostic-code` | a diagnostic with code `expect` is published for the file |
+| `definition` / `declaration` | a location ends with `expect` |
+| `definition-any` | there is at least one location |
+| `hover-contains` | the hover text contains `expect` |
+| `completion-contains` | a completion label starts with `expect`; `insert: [line, text]` adds a line first, `edit` changes another open buffer without saving it |
+| `references-span` | the references include every path in `expect` |
+| `document-symbol-contains` | the outline has a top-level symbol named `expect` |
+| `module-graph-contains` | `cxxModules/graph` lists module `expect`; retries within the check's own timeout, so it doubles as "a change reaches the graph within N seconds" (usable plan W9.3's `watch-polling`) |
+| `set-context` | sends `cxxModules/setContext` with `"context"` (usable plan W9.2), then a hover at `"at"` contains `expect`, retried the same way as `hover-contains` |
+| `write-file` | writes `"content"` (default: a fresh `export module <module>;`; `"content-from"` copies another workspace file) to `"file"` directly, the way a file system watcher — or, without one, the server's own polling fallback — would notice it, without the runner opening it as a document (usable plan W9.3); with `"expect-reload": true`, also waits for the status to pass through `loading` again (S2-5-1) |
+
+The check identifiers C1–C9 follow experiment E6 in
+`.agents/docs/2026-09-13-cxx-modules-lsp-experiments.md`; M-checks cover the
+module features of S3 section 8.5.

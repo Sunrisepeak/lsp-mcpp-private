@@ -1,0 +1,153 @@
+{
+  "name": "lsp-mcpp",
+  "displayName": "C++ Modules",
+  "description": "C++20/23 named modules that just work: go to definition, completion, hover and references across modules for any compiler, with clangd and a standard library kit built in.",
+  "version": "0.1.0",
+  "publisher": "mcpp-community",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sunrisepeak/lsp-mcpp-private"
+  },
+  "bugs": {
+    "url": "https://github.com/Sunrisepeak/lsp-mcpp-private/issues"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "keywords": [
+    "c++",
+    "cpp",
+    "modules",
+    "c++20",
+    "c++23",
+    "cppm",
+    "clangd",
+    "lsp",
+    "mcpp"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./out/src/extension.js",
+  "activationEvents": [
+    "onLanguage:cpp",
+    "workspaceContains:**/mcpp.toml",
+    "workspaceContains:**/*.cppm",
+    "workspaceContains:**/CMakeLists.txt"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In Restricted Mode only the module index and the built-in standard library kit are used. No compiler, build system or discovery command from the workspace is run.",
+      "restrictedConfigurations": [
+        "lspMcpp.compiler"
+      ]
+    },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "cpp",
+        "extensions": [
+          ".cppm",
+          ".ixx",
+          ".mpp",
+          ".cxxm",
+          ".ccm"
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "lspMcpp.selectContext",
+        "title": "Select Context",
+        "category": "C++ Modules"
+      },
+      {
+        "command": "lspMcpp.showModuleGraph",
+        "title": "Show Module Graph",
+        "category": "C++ Modules"
+      },
+      {
+        "command": "lspMcpp.restartServer",
+        "title": "Restart Language Server",
+        "category": "C++ Modules"
+      },
+      {
+        "command": "lspMcpp.showLogs",
+        "title": "Show Logs",
+        "category": "C++ Modules"
+      },
+      {
+        "command": "lspMcpp.installCommandLineTools",
+        "title": "Install Command Line Tools",
+        "category": "C++ Modules"
+      }
+    ],
+    "configuration": {
+      "title": "C++ Modules",
+      "properties": {
+        "lspMcpp.compiler": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "Compiler whose semantics the language server follows, as an absolute path or a name on `PATH`. Empty means discovered automatically from the build system and the machine."
+        },
+        "lspMcpp.semanticKit": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "off"
+          ],
+          "enumDescriptions": [
+            "Use the built-in standard library kit when no compiler is found.",
+            "Never use the built-in kit; without a compiler only module-level features remain."
+          ],
+          "default": "auto",
+          "description": "Whether the built-in standard library kit may be used."
+        },
+        "lspMcpp.detectConflicts": {
+          "type": "boolean",
+          "default": true,
+          "description": "Offer once to turn off the language features of other C++ extensions in this workspace, so results are not shown twice."
+        },
+        "lspMcpp.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the language server in the C++ Modules output."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "node ./out/test/runTest.js",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^20.19.43",
+    "@types/vscode": "~1.90.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.9.2",
+    "glob": "^10.5.0",
+    "mocha": "^10.8.2",
+    "typescript": "~5.9.3"
+  }
+}

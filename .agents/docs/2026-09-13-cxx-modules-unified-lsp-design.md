@@ -1,7 +1,7 @@
 # lsp-mcpp：编译器无关的 C++ 模块统一方案设计
 
 日期：2026-09-13（v0.4 于 2026-09-14 合入四轮 review 决策）
-状态：**设计方案 v0.4，待 review**
+状态：**设计方案 v0.4**；第一版实现见 Sunrisepeak/lsp-mcpp-private#1，实测结果记在第 1.3 节
 关联文档：
 - 调研综述：[2026-09-13-cxx-modules-landscape-research.md](2026-09-13-cxx-modules-landscape-research.md)
 - 规范草案（S1 与 S2 正文）：[2026-09-13-cxx-module-build-database-ide-profile-spec.md](2026-09-13-cxx-module-build-database-ide-profile-spec.md)
@@ -69,20 +69,22 @@ lsp-mcpp 要让 C++ 模块代码在任何编译器、任何平台、甚至没有
 
 ### 1.3 可度量的目标
 
+“当前依据”是第一版实现（PR #1）的实测结果，测量方法与原始数据见实施方案 [2026-09-14-lsp-mcpp-v1-usable-plan.md](2026-09-14-lsp-mcpp-v1-usable-plan.md) 第 10 节。
+
 | 目标 | 指标 | 目标值 | 当前依据 |
 |---|---|---|---|
-| 无感 | 有编译器的工程首次打开时的弹窗数 | 0 | — |
-| 无感 | 常驻状态栏项、自动打开的面板或页面 | 0 | — |
-| 无感 | 写入用户工程目录的文件数 | 0，冲突处理经同意除外 | 实测：引擎数据库放在缓存目录时 clangd 缓存随之落在缓存目录 |
-| 无感 | 必需设置项 | 0 | — |
-| 无感 | 首次打开到可跳转，示例工程冷启动 | ≤ 5 秒 | 实测约 2–3 秒 |
-| 无感 | 温启动到可跳转 | ≤ 1 秒 | 实测约 0.7 秒 |
-| 跨平台 | 覆盖的组合 | 7 种构建组合 + 3 种无编译器组合 | 第 4.3 节 |
-| 跨平台 | 三平台一致性测试结果 | 完全相同 | — |
+| 无感 | 有编译器的工程首次打开时的弹窗数 | 0 | VS Code 端到端测试在三个平台断言扩展发起的通知、面板、页面为 0 |
+| 无感 | 常驻状态栏项、自动打开的面板或页面 | 0 | 同上；语言状态项恰好一个 |
+| 无感 | 写入用户工程目录的文件数 | 0，冲突处理经同意除外 | 服务端只写缓存目录。mcpp 2026.9.15.1 的 `emit build-database`（mcpp#636、#639）在三个主机的真实 mcpp 夹具上、CMake 与编译数据库来源的夹具上都断言工作区不变；更早的 mcpp 版本（包括工程 `.xlings.json` 固定的旧版本）由 `--configure-only` 写入 `compile_commands.json` 与 `target/`，状态中给出提示 `producer-writes-project` |
+| 无感 | 必需设置项 | 0 | 端到端测试不做任何设置 |
+| 无感 | 首次打开到可跳转，示例工程冷启动 | ≤ 5 秒 | 开发机（i9-13900K）2.1–2.5 秒，限定 2 至 32 个核心结果相近；CI 机器三次中位数 Linux 5.5 秒、macOS 4.4 秒、Windows 8.5 秒（4、3、4 个虚拟核心）。171 个模块的 mcpp 仓库首次跨模块跳转在开发机上 25–26 秒、CI 机器上 125 秒：首次跳转要等所导入的整个模块闭包构建完成，这个指标不适用于大工程的冷启动 |
+| 无感 | 温启动到可跳转 | ≤ 1 秒 | 开发机 0.8 秒；CI 机器三次中位数 Linux 2.0 秒、macOS 1.9 秒、Windows 2.9 秒；mcpp 仓库在开发机上 4.9 秒。剩余耗时主要在 clangd 为每个翻译单元串行扫描并校验所导入模块的缓存 BMI，服务端无法绕过（第 15.1 节） |
+| 跨平台 | 覆盖的组合 | 7 种构建组合 + 3 种无编译器组合 | P1–P7 与 K1–K3 都有在对应主机上端到端运行的夹具 |
+| 跨平台 | 三平台一致性测试结果 | 完全相同 | 与平台无关的夹具（`inferred`、`untrusted`、`multi-root`、`timing`）在三个主机上结果相同；其余夹具按平台所特有的组合运行 |
 | 简洁 | 可选设置项 | ≤ 4 | 第 16.4 节 |
 | 简洁 | 命令面板命令 | ≤ 4 | 第 16.3 节 |
-| 简洁 | 扩展包负载体积（Linux x64，压缩） | 约 30 MB 量级 | 实测 27 MB，另加服务端本身 |
-| 规范级 | 规范规则与一致性用例的对应 | 每条规则至少一个用例 | — |
+| 简洁 | 扩展包负载体积（压缩后的 VSIX） | 约 30 MB 量级 | Linux x64 31.3 MB，macOS arm64 28.1 MB，Windows x64 36.4 MB |
+| 规范级 | 规范规则与一致性用例的对应 | 每条规则至少一个用例 | S1–S4 共 144 条规则全部有证据（`conformance/traceability.json`，由 `specs/tools/validate.py` 检查），其中 10 条为说明原因的人工条目 |
 
 ## 2. 对标其他语言的体验
 
@@ -133,6 +135,13 @@ lsp-mcpp 采用的做法：
 | D19 | 扩展发布者 `mcpp-community`，扩展 ID `lsp-mcpp`，显示名“C++ Modules” | 2026-09-14 |
 | D20 | 规范文本与代码统一使用 Apache-2.0，提交 EcoStd 时按其要求调整 | 2026-09-14 |
 | D21 | 规范放在仓库根目录的 `specs/`，设计、调研、实验等文档放在 `.agents/docs/` | 2026-09-14 |
+| D22 | 语义工具包命名为 `lsp-mcpp-kit`（原 Q1） | 2026-09-14 |
+| D23 | 服务端核心代码不使用头文件与宏：全部是 `.cppm` 接口 + `.cpp` 实现单元，平台差异用 `if constexpr` 判断，平台常量由按目标选择的 `lspmcpp.os` 模块提供 | 2026-09-14 |
+| D24 | 通用库优先复用 mcpp 生态（mcpp-index）中的模块化库，不使用 compat 形态的包：JSON 用 `nlohmann.json`，命令行用 `mcpplibs.cmdline`；`boost.ut` 因 Windows 主机编译崩溃暂不采用（见 12.8、12.9） | 2026-09-14 |
+| D25 | openkal 体系的问题分两类处理：缺陷级别直接向对应仓库提 PR 修复；需求级别只记录，不改动 openkal 规范（见 12.9） | 2026-09-14 |
+| D26 | clang++ 构建 MSVC ABI（P5）、clang-cl（P6）与 MSVC STL 的 `import std` 是第一版必须项，各有 Windows 主机上的一致性夹具（见[第一版真实可用方案](2026-09-14-lsp-mcpp-v1-usable-plan.md)） | 2026-09-14 |
+| D27 | 保留 9.3 节第 5 条：没有构建系统、检测到 Visual Studio 时自动改用 MSVC 语义 | 2026-09-14 |
+| D28 | 暂不发布预发布版本，可用性以本地与 CI 验证为准 | 2026-09-14 |
 
 ## 4. 问题、范围与平台矩阵
 
@@ -185,7 +194,7 @@ lsp-mcpp 采用的做法：
 | SC3 | 有编译器与构建系统的工程，首次打开时弹窗数、常驻状态栏项、自动打开的面板都为零 | 端到端测试断言 |
 | SC4 | 温启动不重新构建 std 模块 | clangd 日志与计时 |
 | SC5 | 未保存的模块接口修改在防抖间隔后反映到导入方 | 探针 C7 |
-| SC6 | mcpp 输出等级 3 的 S1 文档；CMake 构建数据库经适配达到等级 2 | Schema 校验 + 一致性测试 |
+| SC6 | mcpp 输出等级 2 的 S1 文档，经 S1 库补全为等级 3；CMake 构建数据库经适配达到等级 2 | Schema 校验 + 一致性测试；mcpp 2026.9.15.1 的真实输出在 CI 中逐主机校验并由夹具消费 |
 | SC7 | lsp-mcpp 仓库与 mcpp 仓库在 VS Code 中可完整导航 | 自举与大工程基准 |
 | SC8 | 服务端全部平台的二进制由一台 Linux 主机交叉构建，并在各平台原生通过测试 | CI |
 
@@ -455,7 +464,7 @@ flowchart TB
   clangd["clangd 23.1（内置负载）"]
   payload["语义工具包（内置负载）"]
   subgraph producers["数据来源"]
-    mcpp["mcpp<br/>S1 等级 3/4"]
+    mcpp["mcpp<br/>S1 等级 2，S1 库补全为 3"]
     cmake["CMake<br/>构建数据库或 CDB"]
     compdb["其他构建系统<br/>CDB + 扫描"]
     loose["仅源码<br/>推断"]
@@ -506,13 +515,14 @@ flowchart TB
 | 层 | 模块 | 职责 |
 |---|---|---|
 | 基础 | `lspmcpp.base` | 错误约定（`std::expected`）、日志、取消令牌 |
-| 基础 | `lspmcpp.json` | JSON 读写 |
+| 基础 | mcpp-index 的 `nlohmann.json`（不自写 JSON 模块） | JSON 读写，见 12.8 |
 | 平台 | `lspmcpp.platform.process` | 基于 `openkal.process`：启动子进程、双向流、等待与终止、进程组 |
 | 平台 | `lspmcpp.platform.fs` | 基于 `openkal.fs`：路径与 URI 规范化、原子写入 |
 | 平台 | `lspmcpp.platform.task` | 基于 `openkal.task` 与 `openkal.time`：线程、消息队列、定时器 |
 | 平台 | `lspmcpp.platform.dirs` | 基于 `openkal.env`：用户缓存目录、扩展负载目录 |
 | 协议 | `lspmcpp.lsp.protocol` | 由 LSP 3.18 官方 metaModel.json 生成的类型 |
 | 协议 | `lspmcpp.lsp.jsonrpc` | 消息帧、请求表、取消、超时 |
+| 协议 | `lspmcpp.lsp.connection` | 以子进程运行的 LSP 对端：帧读写线程、标准错误行 |
 | 规范 | `lspmcpp.spec.database` | S1 数据结构、校验、编解码、导出 `compile_commands.json` |
 | 规范 | `lspmcpp.spec.discovery` | S2 发现协议客户端 |
 | 规范 | `lspmcpp.spec.kit` | S4 清单读取与校验 |
@@ -527,6 +537,10 @@ flowchart TB
 | 索引 | `lspmcpp.index.modules` | 语法模块索引与模块级功能 |
 | 服务 | `lspmcpp.server.session` | 工作区会话、状态机、S3 状态通知 |
 | 服务 | `lspmcpp.server.router` | 请求路由与结果合并 |
+| 服务 | `lspmcpp.server.documents`、`.payload`、`.cli` | 打开的文档与增量修改；负载与工具包定位；命令行 |
+| 工程 | `lspmcpp.project.provider` | 数据来源共用的执行、扫描与探测上下文 |
+| 平台 | `lspmcpp.platform.env`、`.stdio` | 环境变量与可执行文件查找；标准输入输出字节流 |
+| 工具 | `src/tools/lspgen.cpp`、`src/tools/conformance.cpp` | 协议生成器与一致性运行器，两个独立可执行文件 |
 
 ### 12.2 命令行
 
@@ -545,8 +559,8 @@ openkal 不提供 poll 或 select 这类多路复用，设计据此选择最简�
 1. **主线程**运行事件循环，只做一件事：从消息队列取消息并修改会话状态。状态只在主线程修改，不需要锁。
 2. **读线程**：编辑器 stdin 一个、每个 clangd 的 stdout 一个，阻塞读取完整消息后放入队列。
 3. **工作线程池**：源码扫描、解析大型数据库、编译器查询，完成后把结果放入队列。
-4. **定时器线程**：驱动防抖、看门狗与退避重启。
-5. **文件变化**：请编辑器代为监视，通过 LSP 的 `workspace/didChangeWatchedFiles` 通知；编辑器不支持时，对少量构建描述文件做低频检查。
+4. **定时器**：不单独开线程。主线程取消息时以最近的截止时间为超时（请求看门狗、防抖、退避重启、模型加载上限），醒来后统一处理到期项。
+5. **文件变化**：请编辑器代为监视，通过 LSP 的 `workspace/didChangeWatchedFiles` 通知；编辑器不支持动态注册时，工作线程每 2 秒比较监视范围内文件的大小与修改时间，变化转成同样的通知进入队列。监视范围包括构建描述文件、源文件，以及生产方在数据库的 `watch` 中列出的输入（S2 第 5 节）：列出的输入变化时重新加载模型；重新加载的结果与当前模型相同时只替换模型、不重建索引与计划；生产方这次失败时保留上次成功的模型，状态降为 degraded 并带问题项 `model-stale`。
 
 ### 12.4 平台层基于 openkal
 
@@ -584,7 +598,7 @@ starting ──> loading ──> preparing ──> ready
 | loading | 识别工程、加载或推断模型 | 忙碌 |
 | preparing | clangd 构建前置模块 | 忙碌，悬停显示进度 |
 | ready | 全部功能可用 | 普通 |
-| degraded | 部分降级，例如推断模式、引擎超时 | 警告，悬停显示原因与修复命令 |
+| degraded | 存在问题：构建系统数据不可用而回退到推断、模块无法解析、引擎超时或崩溃、工作区不受信任。推断模式本身（没有构建系统）不算降级 | 警告，悬停显示原因与修复命令 |
 | error | 只剩语法级功能 | 错误，悬停显示原因与修复命令 |
 
 ### 12.6 路由规则
@@ -605,9 +619,55 @@ starting ──> loading ──> preparing ──> ready
 | 语言与构建 | C++23 全模块，mcpp，LLVM 编译 |
 | 平台层 | openkal（接口）+ openkal-linux、openkal-macos、openkal-windows（实现）+ openkal-llvm-runtime |
 | LSP 类型 | 从 LSP 3.18 官方 metaModel.json 生成 |
-| JSON | 能在 openkal-musl 与 libc++ 上编译的库，候选 yyjson，外加一层模块封装 |
+| JSON | mcpp-index 的模块化库 `nlohmann.json`（`import nlohmann.json;`） |
+| 命令行 | mcpp-index 的模块化库 `mcpplibs.cmdline`（`import mcpplibs.cmdline;`） |
+| 单元测试 | 仓库内的测试支持包 `testing/`（模块 `lspmcpp.testing`），以 path dev-dependency 引入，由 `mcpp test` 发现；`boost.ut` 因 Windows 主机编译崩溃未采用（12.9 K5） |
 | 并发 | 线程 + 阻塞流 + 主线程消息队列 |
 | VS Code 扩展 | TypeScript + vscode-languageclient |
+
+### 12.8 复用 mcpp 生态的模块化库
+
+原则：
+
+1. **先查 mcpp-index。** 需要通用能力（JSON、命令行、测试、TOML 等）时，先在 mcpp-index 中找已经提供命名模块的包，用 `import` 使用，不自己重写。
+2. **只用模块化形态。** 不使用 compat 形态（以头文件方式暴露）的包，保持服务端“全模块、无头文件”的约束。
+3. **必须能在 openkal 上交叉构建。** 选用前在 linux-x64、`x86_64-windows-gnu`、`aarch64-macos` 三个目标上各构建一次；任何一个目标失败都不引入，并按 12.9 处理根因。
+4. **生态里缺的通用能力。** 属于 mcpp 或 xlings 通用工具包的，先向对应仓库提 PR，CI 通过并合入后再在本项目使用；合入前本项目不自带一份临时实现。
+
+第一版选定：
+
+| 能力 | 包 | 版本 | 结论 |
+|---|---|---|---|
+| JSON | `nlohmann:json` | 3.12.0 | 采用；三个目标构建通过（依赖 12.9 的修复） |
+| 命令行 | `mcpplibs:cmdline` | 0.0.2 | 采用；纯模块，三个目标构建通过 |
+| 单元测试 | `boost-ext:ut` | 2.3.1 | 不采用；Linux 与交叉构建通过，Windows 主机上 clang 22.1.8 编译该模块时崩溃（12.9 K5）。测试改用仓库内约 150 行的 `lspmcpp.testing`，接口形状与 ut 相同，便于将来切回 |
+| TOML | `marzer:tomlplusplus` | — | 不采用；Windows 目标构建失败（见 12.9 第 2 项），读取 `mcpp.toml` 改为调用 mcpp 自身的机器输出 |
+
+### 12.9 openkal 体系问题的处理与记录
+
+处理规则：
+
+- **缺陷级别**（实现与 openkal 规范或 C++ 标准不一致、同一份源码在某个目标上构建或运行失败）：定位根因后直接向对应仓库（openkal-musl、openkal-llvm-runtime、openkal-linux/macos/windows 等）提 PR 修复，附最小复现与 CI 覆盖；PR 合入并发布、mcpp-index 收录新版本后，本项目再升级依赖。
+- **需求级别**（openkal 规范目前没有的能力，例如 I/O 多路复用）：只在下表记录，不改动 openkal 规范，也不在本项目私自扩展接口；本项目按现有能力设计（例如 12.3 的线程加阻塞读模型）。
+
+问题记录：
+
+| 编号 | 类别 | 现象 | 根因 | 处理 |
+|---|---|---|---|---|
+| K1 | 缺陷 | 含标准库头文件的翻译单元（所有头文件库的模块封装都是如此，例如 `nlohmann.json`）在 Linux 目标构建通过，在 `x86_64-windows-gnu` 与 `aarch64-macos` 目标报 `no member named 'strtof_l' in the global namespace` | libc++ 的 musl 本地化支持调用 `strtof_l`、`strtod_l`、`strtold_l`、`vasprintf`，musl 只在 `_GNU_SOURCE` 下声明它们；Clang 只在 Linux 目标为 C++ 预定义 `_GNU_SOURCE`。`import std` 不暴露该问题，因为 std 模块用运行时包自己的参数编译 | 已提 PR：openkal-llvm-runtime 0.9.2 在 `__config_site` 中声明 `_GNU_SOURCE`，CI 增加两个交叉目标的 `examples/cxx` 构建；合入后向 mcpp-index 提交 0.9.2 |
+| K2 | 缺陷 | `marzer:tomlplusplus` 在 `x86_64-windows-gnu` 目标报 `__mingw_aligned_malloc` 未声明 | Clang 自带的 `mm_malloc.h` 在 `__MINGW32__` 下调用 MinGW CRT 的 `__mingw_aligned_malloc`，openkal-musl 的 Windows 实现没有提供 | 已记录；本项目不依赖 tomlplusplus，暂不修复，待确认修复位置（openkal-musl 补函数，或运行时包调整 `mm_malloc.h` 路径）后再提 PR |
+| K3 | 需求 | openkal 没有 poll/select 类多路复用 | 规范范围 | 只记录；服务端用线程加阻塞读（12.3） |
+| K5 | 缺陷（生态，非 openkal） | `boost-ext:ut` 2.3.1 的模块 `boost.ut` 在 windows-2022 主机上以 `x86_64-windows-gnu` 为目标编译时，clang 22.1.8 在代码生成阶段崩溃（`Exception Code: 0xC0000005`），dev 与 release 配置都复现；同一命令在 Linux 主机交叉编译通过；macOS 主机（`aarch64-macos`）上所有链接了该模块的测试程序（包括不 import 它的）启动即段错误（exit 139），移除后全部通过 | 未定位。Windows 上只在 Windows 主机出现，指向 Windows 版 clang；macOS 上的崩溃发生在进程启动时，指向该模块的静态初始化与 openkal-macos 启动序列的交互 | 已记录；测试不依赖 `boost.ut`。定位到根因后向对应仓库（LLVM 或 mcpp-index 的包描述）报告 |
+| K6 | 缺陷 | Windows 上所有 `std::thread` 在 join 时访问违例（`0xC0000005`）：lsp-mcpp 的线程与进程单元测试只在 windows-2022 崩溃，Wine 下复现为 `pthread_join` 读取被截断的指针 | musl 为 C++ 声明的 `pthread_t` 是 `unsigned long`，在 LLP64 的 Windows 上只有 32 位，libc++ 的 `std::thread` 保存它时丢掉了线程地址的高半部分 | 已提 PR：openkal-musl 0.13.2 把该声明改为 `unsigned _Addr`（其他目标上仍是 `long`），并新增 `examples/threads-cxx` 在每个 CI 行编译期断言宽度、运行时创建并 join 线程；openkal-llvm-runtime 对 openkal-musl 的版本要求是精确的（在其旁边声明 0.13.2 会被判为不可调和），因此另提 PR：openkal-llvm-runtime 0.9.3 跟随 openkal-musl 0.13.2，`examples/cxx` 增加线程 join，macOS 与 Windows 主机任务原生运行它 |
+| K7 | 缺陷 | 以 release（`-O2`）配置构建、运行在 openkal-windows 与 openkal-macos 上的程序启动即异常：Windows 上 `argv` 各参数被截去不定字节（Wine 可复现），macOS 上段错误；dev（`-O0`）配置三平台都正常，Linux 的 release 正常 | Windows 部分已定位：优化器把 openkal-windows `src/env.cpp` 里按 16 位单元计数的循环替换成 `wcslen` 调用，而链接到的是 openkal-musl 的 `wcslen`（`wchar_t` 为 32 位），命令行被两个单元一读；同一包的 `win.cpp` 在 release 下还引用了 `strlen`，而该仓库“不引用 C 运行时符号”的检查只构建 dev。macOS 部分未定位 | 已合入并发布：mcpplibs/openkal-windows#20（0.7.1，`-fno-builtin`，检查覆盖 release），mcpp-index#417；由 openkal-musl 0.13.3 与 openkal-llvm-runtime 0.9.4 携带（版本要求是精确的）。Windows 部分已在 Wine 下验证：携带这些修复的 release 构建通过 11 项进程测试与 inferred 夹具全部检查，服务端从 58.8 MB 降到 2.9 MB。macOS 部分另见 K13。负载与一致性运行器仍用 dev 配置构建，携带全部修复的运行时包在三个平台验证 release 之后再切换 |
+| K8 | 缺陷（记录） | libc++ 的 `std::basic_string<wchar_t>` 在 `x86_64-windows-gnu` 上按 16 位 `wchar_t` 编译，但 `char_traits<wchar_t>::length` 调用的 `wcslen` 来自 openkal-musl（32 位），宽字符串长度会算错 | openkal-musl 在 Windows 上刻意保持 32 位 `wchar_t`（其 PATCHES.md 已说明取舍），与目标 ABI 的 16 位 `wchar_t` 不一致 | 只记录：属于 openkal-musl 的设计取舍，改动面大；lsp-mcpp 不使用宽字符串 |
+| K9 | 缺陷 | macOS 上服务端的 detached 线程一结束（客户端关闭输入后的读线程、模型加载线程）进程就访问违例：`EXC_BAD_ACCESS`，停在 musl 的 `__pthread_exit`；`--no-discover` 与 `--untrusted` 下加载线程最先结束，服务端在回复 `initialize` 前退出；同一程序在 Linux 与 Windows 上正常 | musl 的 `__unmapself` 先切到所有退出线程共享的 256 字节静态栈，再发出结束线程的两个系统调用。openkal-musl 里这两个调用要经过移植层的分发、上下文表和 openkal，未优化构建在 x86_64 Linux 上实测用到共享栈之下 13,640 字节，溢出覆盖链接器放在它下面的数据。macOS 上那里是线程键表和移植层的上下文表，线程随后从被覆盖的表中取出自己的记录并跳转进去；Linux 上被覆盖的数据恰好无害 | 已合入并发布：mcpplibs/openkal-musl#32（0.13.3，同时携带 openkal-windows 0.7.3），mcpp-index#419。移植层的线程运行在 `kal_task_start` 提供的栈上，从不使用 musl 分配的映射，因此改为在自身栈上释放映射并正常结束；新增 `examples/threads-detached`，每个 CI 行运行。openkal-llvm-runtime 0.9.4 跟随 |
+| K10 | 缺陷 | Windows 上以通道作为标准输入的子进程读不到输入结束：lsp-mcpp 的进程测试（子进程回显标准输入）在 windows-2022 与 Wine 下都挂起 | openkal-windows 的 `kal_process_channel` 把远端句柄创建为可继承，而开启继承的 `CreateProcessW` 会把进程中所有可继承句柄交给子进程：子进程拿到了自己输入管道的写端，并发启动的其他程序也会拿到别人的管道 | 已合入并发布：mcpplibs/openkal-windows#21（0.7.2），mcpp-index#417。两端都不可继承，`kal_process_spawn` 只在启动期间标记放入的三个句柄、之后恢复原状，并用锁串行化这段时间 |
+| K11 | 缺陷 | Windows 上启动的程序收到被改写的参数：`C:\dir\file.txt` 变成 `C:dirfile.txt`，末尾的反斜杠把后面的参数并成一个；`cmd.exe` 和经它运行的批处理文件无法正常启动（windows-2022 上一致性夹具启动 `mcpp` 时经过了 `cmd.exe`），报 `UNC paths are not supported` 与 `The syntax of the command is incorrect` | openkal-windows 生成命令行时计数的反斜杠从未写出，参数就地转换在命令行缓冲区之后、转义会覆盖尚未读取的内容；每个参数都加引号，而 `cmd.exe` 不认带引号的开关；子进程按“名字”读取参数，把 `\` 改成 `/`；程序路径与工作目录带 `\\?\` 前缀，`cmd.exe` 拒绝这样的当前目录 | 已合入并发布：mcpplibs/openkal-windows#22（0.7.3），mcpp-index#418：按 `CommandLineToArgvW` 的逆规则只在需要时加引号，参数原样读取，名字不带前缀也成立时去掉 `\\?\`。lsp-mcpp 这边新增参数往返与命令解释器单元测试，并把传给 Windows 子进程的 argv[0] 改为反斜杠形式（`C:/Windows/System32/cmd.exe` 会被 `cmd.exe` 读成 `/c md.exe`） |
+| K12 | 缺陷 | Windows 上带着修改过的环境启动的程序无法经 `cmd.exe` 执行任何命令：一致性运行器启动 `mcpp`（xlings 启动器）、CMake 配置 MSVC 时 Ninja 调用 `%ComSpec% /C`，都报 `The syntax of the command is incorrect` | openkal-windows 报告环境变量值时按“名字”窄化，`\` 被改成 `/`；给子进程传环境只能复制本进程的环境，子进程于是得到 `ComSpec=C:/Windows/system32/cmd.exe`，`cmd.exe` 把 `/cmd.exe` 读成 `/c md.exe` | 已合入并发布：mcpplibs/openkal-windows#23（0.7.4），mcpp-index#421：环境变量值原样报告；lsp-mcpp 单元测试新增环境变量往返与 `ComSpec` 用例 |
+| K13 | 缺陷 | macOS 上所有 release 构建的程序在 `main` 之前段错误：lsp-mcpp 服务端与只有 `import std; std::println` 的最小程序都停在 `kal_fs_preopen`，调用方是 openkal-musl 的初始化函数 | XNU 每次系统调用都在 x1（x86_64 为 rdx）返回第二个值，openkal-macos 的系统调用包装却把 x1 声明为仅输入；优化器因此认为 x1 跨调用不变，`openat` 之后把已被清零的 x1 当作 `"/"` 的地址存进 preopen 表。同一 release 构建还把计数循环换成了 `strlen` | 已合入并发布：mcpplibs/openkal-macos#20（0.9.1：x1/rdx 声明为输出，`-fno-builtin`，CI 在 dev 与 release 两种配置下运行自身测试与独立性检查），mcpp-index#421；由 openkal-musl 0.13.4（#33，mcpp-index#422）与 openkal-llvm-runtime 0.9.5 携带，运行时包的主机任务增加 release 构建运行检查 |
+| K14 | 缺陷 | Windows 上分配 131,052 字节以上内存的程序越界写入：windows-2022 上一致性运行器读取构建目录（含约 200 KB 的文件）时访问违例，另一些夹具无输出退出；Wine 下以 `push_back` 把 `std::string` 增长到 196,607 字节以上时程序无声结束 | musl 的分配器把这类分配作为单独的映射取得（`mmap(n + IB + UNIT)`），并使用到最后一页的末尾：槽长为 `页数 × 4096 - UNIT`，块起点可偏移近一页，槽尾标记写在页末之前。openkal-musl 移植层的 `mmap` 只向 `kal_alloc` 要所请求的长度，Windows 上这段内存来自进程堆，页内余下部分属于下一个堆块的头部 | 已合入并发布：mcpplibs/openkal-musl#34（0.13.5：`SYS_mmap` 与 `SYS_munmap` 把长度取整到整页；新增 `examples/malloc-large`，每个 CI 行运行），mcpp-index#424；由 openkal-llvm-runtime 0.9.6 携带（#21，`examples/cxx` 增长 4 MB 字符串，dev 与 release 都运行），mcpp-index#425。lsp-mcpp 的一致性运行器同时改为按块计算文件摘要，不再把构建目录整个读入内存 |
+| K4 | 需求 | `kal_process_spawn` 的 `envp` 为空时子进程得到空环境，而不是继承父进程环境 | 规范语义 | 只记录；平台层显式传入从 `kal_env_var_at` 读到的完整环境 |
 
 ## 13. 关键流程
 
@@ -617,12 +677,12 @@ starting ──> loading ──> preparing ──> ready
 2. 会话从缓存目录读取上次成功的工程模型，先让语法索引与语言状态项可用。
 3. 后台识别工程、刷新模型、探测工具链；没有编译器时选择语义工具包。
 4. 归一化层为默认上下文生成引擎数据库，并启动 clangd。
-5. 向编辑器动态注册构建描述文件的监视。
+5. 向编辑器动态注册构建描述文件与源文件的监视；模型加载后再注册生产方在 `watch` 中列出的输入，新模型替换上一次的注册。
 
 ### 13.2 打开文件
 
 1. `didOpen` 到达后，路由先更新语法索引，并立即发布模块级诊断，例如无法解析的模块名。
-2. 若该文件所有导入都可解析，转发给 clangd；clangd 准备前置模块，状态进入 preparing。
+2. 若该文件所有导入都可解析，转发给 clangd；clangd 准备前置模块，服务端同时按模块图并行准备（15.1 节“模块准备”），状态进入 preparing 并带进度。
 3. 准备完成后状态回到 ready，后续请求按第 12.6 节路由。
 
 ### 13.3 编辑与保存
@@ -650,7 +710,7 @@ starting ──> loading ──> preparing ──> ready
 |---|---|---|
 | 工程模型加载失败 | 回退到推断 | 语言状态项警告 |
 | 找不到编译器 | 使用语义工具包 | 语言状态项显示工具包语义 |
-| 导入无法解析 | 语法索引报诊断；不写入引擎数据库，避开 clangd 23.1 的挂起问题（E13） | 该 import 处的诊断 |
+| 导入无法解析 | 语法索引报诊断；该单元以及传递地依赖它的单元都不写入引擎数据库，也不把它们的文档交给 clangd，对它们的语义请求就地应答。实现中确认 clangd 23.1 对导入无法解析的非模块单元同样会停止应答（E13 的扩展） | 该 import 处的诊断 |
 | 引擎请求超时 | 返回降级结果；同一文件连续超时则重启引擎 | 语言状态项警告 |
 | 引擎崩溃 | 退避重启并重放文档；连续失败三次后停在语法模式 | 语言状态项错误 |
 | 负载损坏 | 校验失败时报告并引导重新安装扩展 | 语言状态项错误 |
@@ -662,7 +722,7 @@ starting ──> loading ──> preparing ──> ready
 | 优先级 | 识别依据 | 数据来源 | 目标等级 |
 |---|---|---|---|
 | 1 | 用户设置指定的 S1 文档 | 通用 | 按文档 |
-| 2 | `mcpp.toml` | mcpp：`mcpp emit build-database`，旧版本回退到编译数据库 + 扫描 | 3，发现命令就绪后 4 |
+| 2 | `mcpp.toml` | mcpp：`mcpp emit build-database`，旧版本回退到编译数据库 + 扫描 | mcpp 输出 2，S1 库补全为 3；发现命令就绪后 4 |
 | 3 | `CMakeLists.txt` 且已有构建目录 | CMake：构建数据库，否则编译数据库 + `.modmap` + `.ddi` | 2 |
 | 4 | `CMakeLists.txt` 无构建目录 | CMake 私有配置：在缓存目录配置一次，只在受信任工作区执行 | 2 |
 | 5 | 工作区内的 `compile_commands.json` | 通用：编译数据库 + 扫描 | 1–2 |
@@ -682,12 +742,14 @@ mcpp emit build-database [--toolchain SPEC] [--target TRIPLE] [--format json|jso
 | `SourceUnit.providesInterface`（三态） | `ide.role`，未知时为 `unknown` |
 | `BmiTraits` 计算出的 BMI 路径 | `provides` 中的路径值 |
 | 工具链指纹的编译器、版本、驱动、target、标准库 | `ide.toolchains.<id>` |
-| `stdmod` 定位到的 std 源与清单 | `toolchain.stdlib.module-metadata` |
-| 包级与单元级编译参数 | `baseline-arguments`、`local-arguments`、`ide.options` |
-| workspace 成员与依赖关系 | 多个 set 与 `visible-sets` |
+| `stdmod` 定位到的 std 源与清单 | `mcpp:std` 集合中的 `std`、`std.compat` 翻译单元；`toolchain.stdlib.module-metadata` |
+| 包级与单元级编译参数 | `baseline-arguments`、`local-arguments`；`ide.options` 不由 mcpp 写出，由 S1 库从参数结构化得到 |
+| workspace 成员与依赖关系 | 每个包一个 set，另有 `<包>:test` 与 `mcpp:std`，不按 target 划分；每个 set 的 `visible-sets` 列出其余所有 set |
 | 目标类型 | `set.ide.kind` |
 
 `--format jsonl` 实现 S2 发现协议。
+
+上表按 mcpp 维护者在 mcpp-community/mcpp#636 中的答复（2026-09-14）修订：mcpp 只输出等级 2，等级 3 交给 S1 库（`lspmcpp.spec.options`，推导出的 options 是参数的重述，引擎仍编译 `arguments`）；mcpp 在一张扁平的模块图上解析 import，`visible-sets` 写得比这更窄就描述了一条构建并不执行的规则；集合按包划分。S1 第 7、9、11.1 节为此增加了说明性文字。单文档模式（`--format json`）见 S2 0.2 与第一版可用方案 W3。mcpp 在 mcpp-community/mcpp#639 中实现了本节的命令，随 2026.9.15.1 发布；闭环验证记录在可用方案第 10.6 节。
 
 ### 14.3 工具链探测
 
@@ -699,7 +761,13 @@ mcpp emit build-database [--toolchain SPEC] [--target TRIPLE] [--format json|jso
 | 安装位置 | `-print-libgcc-file-name` 所在目录；MinGW 为工具链根目录 | `-print-resource-dir` | vswhere 找到的 Visual Studio；`VCToolsInstallDir`、`WindowsSdkDir` |
 | 隐式配置 | specs 文件 | 驱动旁 `.cfg` | `INCLUDE`、`CL`、`_CL_` 等环境变量 |
 
-发现顺序：构建系统记录的编译器 → mcpp 默认工具链 → PATH、xlings、mcpp 工具链目录、Homebrew LLVM、vswhere → 语义工具包。只执行白名单中的驱动，结果按驱动路径、大小与修改时间缓存。
+发现顺序：构建系统记录的编译器 → mcpp 默认工具链 → PATH、xlings、mcpp 工具链目录、Homebrew LLVM、vswhere → 语义工具包。只执行白名单中的驱动，结果按驱动路径、大小、修改时间与影响查询的参数缓存。
+
+实现补充：
+
+- 没有构建系统时，发现的编译器只有在其标准库提供模块清单（`*.modules.json`）时才用于语义；Apple clang 与 MSVC 不参与这一步（MSVC 语义只在构建系统记录了 cl.exe 或 clang-cl 时使用；P7 已由 cmake-msvc 夹具实测，P6 待验证），否则使用语义工具包。
+- 构建以 `-nostdinc++ -isystem <前缀>/include/c++/v1` 显式选择 libc++ 时（mcpp 的 LLVM 工具链即如此），驱动查询回答不出清单，探测从该包含目录推出 `<前缀>/lib[/<target>]/libc++.modules.json`。
+- 同一文件只有一个名字：工作区根目录、打开的文档与数据库中的源文件在 POSIX 系统上都取解析符号链接后的路径（macOS 的 `/var` 即 `/private/var`，mcpp 记录的是后者）。clangd 收到的也是这个名字，因为它按精确路径把未保存缓冲区匹配到模块源；引擎返回的位置若属于客户端打开的文档，则换回客户端自己的 URI。Windows 上统一盘符与分隔符，并把含 `~` 的短名分量换成长名：在父目录的条目中找文件标识相同的那一个（GitHub Windows 机器的 `TEMP` 是 `RUNNER~1`，mcpp 记录的是 `runneradmin`）。
 
 ### 14.4 归一化规则
 
@@ -711,7 +779,7 @@ mcpp emit build-database [--toolchain SPEC] [--target TRIPLE] [--format json|jso
 | P4 Clang macOS | 原驱动 | 同 P3 | 显式 SDK 路径 | 待验证 |
 | P5 clang++ MSVC ABI | 原驱动 | 同 P3 | 显式 `--target=x86_64-pc-windows-msvc` 与 MSVC 工具集、Windows SDK 路径 | 待验证 |
 | P6 clang-cl | clang-cl | MSVC 模块参数：`/reference`、`/ifcOutput`、`/ifcSearchDir`、`/interface`、`/internalPartition`、`/headerUnit`、`/scanDependencies`、`/sourceDependencies` | 显式 `/vctoolsdir`、`/winsdkdir`；接口单元补模块模式 | 待验证 |
-| P7 cl.exe | clang-cl | 同 P6；clang-cl 不认识的 cl 参数 | 同 P6；按 cl 版本设置 `-fms-compatibility-version`；`/std:` 映射 | 待验证 |
+| P7 cl.exe | clang-cl | 同 P6；clang-cl 不认识的 cl 参数 | 同 P6；按 cl 版本设置 `-fms-compatibility-version`；`/std:` 映射 | Windows 实测（cmake-msvc 夹具：CMake 3.31、Ninja、MSVC 19.44 记录的 `.modmap` 中 `-interface`、`-ifcOutput`、`-reference`） |
 | K1–K3 工具包 | 占位驱动路径 | — | 按 `kit.json` 生成 target、头文件目录、sysroot 与额外参数 | K1、K2 实测 |
 
 其余步骤：
@@ -732,6 +800,8 @@ mcpp emit build-database [--toolchain SPEC] [--target TRIPLE] [--format json|jso
 | 启动参数 | `--experimental-modules-support --use-dirty-headers --compile-commands-dir=<上下文目录>/cdb --background-index` |
 | 看门狗 | 每个转发请求有截止时间；超时返回降级结果并记录问题；同一文件连续超时重启引擎 |
 | 能力表 | 按 clangd 版本记录可依赖的行为，例如 23.x 的持久化模块缓存 |
+| 模块准备 | clangd 23.1 在打开文件的工作线程里逐个构建该文件导入的模块。服务端为每个模块写一个只有 `import M;` 的准备单元，M 的导入全部构建完成就打开它，其上等待的模块链最长的先开。准备好的单元保持打开，直到没有模块在准备、也没有文件在等诊断：clangd 只在有打开文件持有时才保留构建好的模块，否则后开的单元要重新校验并复制它能到达的每个模块。三条约束来自实测：clangd 的持久化模块缓存中已有、且不旧于源文件的模块直接算作完成，不再打开单元（温启动时单元只会与用户打开的文件争抢）；准备单元与用户打开的文件、编辑与补全共用 clangd 的工作线程（`-j`，默认为物理核数），因此为每个等待模块的文件保留一个核心，另外总为请求保留一个；交互请求（跳转、悬停、补全）在文件的模块仍在准备且最近 10 秒内有模块完成时继续等待，每次 5 秒，至多到普通请求的 60 秒上限，而不是 10 秒后返回空结果。mcpp 仓库（171 个模块，32 线程）首次跨模块跳转 25–26 秒且只应答一次，不做模块准备时 38 秒，E17 为 95.4 秒；温启动 4.9 秒。示例工程在 2 个核心上温启动由 1.07 秒降到 0.80 秒 |
+| 模块提示 | 为找到提供某个模块的单元，clangd 23.1 会逐个扫描数据库中的全部文件，每个工作线程第一次查找某个模块名时都可能触发，几百个文件需要数秒。引擎数据库的每个条目写出它能到达的每个模块 `-fmodule-file=<名>=<路径>`，提供模块的条目再写 `-fmodule-output=<路径>`，路径指向从不写入的位置；clangd 据此直接找到单元，只扫描这一个文件确认（其 `CompileCommandsProjectModules`）。提示不属于数据库的结构：只有提示变化时重写数据库而不重启 clangd，clangd 在 5 秒内自行重读 |
 | 可插拔 | 引擎接口只有启动、推送数据库、转发 LSP、能力查询四项，预留 clice 实现 |
 
 ### 15.2 负载组成与体积
@@ -749,7 +819,7 @@ mcpp emit build-database [--toolchain SPEC] [--target TRIPLE] [--format json|jso
 | 运行形态 | clangd 与工具包的位置 |
 |---|---|
 | VS Code 扩展 | 扩展安装目录下的 `payload/`，只读使用，不复制 |
-| xlings 安装 | 服务端包依赖的 clangd 与工具包的安装目录 |
+| xlings 安装 | 服务端包依赖的 clangd（`llvm-tools`，经 xvm 在 PATH 上）与工具包（`<xlings 仓库>/xim-x-lsp-mcpp-kit/<版本>`）；可执行文件位于某个负载的 `bin/` 下时，自动使用该负载 |
 | 用户显式指定 | 设置项覆盖，仅用于排障 |
 
 ### 15.4 状态目录
@@ -822,9 +892,9 @@ mcpp emit build-database [--toolchain SPEC] [--target TRIPLE] [--format json|jso
 
 | 产物 | 生成方式 | xlings 中的形态 |
 |---|---|---|
-| lsp-mcpp 服务端 | mcpp 基于 openkal 交叉构建的静态二进制 | `xim:lsp-mcpp`，参照 `pkgs/m/mcpp.lua`；产物镜像到 `xlings-res/lsp-mcpp` |
+| lsp-mcpp 服务端 | mcpp 基于 openkal 交叉构建的静态二进制 | `xim:lsp-mcpp`，依赖 `xim:llvm-tools@23.1.0` 与 `xim:lsp-mcpp-kit@23.1.0`；描述模板 `packaging/xlings/lsp-mcpp.lua.in`，发布时由 `packaging/scripts/xlings_artifacts.py` 按 `{name}-{version}-{os}-{arch}.tar.gz` 拆分产物并填入 sha256；产物镜像到 `xlings-res/lsp-mcpp` |
 | clangd 23.1 负载 | 官方发行包剥离符号、删除 sanitizer 运行库 | 按 xim-pkgindex 的 LLVM 分包流程更新 `xim:llvm-tools@23.1.0`，补齐各架构 sha256 |
-| 语义工具包 | 按 S4 组装的纯数据包 | 新增一个数据包，包名待定（第 23 节）；参照 `pkgs/l/linux-headers.lua`，不声明可执行程序；一个包名下按 linux、windows、macosx 分别提供产物，版本号跟随 libc++ |
+| 语义工具包 | 按 S4 组装的纯数据包 | `xim:lsp-mcpp-kit`（D22）；参照 `pkgs/l/linux-headers.lua`，不声明可执行程序；一个包名下按 linux、windows、macosx 分别提供产物，版本号跟随 libc++；描述模板 `packaging/xlings/lsp-mcpp-kit.lua.in`，镜像到 `xlings-res/lsp-mcpp-kit` |
 
 | 渠道 | 做法 |
 |---|---|
@@ -892,7 +962,7 @@ lsp-mcpp/
 ├── conformance/                    一致性测试，规范的可执行部分
 │   ├── fixtures/                   用例工程，一个目录一个用例
 │   ├── expected/                   按构建组合与工具包的期望结果
-│   └── runner/                     运行器（C++23 模块），直接驱动 LSP
+│   └── README.md                   运行器在 src/tools/conformance.cpp（C++23 模块），直接驱动 LSP
 │
 ├── src/                            服务端，目录与模块一一对应
 │   ├── main.cpp
@@ -902,8 +972,10 @@ lsp-mcpp/
 │
 ├── tests/                          服务端单元测试，mcpp test 自动发现
 │
+├── testing/                        测试支持包 lspmcpp.testing，以 path dev-dependency 引入
+│
 ├── tools/
-│   └── lspgen/                     由 LSP metaModel.json 生成协议模块
+│   └── lspgen/                     LSP 3.18 metaModel.json 与说明；生成器在 src/tools/lspgen.cpp
 │
 ├── editors/
 │   └── vscode/                     VS Code 扩展
@@ -914,7 +986,8 @@ lsp-mcpp/
 │
 ├── packaging/
 │   ├── payload.lock.json           clangd 与工具包的版本、地址、sha256
-│   ├── kits/                       工具包组装脚本与 kit.json 模板
+│   ├── scripts/                    下载校验、clangd 裁剪、工具包组装、负载组装与校验、xlings 产物拆分
+│   ├── kits/                       各平台工具包的内容说明与 kit.json（由 build_kit.py 生成，不入模板）
 │   ├── xlings/                     lsp-mcpp 与工具包的 xpkg 描述草稿
 │   └── scripts/                    裁剪 clangd、组装负载、打包扩展
 │
@@ -1002,9 +1075,7 @@ cd editors/vscode && npm test                # VS Code 端到端测试
 
 ## 23. 待决问题（请 review）
 
-| 编号 | 问题 | 说明 | 建议 |
-|---|---|---|---|
-| Q1 | 语义工具包在 xlings 中叫什么 | 语义工具包是一个只含数据文件的包：某个平台的 libc++ 头文件、`std` 模块源码、C 库头文件，外加 `kit.json` 清单。没有编译器时，clangd 靠它解析 `import std` 与标准库。VS Code 扩展把它内置；其他编辑器通过 `xlings install lsp-mcpp` 作为依赖自动装上，所以它在 xlings 索引里需要一个包名 | `lsp-mcpp-kit`。S4 是本项目的接口规范，包名跟随项目，归属与用途一眼可见，也更简洁。若希望其他工具复用，可改用中立的 `cxx-semantic-kit` |
+暂无。原 Q1（语义工具包在 xlings 中的包名）已定为 `lsp-mcpp-kit`，见 D22。
 
 ---
 

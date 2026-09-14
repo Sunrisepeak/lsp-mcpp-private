@@ -6,7 +6,7 @@
 
 **Architecture:** One mcpp package written only in C++23 modules produces three executables that share `src/` modules: the server `lsp-mcpp`, the conformance runner `lsp-mcpp-conformance` and the protocol generator `lsp-mcpp-lspgen`. The platform layer sits on openkal (`openkal.process` for child processes and pipes; the C++ standard library for threads, files and time), and platform facts come from a per-target `lspmcpp.os` package selected through `cfg` path dependencies and consumed with `if constexpr`. The server normalizes any build (mcpp, CMake, compile_commands.json, or nothing) into an engine database for a pinned clangd 23.1, adds module-level features from its own syntactic index, and ships with a thin VS Code extension that bundles clangd and the `lsp-mcpp-kit` semantic kits.
 
-**Tech Stack:** mcpp (2026.9.14.1+), LLVM 22.1.8 via `openkal-llvm-runtime` 0.9.1, openkal 0.12, clangd 23.1.0, TypeScript + vscode-languageclient + @vscode/test-electron, Python 3 for packaging scripts, GitHub Actions on ubuntu-24.04, macos-14 (arm64), windows-2022.
+**Tech Stack:** mcpp (2026.9.14.1+), LLVM 22.1.8 via `openkal-llvm-runtime` 0.9.2, mcpp-index modular libraries `nlohmann.json` 3.12.0, `mcpplibs.cmdline` 0.0.2, `boost.ut` 2.3.1, openkal 0.12, clangd 23.1.0, TypeScript + vscode-languageclient + @vscode/test-electron, Python 3 for packaging scripts, GitHub Actions on ubuntu-24.04, macos-14 (arm64), windows-2022.
 
 **Spec:** `.agents/docs/2026-09-13-cxx-modules-unified-lsp-design.md`, `.agents/docs/2026-09-13-cxx-module-build-database-ide-profile-spec.md`, evidence in `.agents/docs/2026-09-13-cxx-modules-lsp-experiments.md`.
 
@@ -37,8 +37,7 @@ lsp-mcpp-private/
 ├── src/
 │   ├── main.cpp                   lsp-mcpp CLI entry: serve | check | model | version
 │   ├── base/                      error.cppm/.cpp  log.cppm/.cpp  text.cppm/.cpp  uri.cppm/.cpp
-│   ├── json/                      value.cppm/.cpp (lspmcpp.json.value)
-│   ├── platform/                  process  stdio  fs  env  dirs            (.cppm/.cpp each)
+│   │   ├── platform/                  process  stdio  fs  env  dirs            (.cppm/.cpp each)
 │   ├── lsp/                       jsonrpc.cppm/.cpp  protocol.cppm/.cpp (generated)  client.cppm/.cpp
 │   ├── spec/                      database  metadata  kit  discovery        (.cppm/.cpp each)
 │   ├── project/                   scan  compdb  detect  mcpp  cmake  infer  model
@@ -124,44 +123,26 @@ export module lspmcpp.base.uri;     // Result<std::string> uri_to_path(std::stri
 
 - [ ] Tests `tests/test_text.cpp`, `tests/test_uri.cpp`: UTF-16 columns for `"a😀b"` (byte 5 → character 3), `file:///home/u/a%20b.cpp` ↔ `/home/u/a b.cpp`, Windows form `file:///c%3A/Users/x/m.cppm` ↔ `C:/Users/x/m.cppm` checked under `if constexpr (FAMILY == Family::windows)` and as pure string rules on every platform.
 
-### Task 1.2: `lspmcpp.json.value`
+### Task 1.2: JSON, command line and tests from the mcpp ecosystem
 
-**Produces:**
+JSON is not written by hand. Design D24 and §12.8: general-purpose libraries come from mcpp-index modular packages, never compat packages.
 
-```cpp
-export module lspmcpp.json.value;
-import std;
-import lspmcpp.base.error;
-export namespace lspmcpp::json {
-class Value;
-using Array = std::vector<Value>;
-using Object = std::vector<std::pair<std::string, Value>>;   // insertion order kept
-class Value {
-public:
-    Value();                          // null
-    Value(std::nullptr_t); Value(bool); Value(std::int64_t); Value(int); Value(double);
-    Value(std::string); Value(std::string_view); Value(const char*); Value(Array); Value(Object);
-public:
-    bool is_null() const; bool is_bool() const; bool is_int() const; bool is_number() const;
-    bool is_string() const; bool is_array() const; bool is_object() const;
-    bool as_bool() const; std::int64_t as_int() const; double as_number() const;
-    const std::string& as_string() const; const Array& as_array() const; Array& as_array();
-    const Object& as_object() const; Object& as_object();
-    const Value* find(std::string_view key) const;          // null when absent or not an object
-    std::optional<std::string_view> string_at(std::string_view key) const;
-    std::optional<std::int64_t> int_at(std::string_view key) const;
-    Value& set(std::string_view key, Value value);           // object; replaces existing key
-    Value& push(Value value);                               // array
-    bool operator==(const Value&) const;
-private:
-    std::variant<std::nullptr_t, bool, std::int64_t, double, std::string, Array, Object> data_;
-};
-base::Result<Value> parse(std::string_view text);
-std::string stringify(const Value& value, bool pretty = false);
-}
+**Produces:** dependencies in `mcpp.toml`:
+
+```toml
+[dependencies]
+cmdline = "0.0.2"                 # import mcpplibs.cmdline;
+
+[dependencies.nlohmann]
+json = "3.12.0"                   # import nlohmann.json;
+
+[dev-dependencies.boost-ext]
+ut = "2.3.1"                      # import boost.ut;
 ```
 
-- [ ] Tests `tests/test_json.cpp`: round-trip of LSP initialize payload; `\u00e9` and surrogate pair `\ud83d\ude00` decode to UTF-8; integers stay integers (`"id":42` → `is_int`); errors carry position for `{"a":}`; pretty output stable.
+- [ ] Every module that handles JSON uses `nlohmann::json` (`nlohmann::ordered_json` where key order is visible to users, e.g. S1 output); errors from `parse` are caught at the module boundary and converted to `base::Result`.
+- [ ] Unit tests use `boost.ut`.
+- [ ] Cross-building nlohmann.json for `x86_64-windows` and `aarch64-macos` needs openkal-llvm-runtime 0.9.2 (design §12.9 K1). Until mcpp-index carries 0.9.2 the dependency points at the fix branch.
 
 ### Task 1.3: Platform layer
 
@@ -507,3 +488,50 @@ Jobs, all required:
 ## Execution Strategy
 
 Tightly coupled C++ milestones (0–4) run inline in this session with a build and `mcpp test` after every task; isolated work (specs port, VS Code extension, payload scripts) runs through subagents with the interfaces above. Every milestone ends with a push and a green CI run on the PR branch before the next milestone starts.
+
+---
+
+## Execution Record
+
+Delivered as Sunrisepeak/lsp-mcpp-private#1 (`feat/lsp-mcpp-v1` → `main`). The C++ source is 99 files (43 `.cppm` interfaces, 56 `.cpp` implementation units) with no header files and no preprocessor directives. All milestones were implemented, and the design document follows the implementation (§12.9, §13, §14.3, §19).
+
+### Where execution departed from the plan
+
+| Plan | What was done | Why |
+|---|---|---|
+| Task 1.2: tests on `boost.ut` 2.3.1 | An in-repo `lspmcpp.testing` harness (`testing/`), a path dev-dependency | `boost.ut` crashes clang 22.1.8 on a Windows host and every test binary linking it segfaults at startup on macOS (design §12.9 K5) |
+| Tech stack: `openkal-llvm-runtime` 0.9.2 | 0.9.5 | Defects found while building and testing lsp-mcpp were fixed upstream and released through the whole pinned chain (below) |
+| Payloads carry a release server | Release, after running on dev while K7 and K13 were open | Both release-only defects are fixed in 0.9.5; CI runs the unit tests in both profiles on every host |
+| Task 6.1: `fetch_clangd.py`, `packaging/kits/*.kit.json` templates | `packaging/scripts/fetch.py` fetches every lock entry; `build_kit.py` writes `kit.json`; `packaging/kits/README.md` documents each kit; `xlings_artifacts.py` splits release payloads for xlings | A generated manifest cannot drift from the files it describes |
+| Task 7.1: Windows conformance `inferred, msvc` | Windows runs `inferred`, `untrusted`, `mingw` and `cmake-msvc`; macOS runs `inferred`, `untrusted`, `mcpp-llvm`; Linux runs all six fixtures and `mcpp-llvm` again through a symbolic link | The MSVC fixture is a CMake project built by cl.exe in a developer environment, so it measures P7. clang-cl (P6) has no fixture |
+| Task 6.2: @vscode/test-electron 2.5 | 3.1 on Node 22, with a short `--user-data-dir` | VS Code 1.110 renamed the macOS executable, and macOS limits the IPC socket path to 104 bytes |
+| Task 7.3: `mcpp emit build-database` upstream | Not proposed. The mcpp provider asks for it first (S2) and falls back to `mcpp build --configure-only` | lsp-mcpp does not depend on it, as the plan allowed |
+| Task 7.3: xim-pkgindex descriptors | Rendered by `xlings_artifacts.py` in the release workflow, not submitted | They need published release archives |
+
+### Upstream changes
+
+Every defect is recorded in design §12.9 with its root cause. Version requirements are exact, so each fix was released by every package that pins it, mirrored to GitCode, and added to mcpp-index.
+
+| Package | PRs and releases |
+|---|---|
+| openkal-llvm-runtime | #17 → 0.9.2 (`_GNU_SOURCE`, K1), #18 → 0.9.3, #19 → 0.9.4, #20 → 0.9.5 (with a release-build run on each host) |
+| openkal-musl | #31 → 0.13.2 (C++ `pthread_t` on Windows, K6), #32 → 0.13.3 (detached thread exit overran the shared stack, K9), #33 → 0.13.4 |
+| openkal-windows | #20 → 0.7.1 (loops became C runtime calls under `-O2`, K7), #21 → 0.7.2 (inheritable channel ends, K10), #22 → 0.7.3 (argument quoting, argument narrowing and the `\\?\` prefix, K11), #23 → 0.7.4 (environment values, K12) |
+| openkal-macos | #20 → 0.9.1 (a returned register declared an input; release programs faulted before `main`, K13) |
+| mcpp-index | #414 to #423 |
+
+Recorded without a fix: K2 (MinGW `mm_malloc.h`), K5 (`boost.ut`), K8 (libc++ wide strings over 32-bit musl `wcslen`), and the requirements K3 and K4.
+
+### Verification
+
+Every job in `.github/workflows/ci.yml` passes on the pull request:
+
+| Job | Hosts | What it establishes |
+|---|---|---|
+| build and unit tests | ubuntu-24.04, macos-14, windows-2022 | 15 test programs in the dev and the release profile; the three executables start; the generated protocol is fresh |
+| cross-build from Linux | x86_64-windows-gnu, aarch64-macos | one Linux host builds every platform's executables |
+| payload | linux-x64, win32-x64, darwin-arm64 | release server, trimmed clangd 23.1.0 and `lsp-mcpp-kit`, verified layout, no case-only name pairs |
+| conformance | Linux: seven runs over six fixtures and a symbolic-link workspace; macOS: `inferred`, `untrusted`, `mcpp-llvm`; Windows: `inferred`, `untrusted`, `mingw`, `cmake-msvc` | the specifications against real toolchains, through the payload that ships |
+| VS Code end to end | linux-x64, darwin-arm64, win32-x64 | the extension starts the payload's server in a downloaded VS Code, the module features answer, and the platform VSIX packages |
+
+Found and fixed on the way, besides the upstream defects above: unsaved module edits did not reach importers when the workspace was reached by another name (a symbolic link on macOS, a short alias on Windows), a server that exited or hung made every later conformance check wait out its timeout, Linux kernel headers with case-only name pairs broke VSIX packaging, and VS Code 1.110's renamed macOS executable and 104-byte socket limit broke the end-to-end tests.
