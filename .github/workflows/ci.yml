@@ -80,7 +80,9 @@ jobs:
           git diff --exit-code src/lsp
 
   # ---------------------------------------------------------------------------
-  # One Linux host builds the server for every platform (design 12.4).
+  # One Linux host builds the server for every platform (design 12.4, usable plan W11):
+  # the release executables built here are the ones the Windows and macOS payloads
+  # carry, so conformance, clean-machine and end-to-end jobs test what was cross-built.
   cross-build:
     name: cross-build from Linux (${{ matrix.target }})
     runs-on: ubuntu-24.04
@@ -88,39 +90,51 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [x86_64-windows-gnu, aarch64-macos]
+        include:
+          - { target: x86_64-windows-gnu, exe: '.exe' }
+          - { target: aarch64-macos,      exe: '' }
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-mcpp
       - name: Build for ${{ matrix.target }}
-        run: mcpp build --target ${{ matrix.target }}
+        run: mcpp build --profile release --target ${{ matrix.target }}
       - name: Artifacts have the expected format
         run: |
           set -euo pipefail
-          for exe in lsp-mcpp lsp-mcpp-conformance lsp-mcpp-lspgen; do
-            path=$(find target -type f \( -name "$exe" -o -name "$exe.exe" \) -path '*/bin/*' | head -1)
+          mkdir -p cross
+          for exe in lsp-mcpp lsp-mcpp-conformance lsp-mcpp-lspgen lsp-mcpp-mock-mcpp; do
+            path=$(find target -type f -name "$exe${{ matrix.exe }}" -path '*/bin/*' -newer mcpp.toml | head -1)
             file "$path"
             case "${{ matrix.target }}" in
               *windows*) file "$path" | grep -q 'PE32+ executable' ;;
               *macos*)   file "$path" | grep -q 'Mach-O 64-bit arm64' ;;
             esac
+            cp "$path" cross/
           done
+          (cd cross && sha256sum * | tee SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cross-${{ matrix.target }}
+          path: cross
+          retention-days: 7
 
   # ---------------------------------------------------------------------------
   # Payloads: the server, trimmed clangd 23.1 and the lsp-mcpp-kit (design 15.2).
-  # linux-x64 and win32-x64 are assembled on Linux (the Windows server is
-  # cross-built); darwin-arm64 needs a macOS host for lipo and the libc++ configure.
+  # linux-x64 and win32-x64 are assembled on Linux; darwin-arm64 needs a macOS host
+  # for lipo and the libc++ configure. The Windows and macOS executables come from
+  # the cross-build job, unchanged (W11).
   payload:
     name: payload (${{ matrix.platform }})
+    needs: cross-build
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { platform: linux-x64,    os: ubuntu-24.04, target: '',                              exe: '' }
-          - { platform: win32-x64,    os: ubuntu-24.04, target: '--target x86_64-windows-gnu',   exe: '.exe' }
-          - { platform: darwin-arm64, os: macos-14,     target: '--target aarch64-macos',        exe: '' }
+          - { platform: linux-x64,    os: ubuntu-24.04, cross: '',                   exe: '' }
+          - { platform: win32-x64,    os: ubuntu-24.04, cross: x86_64-windows-gnu,   exe: '.exe' }
+          - { platform: darwin-arm64, os: macos-14,     cross: aarch64-macos,        exe: '' }
     defaults:
       run:
         shell: bash
@@ -140,7 +154,20 @@ jobs:
       # Release builds: openkal-llvm-runtime 0.9.6 carries the fixes for the two
       # release-only defects beneath the server (design 12.9, K7 and K13).
       - name: Build the server
-        run: mcpp build --profile release ${{ matrix.target }}
+        if: matrix.cross == ''
+        run: |
+          set -euo pipefail
+          mcpp build --profile release
+          mkdir -p cross
+          for exe in lsp-mcpp lsp-mcpp-conformance lsp-mcpp-mock-mcpp; do
+            cp "$(find target -type f -name "$exe" -path '*/bin/*' -newer mcpp.toml | head -1)" cross/
+          done
+      - name: The cross-built server
+        if: matrix.cross != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: cross-${{ matrix.cross }}
+          path: cross
       - name: Trim clangd
         run: python3 packaging/scripts/trim_clangd.py --platform ${{ matrix.platform }} --out work/clangd --cache "$PAYLOAD_CACHE"
       - name: Build the semantic kit
@@ -148,12 +175,20 @@ jobs:
       - name: Assemble
         run: |
           set -euo pipefail
-          server=$(find target -type f -name "lsp-mcpp${{ matrix.exe }}" -path '*/bin/*' | head -1)
-          runner=$(find target -type f -name "lsp-mcpp-conformance${{ matrix.exe }}" -path '*/bin/*' | head -1)
-          mock=$(find target -type f -name "lsp-mcpp-mock-mcpp${{ matrix.exe }}" -path '*/bin/*' | head -1)
+          server="cross/lsp-mcpp${{ matrix.exe }}"
+          runner="cross/lsp-mcpp-conformance${{ matrix.exe }}"
+          mock="cross/lsp-mcpp-mock-mcpp${{ matrix.exe }}"
+          chmod +x cross/*
           python3 packaging/scripts/assemble_payload.py --platform ${{ matrix.platform }} --server "$server" \
               --clangd work/clangd --kit work/kit --out payload
           python3 packaging/scripts/assemble_payload.py --verify payload
+          if [ -f cross/SHA256SUMS ]; then
+            # The payload carries the cross-built executable byte for byte.
+            want=$(grep " lsp-mcpp${{ matrix.exe }}\$" cross/SHA256SUMS | cut -d' ' -f1)
+            got=$(python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "payload/bin/lsp-mcpp${{ matrix.exe }}")
+            echo "cross-built $want, payload $got"
+            [ "$want" = "$got" ]
+          fi
           mkdir -p tools && cp "$runner" "$mock" tools/
           # A tarball keeps executable bits and links, which an artifact zip does not.
           tar -czf payload-${{ matrix.platform }}.tar.gz payload tools
@@ -271,6 +306,53 @@ jobs:
           ln -sfn "$RUNNER_TEMP/real" "$RUNNER_TEMP/link"
           TMPDIR="$RUNNER_TEMP/link" tools/lsp-mcpp-conformance run --server payload/bin/lsp-mcpp --payload payload \
               --fixture conformance/fixtures/mcpp-llvm --timeout 180
+
+  # ---------------------------------------------------------------------------
+  # Clean machines (usable plan W5, design 20.2): no compiler and no Visual Studio.
+  # Linux runs in a bare container; the Windows image cannot be emptied, so its
+  # toolchains are hidden and asserted invisible first.
+  clean-machine:
+    name: clean machine (${{ matrix.platform }})
+    needs: payload
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x64, os: ubuntu-24.04 }
+          - { platform: win32-x64, os: windows-2022 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: payload-${{ matrix.platform }}
+      - name: Unpack the payload
+        run: tar -xzf payload-${{ matrix.platform }}.tar.gz
+      - name: A container without a compiler
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w ubuntu:24.04 bash -c '
+            set -euo pipefail
+            for tool in c++ g++ gcc cc clang++ clang; do
+              if command -v "$tool"; then echo "::error::$tool is on PATH"; exit 1; fi
+            done
+            tools/lsp-mcpp-conformance run --server payload/bin/lsp-mcpp --payload payload \
+                --fixture conformance/fixtures/inferred-discover --timeout 180'
+      - name: Visual Studio hidden and no compiler on PATH
+        if: runner.os == 'Windows'
+        run: |
+          set -euo pipefail
+          mv "/c/Program Files (x86)/Microsoft Visual Studio/Installer" "/c/Program Files (x86)/Microsoft Visual Studio/Installer.hidden"
+          export PATH="/c/Windows/system32:/c/Windows:/c/Windows/System32/Wbem:/usr/bin"
+          for tool in vswhere cl clang-cl clang++ g++ c++ gcc; do
+            if command -v "$tool"; then echo "::error::$tool is still visible"; exit 1; fi
+          done
+          tools/lsp-mcpp-conformance.exe run --server payload/bin/lsp-mcpp.exe --payload payload \
+              --fixture conformance/fixtures/inferred-discover --timeout 180
 
   # ---------------------------------------------------------------------------
   # VS Code → extension → lsp-mcpp → clangd, and the platform VSIX (design 16).

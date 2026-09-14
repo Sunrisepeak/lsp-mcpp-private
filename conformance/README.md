@@ -38,6 +38,9 @@ checks fail at once with that reason instead of each waiting out its timeout.
 | `mcpp-msvc` | mcpp with `msvc@system` and `import std` |
 | `mcpp-llvm-msvc` | mcpp's default Windows toolchain, LLVM for `x86_64-windows-msvc`, with the MSVC STL (P5) |
 | `inferred-msvc` | Loose module sources on a machine with Visual Studio: MSVC STL semantics without a build system (design 9.3, D27) |
+| `inferred-discover` | The `inferred` project with compiler discovery on, on clean machines: a Linux container without a compiler and Windows with Visual Studio hidden (usable plan W5) |
+| `self-lsp-mcpp` | This repository at a fixed commit: `std` from the openkal-llvm-runtime package, read from mcpp's std build record (nightly, W8) |
+| `self-mcpp` | The mcpp repository at a fixed commit, about 170 modules (nightly, W8) |
 | `timing` | Startup timing (usable plan W7): the `inferred` project opened and navigated at once; run cold, then warm with the same workspace and cache |
 
 On Windows every server runs without a developer environment, as it does when an editor starts it. Fixtures whose own build needs one declare `"prepare-environment": "msvc"`, and the runner is given the environment with `--msvc-env FILE` (`NAME=value` lines, the output of `set` after `vcvars64.bat`); only the prepare steps see it.
