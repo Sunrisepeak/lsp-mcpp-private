@@ -515,13 +515,27 @@ public:
                 matches = matches && snapshot.value("project", Json::object()).value("level", 0) == level->get<int>();
             }
             if (auto issueCode = check.find("issue-code"); issueCode != check.end()) {
-                matches = matches && std::ranges::any_of(snapshot.value("issues", Json::array()),
-                    [&](const Json& issue) { return issue.value("code", std::string {}) == issueCode->get<std::string>(); });
+                const std::string wantedCommand { check.value("issue-command", std::string {}) };
+                matches = matches && std::ranges::any_of(snapshot.value("issues", Json::array()), [&](const Json& issue) {
+                    if (issue.value("code", std::string {}) != issueCode->get<std::string>()) return false;
+                    return wantedCommand.empty() || issue.value("command", Json::object()).value("command", std::string {}) == wantedCommand;
+                });
             }
             if (auto compiler = check.find("profile-compiler"); compiler != check.end()) {
                 matches = matches && snapshot.value("profile", Json::object()).value("compiler", std::string {}).starts_with(compiler->get<std::string>());
             }
             return { matches, detail };
+        }
+        if (kind == "responds") {
+            // An answer of any kind, an empty one included, within the check's time: a file the engine
+            // cannot serve must be answered at once rather than left waiting (usable plan W1.7, W5.4).
+            open(file);
+            const std::string method { check.value("method", std::string { "textDocument/definition" }) };
+            const auto started = Clock::now();
+            const auto answer = client_.request(method, Json { { "textDocument", Json { { "uri", uri(file) } } }, { "position", position(check.at("at")) } },
+                                                timeout_);
+            const double seconds { std::chrono::duration<double>(Clock::now() - started).count() };
+            return { answer.has_value(), answer ? std::format("{:.1f}s: {}", seconds, lsp::dump(*answer).substr(0, 120)) : std::string { "no answer" } };
         }
         if (kind == "module-cache-reused") {
             // SC4: a warm start builds no module the previous run left in the cache. Every published

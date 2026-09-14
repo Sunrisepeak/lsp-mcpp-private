@@ -41,6 +41,7 @@ checks fail at once with that reason instead of each waiting out its timeout.
 | `mcpp-msvc` | mcpp with `msvc@system` and `import std` |
 | `mcpp-llvm-msvc` | mcpp's default Windows toolchain, LLVM for `x86_64-windows-msvc`, with the MSVC STL (P5) |
 | `inferred-msvc` | Loose module sources on a machine with Visual Studio: MSVC STL semantics without a build system (design 9.3, D27) |
+| `inferred-no-sdk` | macOS with the Command Line Tools and Xcode hidden: degraded with `sdk-missing` and its install command, a file importing `std` answered at once, module-level features (usable plan W5, U7) |
 | `inferred-discover` | The `inferred` project with compiler discovery on, on clean machines: a Linux container without a compiler and Windows with Visual Studio hidden (usable plan W5) |
 | `self-lsp-mcpp` | This repository at a fixed commit: `std` from the openkal-llvm-runtime package, read from mcpp's std build record (nightly, W8) |
 | `self-mcpp` | The mcpp repository at a fixed commit, about 170 modules (nightly, W8) |
@@ -106,8 +107,9 @@ always has been.
 
 | Kind | Passes when |
 |---|---|
-| `status` | `cxxModules/status` reaches `ready`, `degraded` or `error` and matches `source`, `profile-kind`, `state`, `level`, `issue-code` when given, and a `profile-compiler` prefix; `"folder"` picks one root's own status in a multi-root fixture (usable plan W9.1), absent picks whichever root's arrived most recently |
+| `status` | `cxxModules/status` reaches `ready`, `degraded` or `error` and matches `source`, `profile-kind`, `state`, `level`, `issue-code` (with `issue-command`, that issue's command) when given, and a `profile-compiler` prefix; `"folder"` picks one root's own status in a multi-root fixture (usable plan W9.1), absent picks whichever root's arrived most recently |
 | `workspace-unchanged` | no file under the workspace was added, changed or removed after the prepare steps |
+| `responds` | a request (`method`, default `textDocument/definition`) at `at` is answered, empty answers included, within the check's time |
 | `module-cache-reused` | every file clangd published for `module` (default `std`) before the server started is still there unchanged, and none was added (SC4); passes on a cold start unless `--expect-warm` |
 | `diagnostics-empty` | the file's diagnostics, after the engine has published them, contain no errors |
 | `diagnostic-code` | a diagnostic with code `expect` is published for the file |

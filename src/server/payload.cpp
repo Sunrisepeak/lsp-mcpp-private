@@ -7,6 +7,7 @@ import lspmcpp.base.error;
 import lspmcpp.base.path;
 import lspmcpp.base.text;
 import lspmcpp.platform.fs;
+import lspmcpp.toolchain.discover;
 import lspmcpp.platform.env;
 import lspmcpp.platform.dirs;
 import lspmcpp.platform.process;
@@ -126,7 +127,8 @@ std::string macos_sdk_path() {
         return {};
     } else {
         if (auto sdkroot = platform::env::get("SDKROOT"); sdkroot && platform::fs::is_directory(*sdkroot)) return base::normalize_path(*sdkroot);
-        if (platform::fs::is_regular_file("/usr/bin/xcrun")) {
+        // xcrun is a shim: without developer tools it opens the installation dialog, and this is asked every 30 s.
+        if (toolchain::macos_developer_tools_present() && platform::fs::is_regular_file("/usr/bin/xcrun")) {
             platform::SpawnOptions options;
             options.program = "/usr/bin/xcrun";
             options.arguments = { "--show-sdk-path" };

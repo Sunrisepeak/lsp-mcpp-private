@@ -368,10 +368,10 @@ jobs:
               --fixture conformance/fixtures/mcpp-llvm --timeout 180
 
   # ---------------------------------------------------------------------------
-  # Clean machines (usable plan W5, design 20.2): no compiler and no Visual Studio.
-  # Linux runs in a bare container; the Windows image cannot be emptied, so its
-  # toolchains are hidden and asserted invisible first. The conformance fixture and
-  # the packaged extension's end-to-end suite both run there.
+  # Clean machines (usable plan W5, design 20.2): no compiler, no Visual Studio, no
+  # Command Line Tools. Linux runs in a bare container; the Windows and macOS images
+  # cannot be emptied, so their toolchains are hidden and asserted invisible first.
+  # The conformance fixture and the packaged extension's end-to-end suite both run there.
   clean-machine:
     name: clean machine (${{ matrix.platform }})
     needs: payload
@@ -381,8 +381,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { platform: linux-x64, os: ubuntu-24.04 }
-          - { platform: win32-x64, os: windows-2022 }
+          - { platform: linux-x64,    os: ubuntu-24.04 }
+          - { platform: win32-x64,    os: windows-2022 }
+          - { platform: darwin-arm64, os: macos-14 }
     defaults:
       run:
         shell: bash
@@ -445,6 +446,24 @@ jobs:
           # Git's /usr/bin goes first: npm starts through `env bash`, and System32's bash.exe is WSL's.
           export PATH="/usr/bin:$(dirname "$NODE_PATH_FOR_E2E"):/c/Windows/system32:/c/Windows:/c/Windows/System32/Wbem"
           cd editors/vscode && LSP_MCPP_E2E_VSIX="$RUNNER_TEMP/lsp-mcpp.vsix" npm test
+
+      # U7: the kit needs the macOS SDK, which is gone with the Command Line Tools. The server
+      # degrades with the install command and runs no developer-tool shim; the extension asks
+      # once and not again after a restart.
+      - name: Command Line Tools and Xcode hidden
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          sudo mv /Library/Developer/CommandLineTools /Library/Developer/CommandLineTools.hidden
+          for app in /Applications/Xcode*.app; do sudo mv "$app" "${app%.app}.hidden"; done
+          sudo xcode-select --reset || true
+          if [ -e /Library/Developer/CommandLineTools ] || compgen -G "/Applications/Xcode*.app" > /dev/null; then
+            echo "::error::developer tools are still visible"; exit 1
+          fi
+          tools/lsp-mcpp-conformance run --server payload/bin/lsp-mcpp --payload payload \
+              --fixture conformance/fixtures/inferred-no-sdk --timeout 120
+          cd editors/vscode
+          LSP_MCPP_E2E_VSIX="$RUNNER_TEMP/lsp-mcpp.vsix" LSP_MCPP_E2E_ONLY=sdk-missing.test.js LSP_MCPP_E2E_EXPECT_SDK_MISSING=1 npm test
 
   # ---------------------------------------------------------------------------
   # VS Code → extension → lsp-mcpp → clangd, and the platform VSIX (design 16).

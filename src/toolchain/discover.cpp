@@ -33,10 +33,31 @@ void add_store(std::vector<CompilerCandidate>& out, std::string_view store, std:
 
 } // namespace
 
+bool macos_developer_tools_present() {
+    if constexpr (lspmcpp::os::FAMILY != lspmcpp::os::Family::macos) {
+        return false;
+    } else {
+        // The order xcrun follows: DEVELOPER_DIR, the directory `xcode-select -s` recorded, then the defaults.
+        if (auto directory = platform::env::get("DEVELOPER_DIR"); directory && platform::fs::is_directory(*directory)) return true;
+        if (const std::string selected { platform::fs::canonical_path("/var/db/xcode_select_link") };
+            selected != "/var/db/xcode_select_link" && platform::fs::is_directory(base::join_path(selected, "usr/bin"))) {
+            return true;
+        }
+        return platform::fs::is_regular_file("/Library/Developer/CommandLineTools/usr/bin/clang++")
+            || platform::fs::is_directory("/Applications/Xcode.app/Contents/Developer/usr/bin");
+    }
+}
+
 std::vector<CompilerCandidate> discover_compilers(const Runner& runner) {
     std::vector<CompilerCandidate> out;
+    // On macOS the compilers in /usr/bin are shims; without developer tools, probing one asks the
+    // person to install them (usable plan W5.4: the extension asks once, the server never).
+    const bool shimsUsable { lspmcpp::os::FAMILY != lspmcpp::os::Family::macos || macos_developer_tools_present() };
     for (std::string_view name : { "c++", "g++", "clang++", "cl", "clang-cl" }) {
-        if (auto found = platform::env::find_executable(name)) add(out, *found, "PATH");
+        auto found = platform::env::find_executable(name);
+        if (!found) continue;
+        if (!shimsUsable && base::is_within(*found, "/usr/bin")) continue;
+        add(out, *found, "PATH");
     }
     const std::string home { platform::dirs::home_directory() };
     add_store(out, base::join_path(home, ".mcpp/registry/data/xpkgs"), "mcpp");
