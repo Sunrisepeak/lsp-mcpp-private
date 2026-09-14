@@ -137,7 +137,7 @@ jobs:
         with:
           path: .payload-cache
           key: payload-inputs-${{ matrix.platform }}-${{ hashFiles('packaging/payload.lock.json') }}
-      # Release builds: openkal-llvm-runtime 0.9.5 carries the fixes for the two
+      # Release builds: openkal-llvm-runtime 0.9.6 carries the fixes for the two
       # release-only defects beneath the server (design 12.9, K7 and K13).
       - name: Build the server
         run: mcpp build --profile release ${{ matrix.target }}

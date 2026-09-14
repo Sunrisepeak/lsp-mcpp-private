@@ -77,7 +77,7 @@ python3 packaging/scripts/assemble_payload.py --verify payload
 
 The server is built with the **release** profile. Optimized builds over
 openkal-windows and openkal-macos misbehaved at startup until
-openkal-llvm-runtime 0.9.5 (design §12.9, K7 and K13), and CI runs the unit
+openkal-llvm-runtime 0.9.6 (design §12.9, K7 and K13), and CI runs the unit
 tests in both profiles on every host.
 
 To run the VS Code extension against a local payload, put it at
