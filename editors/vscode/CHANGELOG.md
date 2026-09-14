@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- One-time offer, per machine, to run `xcode-select --install` when the macOS SDK cannot be found; also available as **C++ Modules: Install Command Line Tools**.
+
 ## 0.1.0
 
 - First release: lsp-mcpp language server with clangd 23.1 and the lsp-mcpp-kit standard library kit built in.
