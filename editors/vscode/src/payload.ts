@@ -18,7 +18,12 @@ export interface PayloadManifest {
     server: PayloadEntry;
     clangd: PayloadEntry;
     kit: { name: string; path: string };
+    // Version 2 (usable plan W9.4): size and sha256 of the files the server verifies at startup.
+    files?: Record<string, { size: number; sha256: string }>;
 }
+
+// 1: the first layout; 2 adds `files`, which the server itself checks. The extension reads neither.
+export const SUPPORTED_PAYLOAD_VERSIONS: readonly number[] = [1, 2];
 
 export interface ServerLaunch {
     executable: string;
@@ -72,7 +77,7 @@ export function readManifest(payloadDir: string): { manifest?: PayloadManifest; 
         return { problem: `The payload manifest ${file} cannot be read: ${error instanceof Error ? error.message : String(error)}` };
     }
     const manifest = parsed as Partial<PayloadManifest>;
-    if (manifest['payload-version'] !== 1) {
+    if (typeof manifest['payload-version'] !== 'number' || !SUPPORTED_PAYLOAD_VERSIONS.includes(manifest['payload-version'])) {
         return { problem: `The payload manifest ${file} has an unsupported payload-version.` };
     }
     if (typeof manifest.platform !== 'string'
