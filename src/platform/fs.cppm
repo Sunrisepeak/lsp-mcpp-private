@@ -35,10 +35,19 @@ std::vector<std::string> list_directory(std::string_view path);
 
 std::string current_directory();
 
-// The name a file has once every symbolic link on the way to it is followed,
-// for comparing names that reach one file by different routes: /var and
-// /private/var on macOS. The part of a path that does not exist is kept as
-// written. On Windows the path is only normalized.
+// What the file system itself calls a file: a volume and an index on it. Two
+// names reach one file exactly when their identities are equal.
+struct FileIdentity {
+    std::uint64_t volume { 0 };
+    std::uint64_t index { 0 };
+    auto operator<=>(const FileIdentity&) const = default;
+};
+std::optional<FileIdentity> file_identity(std::string_view path);
+
+// One name for a file that several names reach, for comparing names: every
+// symbolic link on the way is followed (/var is /private/var on macOS), and on
+// Windows every short alias is replaced by its long name (RUNNER~1 by
+// runneradmin). The part of a path that does not exist is kept as written.
 std::string canonical_path(std::string_view path);
 
 } // namespace lspmcpp::platform::fs

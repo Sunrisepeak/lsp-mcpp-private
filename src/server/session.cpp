@@ -216,14 +216,15 @@ private:
 
     // The engine is given every file under the one name the model uses for it,
     // because clangd matches an unsaved buffer to the module source it builds by
-    // exact name. On Windows that is clangd's own spelling, "file:///C:/dir/f.cppm"
-    // where editors write "file:///c%3A/dir/f.cppm"; elsewhere it is the name with
-    // symbolic links followed, "/private/var/..." where the editor opened "/var/...".
+    // exact name. On Windows that is the long name in clangd's own spelling,
+    // "file:///C:/Users/runneradmin/f.cppm" where an editor wrote
+    // "file:///c%3A/Users/RUNNER~1/f.cppm"; elsewhere it is the name with symbolic
+    // links followed, "/private/var/..." where the editor opened "/var/...".
     std::string engine_uri_(std::string_view uri) const {
         if constexpr (lspmcpp::os::FAMILY == lspmcpp::os::Family::windows) {
-            auto path = base::uri_to_path(uri);
-            if (!path || path->size() < 2 || (*path)[1] != ':') return std::string { uri };
-            return "file:///" + path->substr(0, 2) + base::percent_encode_path(std::string_view { *path }.substr(2));
+            const std::string path { path_of_uri_(uri) };
+            if (path.size() < 2 || path[1] != ':') return std::string { uri };
+            return "file:///" + path.substr(0, 2) + base::percent_encode_path(std::string_view { path }.substr(2));
         } else {
             const auto written = base::uri_to_path(uri);
             if (!written) return std::string { uri };

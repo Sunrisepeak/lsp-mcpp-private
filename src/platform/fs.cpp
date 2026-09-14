@@ -4,6 +4,8 @@ import std;
 import lspmcpp.base.error;
 import lspmcpp.base.path;
 import lspmcpp.base.text;
+import openkal.fs;
+import lspmcpp.platform.preopen;
 
 namespace lspmcpp::platform::fs {
 
@@ -150,10 +152,42 @@ std::string current_directory() {
     return from_native(path);
 }
 
+std::optional<FileIdentity> file_identity(std::string_view path) {
+    const auto resolved = resolve_name(path);
+    if (!resolved || resolved->remainder.empty()) return std::nullopt;
+    kal_node_info info { kal::fs::info_for_caller() };
+    const std::string& name { resolved->remainder };
+    if (kal_fs_info(resolved->directory, name.data(), name.size(), 0, kal::fs::field::identity, &info) != kal_ok) return std::nullopt;
+    if ((info.present & kal::fs::field::identity) == 0) return std::nullopt;
+    return FileIdentity { info.identity[0], info.identity[1] };
+}
+
 std::string canonical_path(std::string_view path) {
     if (path.empty()) return {};
     if constexpr (base::NATIVE_PATH_STYLE == base::PathStyle::windows) {
-        return base::normalize_path(path);
+        // A short alias always carries a '~'. A component that does is looked up
+        // among its parent's entries, which are listed by their long names, and
+        // replaced by the one that is the same file.
+        const std::string normalized { base::normalize_path(path) };
+        if (!normalized.contains('~') || normalized.size() < 2 || normalized[1] != ':') return normalized;
+        std::string current { normalized.substr(0, 2) };
+        for (const auto part : base::split(std::string_view { normalized }.substr(2), '/')) {
+            if (part.empty()) continue;
+            std::string next { current + "/" + std::string { part } };
+            if (part.contains('~')) {
+                if (const auto identity = file_identity(next)) {
+                    for (const auto& entry : list_directory(current.size() == 2 ? current + "/" : current)) {
+                        if (base::file_name(entry).contains('~')) continue;
+                        if (const auto other = file_identity(entry); other && *other == *identity) {
+                            next = current + "/" + std::string { base::file_name(entry) };
+                            break;
+                        }
+                    }
+                }
+            }
+            current = std::move(next);
+        }
+        return current;
     } else {
         std::error_code error;
         const auto resolved = std::filesystem::weakly_canonical(native(path), error);

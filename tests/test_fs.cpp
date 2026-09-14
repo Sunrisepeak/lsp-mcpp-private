@@ -109,11 +109,43 @@ int main() {
         expect(!fs::exists(base::join_path(root, "missing")));
     };
 
-    // Symbolic links need a privilege on Windows, where canonical_path only
-    // normalizes; the rule is observed on the systems that follow links.
-    "a file reached through a symbolic link has one canonical name"_test = [&] {
+    "a file has one identity whatever it is called, and another file another"_test = [&] {
+        const std::string first { base::join_path(root, "identity/first.txt") };
+        const std::string second { base::join_path(root, "identity/second.txt") };
+        expect(fatal(fs::create_directories(base::join_path(root, "identity")).has_value()));
+        expect(fatal(fs::write_file(first, "1").has_value() && fs::write_file(second, "2").has_value()));
+        const auto a = fs::file_identity(first);
+        const auto b = fs::file_identity(second);
+        expect(fatal(a.has_value() && b.has_value()));
+        expect(*a != *b);
+        expect(fs::file_identity(base::join_path(root, "identity/./first.txt")) == a);
+        if constexpr (base::NATIVE_PATH_STYLE == base::PathStyle::windows) {
+            std::string upper { first };
+            std::ranges::transform(upper, upper.begin(), [](char c) { return c >= 'a' && c <= 'z' ? static_cast<char>(c - 32) : c; });
+            expect(fs::file_identity(upper) == a) << upper;
+        }
+        expect(!fs::file_identity(base::join_path(root, "identity/missing.txt")).has_value());
+    };
+
+    // Symbolic links need a privilege on Windows. What stands for them there is
+    // the short alias a volume gives a long name: RUNNER~1 for runneradmin.
+    "a file reached by another name has one canonical name"_test = [&] {
         if constexpr (base::NATIVE_PATH_STYLE == base::PathStyle::windows) {
             expect(fs::canonical_path("c:\\dir\\f.txt") == "C:/dir/f.txt") << fs::canonical_path("c:\\dir\\f.txt");
+            const std::string temporary { lspmcpp::platform::dirs::temp_directory() };
+            std::string aliased;
+            if (temporary.contains('~')) aliased = temporary;
+            else if (fs::is_directory("C:/PROGRA~1")) aliased = "C:/PROGRA~1";
+            if (!aliased.empty()) {
+                const std::string resolved { fs::canonical_path(aliased) };
+                expect(!resolved.contains('~')) << aliased << " -> " << resolved;
+                expect(fs::file_identity(resolved) == fs::file_identity(aliased)) << resolved;
+                const std::string file { base::join_path(aliased, "lsp-mcpp-canonical-alias.txt") };
+                if (fs::write_file(file, "x")) {
+                    expect(fs::canonical_path(file) == base::join_path(resolved, "lsp-mcpp-canonical-alias.txt")) << fs::canonical_path(file);
+                    fs::remove_all(file);
+                }
+            }
         } else {
             const std::string real { base::join_path(root, "canonical-real") };
             const std::string link { base::join_path(root, "canonical-link") };
