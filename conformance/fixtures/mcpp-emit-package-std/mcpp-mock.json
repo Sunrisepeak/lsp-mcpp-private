@@ -51,7 +51,13 @@
             },
             "forced-includes": [],
             "exceptions": true,
-            "rtti": true
+            "rtti": true,
+            "raw-semantic-arguments": {
+              "clang": [
+                "--no-default-config",
+                "-nostdinc++"
+              ]
+            }
           }
         },
         "translation-units": [
@@ -175,7 +181,13 @@
             },
             "forced-includes": [],
             "exceptions": true,
-            "rtti": true
+            "rtti": true,
+            "raw-semantic-arguments": {
+              "clang": [
+                "--no-default-config",
+                "-nostdinc++"
+              ]
+            }
           }
         },
         "translation-units": [

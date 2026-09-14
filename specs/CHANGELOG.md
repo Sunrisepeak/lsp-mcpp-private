@@ -2,6 +2,12 @@
 
 All changes to the specifications in this directory. Each specification is versioned independently.
 
+## All specifications
+
+### 2026-09-14
+
+- Rule identifiers `S<n>-<section>-<ordinal>` on every requirement of S1, S2 and S4, and `conformance/traceability.json` mapping each to its evidence (README, "Rule identifiers and traceability"). No normative change.
+
 ## S1 — C++ Build Database: IDE Profile
 
 ### 0.2.0 — 2026-09-14 (Draft), revised 2026-09-14
@@ -27,6 +33,7 @@ First public draft, derived from the design draft of 2026-09-13.
 
 - Single-document mode (section 3.4): one envelope on standard output with the database inline, advertised through the producer's `--protocol-version`; the producer writes nothing into the workspace. It matches mcpp's machine-output protocol version 1 and mcpp-community/mcpp#636.
 - Schema `envelope` definition and example `examples/s2-envelope.json`.
+- Schema: a `finished` message's `database` is an absolute path, as section 3.3 requires.
 
 ### 0.1.0 — 2026-09-14 (Draft)
 

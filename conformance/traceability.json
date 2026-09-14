@@ -1,0 +1,944 @@
+{
+ "$comment": "Rule identifiers of specifications S1, S2 and S4 mapped to evidence (usable plan W10.2), checked by specs/tools/validate.py. Evidence: validate (a passing check of validate.py, by label prefix), test (tests/<file>.cpp: <name>), check (<fixture>/<check id>), script (a file and a line that enforces the rule), manual (why no automated evidence can exist).",
+ "$pending": {
+  "S2-5-1": "the session watches fixed build-file and source globs; the watch entries a producer returns are not registered yet",
+  "S2-5-9": "a failed reload replaces the model with the fallback instead of keeping the last one that loaded and saying it may be stale"
+ },
+ "S1-3-1": [
+  {
+   "test": "tests/test_spec.cpp: private units are not visible and duplicates are ambiguous"
+  },
+  {
+   "script": "src/server/cli.cpp",
+   "contains": "spec::to_compile_commands(loaded.model.database)"
+  }
+ ],
+ "S1-3-2": [
+  {
+   "test": "tests/test_spec.cpp: module metadata paths resolve against the manifest"
+  },
+  {
+   "test": "tests/test_spec.cpp: module names resolve in the specified order"
+  }
+ ],
+ "S1-3-3": [
+  {
+   "test": "tests/test_toolchain.cpp: GCC 16 on Linux"
+  },
+  {
+   "test": "tests/test_toolchain.cpp: Clang 22 with libc++ and a configuration file"
+  }
+ ],
+ "S1-5-1": [
+  {
+   "validate": "S1 schema rejects missing version"
+  },
+  {
+   "test": "tests/test_spec.cpp: invalid databases are errors"
+  }
+ ],
+ "S1-5-2": [
+  {
+   "validate": "S1 schema rejects missing revision"
+  }
+ ],
+ "S1-5-3": [
+  {
+   "validate": "S1 schema rejects missing sets"
+  },
+  {
+   "test": "tests/test_spec.cpp: invalid databases are errors"
+  }
+ ],
+ "S1-5-4": [
+  {
+   "validate": "S1 s1-level2-clang-two-sets.json: set names unique"
+  }
+ ],
+ "S1-5-5": [
+  {
+   "validate": "S1 s1-level2-clang-two-sets.json: level 2 profile data at document, set and unit level"
+  },
+  {
+   "test": "tests/test_spec.cpp: a database round-trips through JSON"
+  }
+ ],
+ "S1-5.1-1": [
+  {
+   "validate": "S1 schema rejects ide without profile-version"
+  },
+  {
+   "test": "tests/test_spec.cpp: the level 3 GCC example loads"
+  }
+ ],
+ "S1-5.1-2": [
+  {
+   "validate": "S1 s1-level3-gcc.json: generator names the producer and its version"
+  }
+ ],
+ "S1-5.1-3": [
+  {
+   "validate": "S1 schema rejects generator without name"
+  }
+ ],
+ "S1-5.1-4": [
+  {
+   "validate": "S1 s1-level3-gcc.json: generator names the producer and its version"
+  }
+ ],
+ "S1-5.1-5": [
+  {
+   "validate": "S1 schema rejects ide without toolchains"
+  }
+ ],
+ "S1-6-1": [
+  {
+   "validate": "S1 schema rejects toolchain without family"
+  },
+  {
+   "validate": "S1 schema rejects unknown family"
+  }
+ ],
+ "S1-6-2": [
+  {
+   "validate": "S1 schema rejects toolchain without version"
+  }
+ ],
+ "S1-6-3": [
+  {
+   "validate": "S1 schema rejects toolchain without driver"
+  },
+  {
+   "validate": "S1 s1-level3-gcc.json: drivers and work directories are absolute"
+  }
+ ],
+ "S1-6-4": [
+  {
+   "validate": "S1 schema rejects toolchain without target"
+  },
+  {
+   "test": "tests/test_toolchain.cpp: GCC 16 on Linux"
+  }
+ ],
+ "S1-6-5": [
+  {
+   "validate": "S1 s1-level3-gcc.json: hello@dev toolchain has stdlib where std is required"
+  },
+  {
+   "check": "mcpp-emit-package-std/S1"
+  }
+ ],
+ "S1-6-6": [
+  {
+   "validate": "S1 s1-level2-clang-two-sets.json: app@Debug toolchain has stdlib where std is required"
+  },
+  {
+   "validate": "S1 fixture data validates: mcpp-emit-package-std"
+  }
+ ],
+ "S1-6-7": [
+  {
+   "validate": "S1 s1-level3-gcc.json: toolchains list their config-files"
+  },
+  {
+   "test": "tests/test_toolchain.cpp: Clang 22 with libc++ and a configuration file"
+  }
+ ],
+ "S1-6-8": [
+  {
+   "validate": "S1 schema rejects introspection without command"
+  }
+ ],
+ "S1-6.1-1": [
+  {
+   "validate": "S1 schema rejects stdlib without name"
+  },
+  {
+   "validate": "S1 schema rejects stdlib of unknown name"
+  }
+ ],
+ "S1-6.1-2": [
+  {
+   "validate": "S1 s1-level3-gcc.json: stdlib objects name their version"
+  }
+ ],
+ "S1-6.1-3": [
+  {
+   "test": "tests/test_spec.cpp: module metadata paths resolve against the manifest"
+  },
+  {
+   "check": "cmake-msvc-std/C3-std"
+  },
+  {
+   "check": "inferred/C4"
+  }
+ ],
+ "S1-6.1-4": [
+  {
+   "check": "mcpp-emit-package-std/S1"
+  },
+  {
+   "validate": "S1 fixture data validates: mcpp-emit-package-std"
+  },
+  {
+   "test": "tests/test_project.cpp: a package's std comes from mcpp's std build record"
+  }
+ ],
+ "S1-7-1": [
+  {
+   "validate": "S1 schema rejects set without name"
+  },
+  {
+   "validate": "S1 s1-level2-clang-two-sets.json: set names unique"
+  }
+ ],
+ "S1-7-2": [
+  {
+   "validate": "S1 s1-level3-gcc.json: hello@dev carries family-name, baseline-arguments, configuration and kind"
+  }
+ ],
+ "S1-7-3": [
+  {
+   "validate": "S1 schema rejects set without visible-sets"
+  }
+ ],
+ "S1-7-4": [
+  {
+   "validate": "S1 s1-level2-clang-two-sets.json: app@Debug visible-sets list the complete closure"
+  }
+ ],
+ "S1-7-5": [
+  {
+   "validate": "S1 s1-level3-gcc.json: hello@dev carries family-name, baseline-arguments, configuration and kind"
+  }
+ ],
+ "S1-7-6": [
+  {
+   "validate": "S1 schema rejects set without translation-units"
+  }
+ ],
+ "S1-7-7": [
+  {
+   "validate": "S1 s1-level2-clang-two-sets.json: level 2 profile data at document, set and unit level"
+  },
+  {
+   "validate": "S1 schema rejects set ide without toolchain"
+  }
+ ],
+ "S1-7.1-1": [
+  {
+   "validate": "S1 schema rejects set ide without toolchain"
+  },
+  {
+   "validate": "S1 s1-level2-clang-two-sets.json: app@Debug toolchain id exists"
+  }
+ ],
+ "S1-7.1-2": [
+  {
+   "validate": "S1 s1-level3-gcc.json: hello@dev carries family-name, baseline-arguments, configuration and kind"
+  }
+ ],
+ "S1-7.1-3": [
+  {
+   "validate": "S1 s1-level3-gcc.json: hello@dev carries family-name, baseline-arguments, configuration and kind"
+  }
+ ],
+ "S1-7.1-4": [
+  {
+   "validate": "S1 s1-level3-gcc.json: level 3 sets carry structured options"
+  },
+  {
+   "test": "tests/test_spec.cpp: the level 3 GCC example loads"
+  }
+ ],
+ "S1-8-1": [
+  {
+   "validate": "S1 schema rejects unit without source"
+  },
+  {
+   "test": "tests/test_spec.cpp: invalid databases are errors"
+  }
+ ],
+ "S1-8-2": [
+  {
+   "validate": "S1 schema rejects unit without work-directory"
+  },
+  {
+   "validate": "S1 s1-level3-gcc.json: drivers and work directories are absolute"
+  }
+ ],
+ "S1-8-3": [
+  {
+   "validate": "S1 schema rejects unit without arguments"
+  }
+ ],
+ "S1-8-4": [
+  {
+   "validate": "S1 s1-level3-gcc.json: hello@dev units carry local-arguments and private"
+  }
+ ],
+ "S1-8-5": [
+  {
+   "validate": "S1 s1-level3-gcc.json: hello@dev units carry local-arguments and private"
+  },
+  {
+   "test": "tests/test_spec.cpp: private units are not visible and duplicates are ambiguous"
+  }
+ ],
+ "S1-8-6": [
+  {
+   "validate": "S1 s1-level3-gcc.json: src/greet/greet.cppm provides iff importable role"
+  },
+  {
+   "test": "tests/test_project.cpp: a producer's build database is completed, not replaced"
+  }
+ ],
+ "S1-8-7": [
+  {
+   "validate": "S1 s1-level3-gcc.json: src/greet/greet.cppm writes partition hello.greet:detail in full"
+  },
+  {
+   "test": "tests/test_spec.cpp: module names resolve in the specified order"
+  }
+ ],
+ "S1-8-8": [
+  {
+   "validate": "S1 s1-level2-clang-two-sets.json: level 2 profile data at document, set and unit level"
+  }
+ ],
+ "S1-8.1-1": [
+  {
+   "validate": "S1 schema rejects unit ide without role"
+  },
+  {
+   "validate": "S1 schema rejects unknown role"
+  }
+ ],
+ "S1-8.2-1": [
+  {
+   "test": "tests/test_scan.cpp: partitions and implementation units"
+  },
+  {
+   "test": "tests/test_scan.cpp: non-module units import"
+  }
+ ],
+ "S1-8.2-2": [
+  {
+   "test": "tests/test_scan.cpp: conditional declarations are uncertain"
+  }
+ ],
+ "S1-8.2-3": [
+  {
+   "test": "tests/test_project.cpp: a producer's build database is completed, not replaced"
+  }
+ ],
+ "S1-9-1": [
+  {
+   "validate": "S1 s1-level3-gcc.json: hello@dev options carry no optimization, debug or output arguments"
+  }
+ ],
+ "S1-9-2": [
+  {
+   "test": "tests/test_normalize.cpp: options decide a unit's semantics when the database has them"
+  },
+  {
+   "check": "mcpp-emit/C2"
+  }
+ ],
+ "S1-9-3": [
+  {
+   "test": "tests/test_normalize.cpp: P1: GCC on Linux"
+  },
+  {
+   "test": "tests/test_normalize.cpp: P3: Clang strips BMI arguments and keeps the rest"
+  },
+  {
+   "test": "tests/test_normalize.cpp: P7: a CMake cl.exe command becomes a clang++ command"
+  }
+ ],
+ "S1-9-4": [
+  {
+   "validate": "S1 s1-level3-gcc.json: hello@dev options carry no BMI location arguments"
+  },
+  {
+   "validate": "S1 mcpp-emit: hello:bin:hello options carry no BMI location arguments"
+  }
+ ],
+ "S1-10-1": [
+  {
+   "validate": "S1 s1-level2-clang-two-sets.json: app@Debug visible-sets list the complete closure"
+  }
+ ],
+ "S1-10-2": [
+  {
+   "test": "tests/test_spec.cpp: private units are not visible and duplicates are ambiguous"
+  }
+ ],
+ "S1-10-3": [
+  {
+   "test": "tests/test_spec.cpp: private units are not visible and duplicates are ambiguous"
+  },
+  {
+   "test": "tests/test_server.cpp: module diagnostics"
+  },
+  {
+   "test": "tests/test_normalize.cpp: a plan resolves, injects std once and leaves out what cannot resolve"
+  }
+ ],
+ "S1-10-4": [
+  {
+   "test": "tests/test_server.cpp: module diagnostics"
+  },
+  {
+   "check": "inferred/M5-unresolved"
+  }
+ ],
+ "S1-10-5": [
+  {
+   "test": "tests/test_server.cpp: module diagnostics"
+  }
+ ],
+ "S1-11.2-1": [
+  {
+   "validate": "S1 schema accepts unknown fields"
+  },
+  {
+   "test": "tests/test_spec.cpp: private units are not visible and duplicates are ambiguous"
+  }
+ ],
+ "S1-11.2-2": [
+  {
+   "test": "tests/test_spec.cpp: the level 3 GCC example loads"
+  },
+  {
+   "check": "mcpp-emit/S1"
+  }
+ ],
+ "S1-11.2-3": [
+  {
+   "test": "tests/test_normalize.cpp: P3: Clang strips BMI arguments and keeps the rest"
+  },
+  {
+   "test": "tests/test_normalize.cpp: P7: a CMake cl.exe command becomes a clang++ command"
+  }
+ ],
+ "S1-11.2-4": [
+  {
+   "test": "tests/test_normalize.cpp: P1: GCC on Linux"
+  },
+  {
+   "test": "tests/test_normalize.cpp: P5: clang++ for the MSVC ABI"
+  },
+  {
+   "test": "tests/test_normalize.cpp: P6: clang-cl passes GNU arguments through"
+  },
+  {
+   "test": "tests/test_normalize.cpp: P7: an mcpp cl.exe command"
+  }
+ ],
+ "S1-11.2-5": [
+  {
+   "test": "tests/test_spec.cpp: module names resolve in the specified order"
+  },
+  {
+   "test": "tests/test_normalize.cpp: a plan resolves, injects std once and leaves out what cannot resolve"
+  }
+ ],
+ "S1-11.2-6": [
+  {
+   "test": "tests/test_project.cpp: a producer's build database is completed, not replaced"
+  }
+ ],
+ "S1-11.2-7": [
+  {
+   "script": "editors/vscode/src/status.ts",
+   "contains": "level ${status.project.level}"
+  },
+  {
+   "check": "mcpp-emit/S1"
+  }
+ ],
+ "S1-12-1": [
+  {
+   "script": "src/server/cli.cpp",
+   "contains": "format == \"compile-commands\""
+  },
+  {
+   "test": "tests/test_spec.cpp: private units are not visible and duplicates are ambiguous"
+  }
+ ],
+ "S1-12-2": [
+  {
+   "test": "tests/test_spec.cpp: private units are not visible and duplicates are ambiguous"
+  }
+ ],
+ "S1-12-3": [
+  {
+   "script": "src/server/cli.cpp",
+   "contains": "compile_commands.json has no module graph, toolchain or role information"
+  }
+ ],
+ "S1-14-1": [
+  {
+   "check": "untrusted/S1"
+  },
+  {
+   "test": "tests/test_project.cpp: an untrusted workspace still gets a model"
+  }
+ ],
+ "S1-14-2": [
+  {
+   "manual": "Driver queries run only in trusted workspaces and only for drivers the workspace's build description names; lsp-mcpp offers no allow-list setting yet (recorded in issue #2)."
+  }
+ ],
+ "S1-14-3": [
+  {
+   "manual": "Standard library module sources are passed to clangd as inputs; the server writes only under its cache directory."
+  }
+ ],
+ "S1-14-4": [
+  {
+   "check": "mcpp-emit/W1"
+  },
+  {
+   "manual": "The server writes only under its cache directory and into the engine database it owns, never to a path because a database names it."
+  }
+ ],
+ "S2-2-1": [
+  {
+   "manual": "Stream-mode producers are outside this repository; the only producer here, lsp-mcpp-mock-mcpp, answers in single-document mode and writes no database file."
+  }
+ ],
+ "S2-3.1-1": [
+  {
+   "test": "tests/test_spec.cpp: a discovery command runs as a child, within a bound"
+  }
+ ],
+ "S2-3.2-1": [
+  {
+   "validate": "S2 schema rejects request without workspace"
+  },
+  {
+   "test": "tests/test_spec.cpp: discovery output is interpreted"
+  }
+ ],
+ "S2-3.2-2": [
+  {
+   "test": "tests/test_spec.cpp: discovery output is interpreted"
+  }
+ ],
+ "S2-3.2-3": [
+  {
+   "manual": "A producer requirement: no stream-mode producer lives in this repository, and the simulated mcpp answers with the whole database whatever the request names."
+  }
+ ],
+ "S2-3.2-4": [
+  {
+   "validate": "S2 schema rejects request without profile-version"
+  },
+  {
+   "test": "tests/test_spec.cpp: discovery output is interpreted"
+  }
+ ],
+ "S2-3.3-1": [
+  {
+   "validate": "S2 schema rejects progress without message"
+  }
+ ],
+ "S2-3.3-2": [
+  {
+   "validate": "S2 schema rejects finished without database"
+  }
+ ],
+ "S2-3.3-3": [
+  {
+   "validate": "S2 schema rejects finished without watch"
+  }
+ ],
+ "S2-3.3-4": [
+  {
+   "validate": "S2 example finished message names its profile-version"
+  }
+ ],
+ "S2-3.3-5": [
+  {
+   "validate": "S2 schema rejects error without message"
+  }
+ ],
+ "S2-3.3-6": [
+  {
+   "validate": "S2 stream ends with a terminal message"
+  },
+  {
+   "test": "tests/test_spec.cpp: a stream ends with a terminal message, and nothing else counts"
+  }
+ ],
+ "S2-3.3-7": [
+  {
+   "test": "tests/test_spec.cpp: a stream ends with a terminal message, and nothing else counts"
+  }
+ ],
+ "S2-3.3-8": [
+  {
+   "validate": "S2 schema rejects finished with a relative database"
+  },
+  {
+   "test": "tests/test_spec.cpp: a stream ends with a terminal message, and nothing else counts"
+  }
+ ],
+ "S2-3.4-1": [
+  {
+   "validate": "S2 schema rejects envelope without schemaVersion"
+  },
+  {
+   "validate": "S2 schema rejects envelope of another schemaVersion"
+  }
+ ],
+ "S2-3.4-2": [
+  {
+   "validate": "S2 schema rejects envelope whose kind is not a build database"
+  },
+  {
+   "test": "tests/test_spec.cpp: a single-document envelope is read, and only a database answers"
+  }
+ ],
+ "S2-3.4-3": [
+  {
+   "validate": "S2 schema rejects envelope without kindVersion"
+  },
+  {
+   "test": "tests/test_spec.cpp: a single-document envelope is read, and only a database answers"
+  }
+ ],
+ "S2-3.4-4": [
+  {
+   "validate": "S2 schema rejects envelope without effects"
+  }
+ ],
+ "S2-3.4-5": [
+  {
+   "validate": "S2 schema accepts a failed command without data"
+  },
+  {
+   "test": "tests/test_spec.cpp: a single-document envelope is read, and only a database answers"
+  }
+ ],
+ "S2-3.4-6": [
+  {
+   "validate": "S2 schema rejects envelope data without database"
+  }
+ ],
+ "S2-3.4-7": [
+  {
+   "validate": "S2 schema rejects envelope data without watch"
+  }
+ ],
+ "S2-3.4-8": [
+  {
+   "validate": "S2 example envelope carries inputs-fingerprint"
+  },
+  {
+   "script": "src/tools/mockmcpp.cpp",
+   "contains": "data[\"inputs-fingerprint\"] = fingerprint(root);"
+  }
+ ],
+ "S2-3.4-9": [
+  {
+   "validate": "S2 schema rejects envelope without diagnostics"
+  },
+  {
+   "validate": "S2 schema rejects envelope diagnostic of unknown severity"
+  }
+ ],
+ "S2-3.4-10": [
+  {
+   "check": "mcpp-emit/S1"
+  },
+  {
+   "check": "mcpp-llvm/S1"
+  },
+  {
+   "script": "src/project/mcpp.cpp",
+   "contains": "protocol->kinds.contains(\"mcpp.build-database\")"
+  }
+ ],
+ "S2-3.4-11": [
+  {
+   "check": "untrusted/S1"
+  },
+  {
+   "test": "tests/test_spec.cpp: a single-document envelope is read, and only a database answers"
+  },
+  {
+   "script": "src/project/mcpp.cpp",
+   "contains": "!spec::effects_acceptable(effects->second)"
+  }
+ ],
+ "S2-4-1": [
+  {
+   "manual": "A producer requirement for mcpp (mcpp-community/mcpp#636); the simulated producer runs no build at all."
+  }
+ ],
+ "S2-4-2": [
+  {
+   "manual": "Stream mode has no producer in this repository; the requirement is carried to producers by the specification alone."
+  }
+ ],
+ "S2-4-3": [
+  {
+   "manual": "Stream mode has no producer in this repository; the requirement is carried to producers by the specification alone."
+  }
+ ],
+ "S2-4-4": [
+  {
+   "check": "mcpp-emit/W1"
+  },
+  {
+   "check": "mcpp-emit-package-std/W1"
+  }
+ ],
+ "S2-4-5": [
+  {
+   "validate": "S1 fixture data validates: mcpp-emit"
+  },
+  {
+   "validate": "S2 envelope carries a valid S1 database"
+  }
+ ],
+ "S2-4-6": [
+  {
+   "validate": "S2 example finished message watches the build description and the module sources"
+  },
+  {
+   "script": "src/tools/mockmcpp.cpp",
+   "contains": "\"mcpp.toml\", \"mcpp.lock\", \"src/**/*.cppm\", \"src/**/*.cpp\""
+  }
+ ],
+ "S2-4-7": [
+  {
+   "validate": "S2 example stream reports progress before finishing"
+  }
+ ],
+ "S2-4-8": [
+  {
+   "script": "src/tools/mockmcpp.cpp",
+   "contains": "is answered as an envelope; {\"diagnostics\": [...]} as a failure with exit 1"
+  },
+  {
+   "test": "tests/test_spec.cpp: a discovery command runs as a child, within a bound"
+  }
+ ],
+ "S2-5-3": [
+  {
+   "test": "tests/test_spec.cpp: a stream ends with a terminal message, and nothing else counts"
+  },
+  {
+   "test": "tests/test_spec.cpp: a discovery command runs as a child, within a bound"
+  }
+ ],
+ "S2-5-4": [
+  {
+   "test": "tests/test_spec.cpp: a discovery command runs as a child, within a bound"
+  }
+ ],
+ "S2-5-5": [
+  {
+   "test": "tests/test_spec.cpp: a discovery command runs as a child, within a bound"
+  }
+ ],
+ "S2-5-6": [
+  {
+   "script": "src/project/provider.cppm",
+   "contains": "std::chrono::milliseconds configureTimeout { std::chrono::minutes { 5 } };"
+  }
+ ],
+ "S2-5-7": [
+  {
+   "test": "tests/test_spec.cpp: a single-document envelope is read, and only a database answers"
+  },
+  {
+   "test": "tests/test_spec.cpp: a discovery command runs as a child, within a bound"
+  }
+ ],
+ "S2-5-8": [
+  {
+   "test": "tests/test_spec.cpp: a stream ends with a terminal message, and nothing else counts"
+  }
+ ],
+ "S2-6-1": [
+  {
+   "check": "untrusted/S1"
+  },
+  {
+   "test": "tests/test_project.cpp: an untrusted workspace still gets a model"
+  }
+ ],
+ "S2-6-2": [
+  {
+   "test": "tests/test_spec.cpp: discovery output is interpreted"
+  }
+ ],
+ "S2-6-3": [
+  {
+   "script": "src/spec/discovery.cpp",
+   "contains": "The server's own environment, the editor session's, with nothing added (S2 section 6)."
+  }
+ ],
+ "S2-6-4": [
+  {
+   "check": "mcpp-emit/W1"
+  },
+  {
+   "manual": "The server writes only under its cache directory; the database and watch paths a producer returns are read and watched, never opened for writing."
+  }
+ ],
+ "S4-3-1": [
+  {
+   "validate": "S4 schema rejects unknown kit-version"
+  },
+  {
+   "test": "tests/test_spec.cpp: kit examples load and bad kits are refused"
+  }
+ ],
+ "S4-3-2": [
+  {
+   "validate": "S4 schema rejects missing name"
+  }
+ ],
+ "S4-3-3": [
+  {
+   "validate": "S4 schema rejects missing target"
+  }
+ ],
+ "S4-3-4": [
+  {
+   "validate": "S4 schema rejects missing stdlib"
+  }
+ ],
+ "S4-3-5": [
+  {
+   "validate": "S4 schema rejects missing stdlib.name"
+  }
+ ],
+ "S4-3-6": [
+  {
+   "validate": "S4 schema rejects missing stdlib.version"
+  }
+ ],
+ "S4-3-7": [
+  {
+   "validate": "S4 schema rejects missing stdlib.module-metadata"
+  },
+  {
+   "test": "tests/test_spec.cpp: kit examples load and bad kits are refused"
+  }
+ ],
+ "S4-3-8": [
+  {
+   "validate": "S4 schema rejects missing system-include-directories"
+  },
+  {
+   "test": "tests/test_spec.cpp: kit examples load and bad kits are refused"
+  }
+ ],
+ "S4-3-9": [
+  {
+   "validate": "S4 schema rejects a requirement without kind"
+  },
+  {
+   "test": "tests/test_spec.cpp: kit examples load and bad kits are refused"
+  }
+ ],
+ "S4-3-10": [
+  {
+   "validate": "S4 schema rejects missing licenses"
+  },
+  {
+   "script": "packaging/scripts/assemble_payload.py",
+   "contains": "kit license is missing"
+  }
+ ],
+ "S4-4-1": [
+  {
+   "script": "packaging/scripts/assemble_payload.py",
+   "contains": "S4-4-2: the kit contains a program, library or script"
+  }
+ ],
+ "S4-4-2": [
+  {
+   "script": "packaging/scripts/assemble_payload.py",
+   "contains": "S4-4-2: the kit contains a program, library or script"
+  }
+ ],
+ "S4-4-3": [
+  {
+   "manual": "The server starts only clangd from the payload, compilers it probes and mcpp; the kit is read as data (src/spec/kit.cpp parses kit.json, the plan passes kit paths as arguments)."
+  }
+ ],
+ "S4-4-4": [
+  {
+   "script": "packaging/scripts/assemble_payload.py",
+   "contains": "source is missing"
+  },
+  {
+   "test": "tests/test_spec.cpp: module metadata paths resolve against the manifest"
+  }
+ ],
+ "S4-4-5": [
+  {
+   "validate": "S4 s4-kit-linux-x64.json: libc++ version equals pinned clangd 23.1.0"
+  },
+  {
+   "script": "packaging/scripts/assemble_payload.py",
+   "contains": "S4-4-5: libc++"
+  }
+ ],
+ "S4-4-6": [
+  {
+   "validate": "S4 darwin kit declares macos-sdk"
+  },
+  {
+   "script": "packaging/scripts/assemble_payload.py",
+   "contains": "S4-4-6: a macOS kit does not declare requires macos-sdk"
+  }
+ ],
+ "S4-4-7": [
+  {
+   "script": "packaging/scripts/assemble_payload.py",
+   "contains": "S4-4-7: the kit contains an SDK directory"
+  }
+ ],
+ "S4-4-8": [
+  {
+   "check": "inferred-msvc/S1"
+  }
+ ],
+ "S4-4-9": [
+  {
+   "validate": "S4 schema rejects absolute include directory"
+  },
+  {
+   "validate": "S4 schema rejects parent traversal"
+  },
+  {
+   "validate": "S4 schema rejects drive prefix"
+  },
+  {
+   "test": "tests/test_spec.cpp: kit examples load and bad kits are refused"
+  }
+ ],
+ "S4-7-1": [
+  {
+   "validate": "S4 schema accepts unknown fields"
+  },
+  {
+   "test": "tests/test_spec.cpp: kit examples load and bad kits are refused"
+  }
+ ],
+ "S2-5-2": [
+  {
+   "script": "src/server/session.cpp",
+   "contains": "void schedule_reload_() { reloadAt_ = Clock::now() + std::chrono::milliseconds { 1500 }; }"
+  }
+ ]
+}

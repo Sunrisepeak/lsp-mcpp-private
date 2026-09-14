@@ -15,6 +15,7 @@ import lspmcpp.project.scan;
 import lspmcpp.project.compdb;
 import lspmcpp.normalize.gnu;
 import lspmcpp.normalize.msvc;
+import lspmcpp.normalize.semantic;
 
 namespace lspmcpp::normalize {
 
@@ -124,7 +125,13 @@ EnginePlan plan_engine(const PlanInput& input) {
             const bool importable { spec::is_importable(candidate.role) };
             const auto syntax { lspmcpp::os::FAMILY == lspmcpp::os::Family::windows ? project::CommandSyntax::windows
                                                                                   : project::CommandSyntax::posix };
-            const auto arguments = project::expand_response_files(unit.arguments, unit.workDirectory, syntax);
+            // S1 section 9 rule 1: options, when the database has them, decide the unit's semantics; they
+            // are written in the toolchain's dialect and take the translation a build's arguments take.
+            const auto effective = effective_options(set.options, unit.options);
+            const auto arguments = effective
+                ? options_arguments(*effective, facts != nullptr ? facts->toolchain.family : spec::Family::clang,
+                                    facts != nullptr ? facts->toolchain.driver : std::string_view { "clang++" }, candidate.source)
+                : project::expand_response_files(unit.arguments, unit.workDirectory, syntax);
             candidate.facts = facts;
             if (usable(facts) && (facts->toolchain.family == spec::Family::gcc || facts->toolchain.family == spec::Family::clang)) {
                 candidate.arguments = translate_gnu(GnuInput { arguments, candidate.source, unit.workDirectory, facts, importable });

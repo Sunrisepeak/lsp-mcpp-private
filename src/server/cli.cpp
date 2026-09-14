@@ -91,6 +91,8 @@ int command_model(const cmdline::ParsedArgs& args) {
     const Loaded loaded { load(root, args, !args.is_flag_set("untrusted")) };
     const std::string format { args.value("export").value_or("s1") };
     if (format == "compile-commands") {
+        // S1 section 12: the export keeps the default context's command per file and loses the rest.
+        std::println(std::cerr, "note: compile_commands.json has no module graph, toolchain or role information, and one set per file");
         std::println("{}", spec::to_compile_commands(loaded.model.database).dump(2));
     } else if (format == "engine") {
         std::println("{}", normalize::to_compile_commands(loaded.plan).dump(2));

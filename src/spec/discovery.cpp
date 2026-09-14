@@ -3,6 +3,7 @@ module lspmcpp.spec.discovery;
 import std;
 import nlohmann.json;
 import lspmcpp.base.error;
+import lspmcpp.base.path;
 import lspmcpp.base.text;
 import lspmcpp.platform.process;
 import lspmcpp.spec.database;
@@ -39,10 +40,15 @@ base::Result<ProducerProtocol> parse_producer_protocol(std::string_view output) 
     return protocol;
 }
 
+bool effects_acceptable(std::span<const std::string> effects) {
+    return std::ranges::none_of(effects, [](const std::string& effect) { return effect == "write-project"; });
+}
+
 base::Result<DatabaseDocument> parse_database_envelope(std::string_view output) {
     const nlohmann::json envelope = nlohmann::json::parse(output, nullptr, false);
     if (envelope.is_discarded() || !envelope.is_object()) return base::fail("discovery-protocol", "the producer's output is not one JSON object");
     if (envelope.value("schemaVersion", 0) != 1) return base::fail("discovery-protocol", "unsupported envelope schemaVersion");
+    if (envelope.value("kindVersion", 0) != 1) return base::fail("discovery-protocol", "unsupported kindVersion");
     DatabaseDocument document;
     document.effects = string_list(envelope.value("effects", nlohmann::json::array()));
     for (const auto& diagnostic : envelope.value("diagnostics", nlohmann::json::array())) {
@@ -69,6 +75,7 @@ base::Result<DatabaseDocument> parse_database_envelope(std::string_view output) 
 base::Result<DatabaseDocument> run_database_command(std::span<const std::string> command, std::string_view workDirectory,
                                                     std::chrono::milliseconds timeout) {
     if (command.empty()) return base::fail("discovery-command", "empty discovery command");
+    // The server's own environment, the editor session's, with nothing added (S2 section 6).
     platform::SpawnOptions options {
         .program = command.front(),
         .arguments = { command.begin() + 1, command.end() },
@@ -111,6 +118,8 @@ base::Result<DiscoveryResult> parse_discovery_output(std::string_view output) {
         } else if (kind == "finished") {
             result.database = message.value("database", std::string {});
             if (result.database.empty()) return base::fail("discovery-protocol", "finished without a database path");
+            // S2 3.3: the database path is absolute; a relative one would be read against a guessed directory.
+            if (!base::is_absolute_path(result.database)) return base::fail("discovery-protocol", std::format("finished with a relative database path: {}", result.database));
             for (const auto& path : message.value("watch", nlohmann::json::array())) {
                 if (path.is_string()) result.watch.push_back(path.get<std::string>());
             }
@@ -126,6 +135,7 @@ base::Result<DiscoveryResult> parse_discovery_output(std::string_view output) {
 base::Result<DiscoveryResult> run_discovery(std::span<const std::string> command, const DiscoveryRequest& request,
                                             std::string_view workDirectory, std::chrono::milliseconds timeout) {
     if (command.empty()) return base::fail("discovery-command", "empty discovery command");
+    // The server's own environment, the editor session's, with nothing added (S2 section 6).
     platform::SpawnOptions options {
         .program = command.front(),
         .arguments = { command.begin() + 1, command.end() },
@@ -165,7 +175,8 @@ base::Result<DiscoveryResult> run_discovery(std::span<const std::string> command
     outputReader.join();
     errorReader.join();
     auto result = parse_discovery_output(output);
-    if (!result && **waited != 0) {
+    // A producer that reported its error says why better than its exit status does.
+    if (!result && **waited != 0 && result.error().code != "discovery-failed") {
         return base::fail("discovery-failed", std::format("{} exited with {}: {}", command.front(), **waited, base::trim(errors)));
     }
     return result;

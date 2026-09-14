@@ -47,6 +47,10 @@ inline constexpr std::string_view BUILD_DATABASE_KIND_SUFFIX { ".build-database"
 
 // `<producer> --protocol-version`.
 base::Result<ProducerProtocol> parse_producer_protocol(std::string_view output);
+// Whether a consumer may run a command with these declared effects to describe a project (S2 3.4).
+// Reading the project, the network, the producer's own caches and build scripts are what describing
+// a build takes; writing into the project is what single-document mode exists to avoid.
+bool effects_acceptable(std::span<const std::string> effects);
 // An envelope of a `*.build-database` kind with `data.database`.
 base::Result<DatabaseDocument> parse_database_envelope(std::string_view output);
 // Runs a producer command without input and interprets its output as a database envelope.

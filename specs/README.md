@@ -5,7 +5,7 @@ This directory holds the normative specifications that let C++ named modules be 
 | Spec | Title | Version | Status | Schema |
 |---|---|---|---|---|
 | [S1](s1-build-database.md) | C++ Build Database: IDE Profile | profile-version 0.2.0 | Draft | [s1-build-database.schema.json](schema/s1-build-database.schema.json) |
-| [S2](s2-discovery.md) | Build Database Discovery Protocol | 0.1.0 | Draft | [s2-discovery.schema.json](schema/s2-discovery.schema.json) |
+| [S2](s2-discovery.md) | Build Database Discovery Protocol | 0.2.0 | Draft | [s2-discovery.schema.json](schema/s2-discovery.schema.json) |
 | [S3](s3-lsp-extensions.md) | Language Server Protocol Extensions for C++ Modules | protocol version 1 | Draft | TypeScript interfaces in the text |
 | [S4](s4-semantic-kit.md) | Semantic Kit | kit-version 1 | Draft | [s4-kit.schema.json](schema/s4-kit.schema.json) |
 
@@ -43,6 +43,12 @@ These specifications are self-contained. They are compatible with, and borrow th
 - Each specification is versioned independently. S1 and S2 use semantic versioning; S3 and S4 use integer versions. MINOR versions add optional fields only; incompatible changes require a MAJOR version (or a new integer version) with migration notes.
 - Releases are tagged `spec-s1-v<version>`, `spec-s2-v<version>`, `spec-s3-v<version>` and `spec-s4-v<version>`.
 - S1 reaches 1.0 only after at least two producers (mcpp and a CMake adapter) and one consumer (lsp-mcpp) pass the conformance suite.
+
+## Rule identifiers and traceability
+
+Every requirement of S1, S2 and S4 written with a capitalized RFC 2119 keyword (MUST, MUST NOT, REQUIRED, SHALL, SHOULD, SHOULD NOT, RECOMMENDED) carries an identifier `S<n>-<section>-<ordinal>` where it is stated, rendered as a superscript with an anchor, for example [`S2-3.3-8`](s2-discovery.md#S2-3.3-8). Identifiers are stable: a new rule takes the next ordinal of its section, and a removed rule's identifier is not reused.
+
+[`conformance/traceability.json`](../conformance/traceability.json) maps each identifier to its evidence: a check of `tools/validate.py` (schema, example and semantic checks), a unit test, a conformance fixture check, a line of a script that enforces the rule, or, rarely, the reason no automated evidence can exist. `tools/validate.py` fails when a keyword has no identifier, an identifier has no evidence, or evidence names a check, test, fixture or script line that does not exist. A known gap may be listed under `$pending` with what is missing; it is printed on every run until it has evidence. S3 is not yet covered.
 
 ## License
 

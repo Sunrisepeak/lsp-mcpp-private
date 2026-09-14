@@ -125,6 +125,11 @@ std::optional<InferredDatabase> emit_build_database(const std::string& mcpp, con
         base::log::info("mcpp does not produce build databases (no mcpp.build-database kind); using its compile database");
         return std::nullopt;
     }
+    if (const auto effects = protocol->commandEffects.find("emit build-database");
+        effects != protocol->commandEffects.end() && !spec::effects_acceptable(effects->second)) {
+        base::log::warning("mcpp emit build-database declares that it writes into the project; not running it");
+        return std::nullopt;
+    }
     const std::vector<std::string> command { mcpp, "emit", "build-database", "--format", "json" };
     auto document = spec::run_database_command(command, detection.root, context.configureTimeout);
     if (!document) {

@@ -9,6 +9,8 @@ import lspmcpp.spec.database;
 import lspmcpp.spec.metadata;
 import lspmcpp.spec.kit;
 import lspmcpp.spec.discovery;
+import lspmcpp.platform.env;
+import lspmcpp.platform.stdio;
 
 
 namespace fs = lspmcpp::platform::fs;
@@ -34,10 +36,53 @@ std::string scratch(std::string_view name) {
     return directory;
 }
 
+// This program started again as an S2 producer, so discovery runs through a real child on every system.
+int producer_main(std::string_view mode, std::string_view databasePath) {
+    namespace stdio = lspmcpp::platform::stdio;
+    std::string request;
+    while (true) {
+        auto chunk = stdio::read_input();
+        if (!chunk || chunk->empty()) break;
+        request += *chunk;
+    }
+    const Json parsed = Json::parse(request, nullptr, false);
+    if (parsed.is_discarded() || !parsed.contains("workspace") || !parsed.contains("profile-version")) {
+        (void)stdio::write_output(R"({"kind":"error","message":"the request is not an S2 request"})" "\n");
+        return 1;
+    }
+    if (mode == "stream") {
+        // Standard error is free text a consumer does not interpret, even when it looks like a message.
+        (void)stdio::write_error(R"({"kind":"error","message":"not on standard output"})" "\n");
+        (void)stdio::write_output(R"({"kind":"progress","message":"configuring"})" "\n");
+        (void)stdio::write_output(R"({"kind":"vendor-note","detail":1})" "\n");
+        (void)stdio::write_output(Json { { "kind", "finished" }, { "database", std::string { databasePath } }, { "watch", Json::array({ "mcpp.toml" }) },
+                                         { "future-field", true } }.dump() + "\n");
+        return 0;
+    }
+    if (mode == "truncated") {
+        (void)stdio::write_output(R"({"kind":"progress","message":"configuring"})" "\n");
+        return 0;
+    }
+    if (mode == "failing") {
+        (void)stdio::write_output(R"({"kind":"error","message":"no toolchain","code":"toolchain"})" "\n");
+        return 3;
+    }
+    if (mode == "sleeping") std::this_thread::sleep_for(std::chrono::seconds { 30 });
+    return 0;
+}
+
+std::string self_path() {
+    const auto arguments = lspmcpp::platform::env::arguments();
+    std::string path { arguments.empty() ? std::string {} : arguments.front() };
+    if (!base::is_absolute_path(path)) path = base::join_path(fs::current_directory(), path);
+    return base::normalize_path(path);
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char* argv[]) {
     using namespace lspmcpp::testing;
+    if (argc >= 3 && std::string_view { argv[1] } == "--producer") return producer_main(argv[2], argc >= 4 ? argv[3] : "");
     const std::string root { repository_root() };
 
     "the level 3 GCC example loads"_test = [&] {
@@ -113,9 +158,24 @@ int main() {
         expect(m.ambiguous());
         const auto hidden = lspmcpp::spec::resolve_module(*database, 0, "hidden", none);
         expect(hidden.from == lspmcpp::spec::ResolvedFrom::unresolved);
+        // Visibility is what a set lists, never derived through the sets it lists.
+        auto chain = lspmcpp::spec::from_json(Json::parse(R"({
+          "version": 1, "revision": 0,
+          "sets": [
+            { "name": "a", "visible-sets": ["b"], "translation-units": [
+              { "source": "a.cpp", "work-directory": "/p", "arguments": ["cc"], "requires": ["far"] } ] },
+            { "name": "b", "visible-sets": ["c"], "translation-units": [
+              { "source": "b.cppm", "work-directory": "/p", "arguments": ["cc"], "provides": { "near": "" } } ] },
+            { "name": "c", "translation-units": [
+              { "source": "c.cppm", "work-directory": "/p", "arguments": ["cc"], "provides": { "far": "" } } ] }
+          ], "future-top-level": { "ignored": true } })"));
+        expect(fatal(chain.has_value())) << "unknown fields are ignored";
+        expect(lspmcpp::spec::resolve_module(*chain, 0, "far", none).from == lspmcpp::spec::ResolvedFrom::unresolved)
+            << "a set does not see what its visible sets see";
         const auto commands = lspmcpp::spec::to_compile_commands(*database);
         expect(commands.size() == 4u);
         expect(commands[0]["directory"] == "/p");
+        expect(lspmcpp::spec::to_compile_commands(*database, "b").size() == 2u) << "the caller chooses the set";
     };
 
     "invalid databases are errors"_test = [] {
@@ -186,6 +246,10 @@ int main() {
         auto future = valid;
         future["kit-version"] = 2;
         expect(!lspmcpp::spec::parse_kit(future, "/k").has_value());
+        auto extended = valid;
+        extended["vendor-field"] = Json { { "x", 1 } };
+        extended["stdlib"]["vendor"] = "y";
+        expect(lspmcpp::spec::parse_kit(extended, "/k").has_value()) << "fields a consumer does not know are ignored";
     };
 
     "discovery output is interpreted"_test = [&] {
@@ -203,6 +267,78 @@ int main() {
         const Json request = lspmcpp::spec::make_discovery_request({ "/w", { "/w/a.cppm" }, "debug" });
         expect(request["profile-version"] == "0.2.0");
         expect(request["files"].size() == 1u);
+        for (const auto& field : request.items()) {
+            const std::string name { field.key() };
+            expect(name == "workspace" || name == "files" || name == "configuration" || name == "profile-version") << "the request carries nothing else: " << name;
+        }
+    };
+
+    "a stream ends with a terminal message, and nothing else counts"_test = [] {
+        namespace spec = lspmcpp::spec;
+        auto unknown = spec::parse_discovery_output("{\"kind\":\"progress\",\"message\":\"a\"}\n{\"kind\":\"vendor\"}\n"
+                                                    "{\"kind\":\"finished\",\"database\":\"/w/db.json\",\"watch\":[],\"extra\":1}\n");
+        expect(fatal(unknown.has_value()));
+        expect(unknown->progress.size() == 1u) << "a message of unknown kind is progress without a message";
+        expect(!spec::parse_discovery_output("{\"kind\":\"progress\",\"message\":\"a\"}\n{\"kind\":\"vendor\"}\n").has_value())
+            << "an unknown kind as the last line leaves the stream without a terminal message";
+        expect(!spec::parse_discovery_output("{\"kind\":\"progress\",\"message\":\"a\"}\n{not json}\n").has_value());
+        expect(!spec::parse_discovery_output(R"({"kind":"finished","database":"target/db.json","watch":[]})").has_value()) << "a relative database";
+        auto afterTerminal = spec::parse_discovery_output("{\"kind\":\"finished\",\"database\":\"/w/db.json\",\"watch\":[\"/w/a\"]}\ntrailing\n");
+        expect(afterTerminal.has_value() && afterTerminal->watch.size() == 1u) << "reading stops at the terminal message";
+    };
+
+    "a discovery command runs as a child, within a bound"_test = [&] {
+        namespace spec = lspmcpp::spec;
+        const std::string self { self_path() };
+        const std::string database { base::join_path(root, "specs/examples/s1-level3-gcc.json") };
+        const spec::DiscoveryRequest request { root, {}, {} };
+        const std::vector<std::string> stream { self, "--producer", "stream", database };
+        auto answered = spec::run_discovery(stream, request, root, std::chrono::seconds { 60 });
+        expect(fatal(answered.has_value())) << (answered ? "" : answered.error().message);
+        expect(answered->database == database && answered->watch == std::vector<std::string> { "mcpp.toml" });
+        const std::vector<std::string> truncated { self, "--producer", "truncated" };
+        expect(!spec::run_discovery(truncated, request, root, std::chrono::seconds { 60 }).has_value());
+        const std::vector<std::string> failing { self, "--producer", "failing" };
+        auto failed = spec::run_discovery(failing, request, root, std::chrono::seconds { 60 });
+        expect(!failed.has_value() && failed.error().message == "no toolchain");
+        const std::vector<std::string> sleeping { self, "--producer", "sleeping" };
+        const auto started = std::chrono::steady_clock::now();
+        auto expired = spec::run_discovery(sleeping, request, root, std::chrono::milliseconds { 500 });
+        expect(!expired.has_value() && expired.error().code == "discovery-timeout");
+        expect(std::chrono::steady_clock::now() - started < std::chrono::seconds { 20 }) << "the command is terminated when the bound expires";
+    };
+
+    "a single-document envelope is read, and only a database answers"_test = [&] {
+        namespace spec = lspmcpp::spec;
+        const auto text = fs::read_file(base::join_path(root, "specs/examples/s2-envelope.json"));
+        expect(fatal(text.has_value()));
+        auto document = spec::parse_database_envelope(*text);
+        expect(fatal(document.has_value())) << (document ? "" : document.error().message);
+        expect(document->database.is_object() && !document->watch.empty() && !document->effects.empty());
+        Json envelope = Json::parse(*text);
+        envelope["vendor-extension"] = Json { { "x", 1 } };
+        expect(spec::parse_database_envelope(envelope.dump()).has_value()) << "unknown fields are ignored";
+        Json wrongKind = Json::parse(*text);
+        wrongKind["kind"] = "mcpp.build";
+        expect(!spec::parse_database_envelope(wrongKind.dump()).has_value());
+        Json futureKind = Json::parse(*text);
+        futureKind["kindVersion"] = 2;
+        expect(!spec::parse_database_envelope(futureKind.dump()).has_value());
+        Json failure = Json::parse(*text);
+        failure.erase("data");
+        failure["diagnostics"] = Json::array({ Json { { "code", "E_TOOLCHAIN" }, { "severity", "error" }, { "message", "no compiler" } } });
+        auto failed = spec::parse_database_envelope(failure.dump());
+        expect(!failed.has_value() && failed.error().message.find("no compiler") != std::string::npos) << "a command without data has failed; its diagnostics say why";
+
+        auto protocol = spec::parse_producer_protocol(R"({"schemaVersion":1,"kind":"mcpp.protocol","kinds":{"mcpp.build-database":1},
+            "commands":{"emit build-database":{"effects":["read-project","network"]}},"future":{}})");
+        expect(fatal(protocol.has_value()));
+        expect(protocol->kinds.contains("mcpp.build-database"));
+        expect(protocol->commandEffects.at("emit build-database") == std::vector<std::string> { "read-project", "network" });
+        expect(!spec::parse_producer_protocol("[]").has_value());
+        expect(spec::effects_acceptable(protocol->commandEffects.at("emit build-database")));
+        const std::vector<std::string> writes { "read-project", "write-project" };
+        expect(!spec::effects_acceptable(writes)) << "a command that writes into the project is not run";
     };
 
     return report();

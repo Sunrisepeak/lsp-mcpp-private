@@ -13,6 +13,7 @@ import lspmcpp.project.scan;
 import lspmcpp.normalize.gnu;
 import lspmcpp.normalize.msvc;
 import lspmcpp.normalize.plan;
+import lspmcpp.normalize.semantic;
 
 namespace s = lspmcpp::spec;
 namespace n = lspmcpp::normalize;
@@ -339,6 +340,56 @@ int main() {
             if (entry.file == "/p/src/greet.ixx") expect(contains(entry.arguments, "c++-module"));
         }
         expect(stdEntries == 1) << "the build's std.ixx unit is replaced by the injected one";
+    };
+
+    "options decide a unit's semantics when the database has them"_test = [] {
+        s::SemanticOptions setOptions;
+        setOptions.languageStandard = "c++23";
+        setOptions.macros = { { "FROM_SET", "1", false } };
+        setOptions.includeDirectories.system = { "/sdk/include" };
+        setOptions.rawSemanticArguments = { { "clang", { "-nostdinc++" } }, { "msvc", { "/Zc:__cplusplus" } } };
+        s::SemanticOptions unitOptions;
+        unitOptions.languageStandard = "c++26";
+        unitOptions.macros = { { "FROM_SET", std::nullopt, true } };
+        unitOptions.includeDirectories.system = { "/unit/include" };
+        unitOptions.rtti = false;
+        const auto merged = n::effective_options(setOptions, unitOptions);
+        expect(fatal(merged.has_value()));
+        expect(merged->languageStandard == std::optional<std::string> { "c++26" }) << "a scalar takes the unit's value";
+        expect(merged->macros.size() == 2u && merged->macros[0].name == "FROM_SET" && merged->macros[1].undefine) << "arrays concatenate, the set's first";
+        expect(merged->includeDirectories.system == std::vector<std::string> { "/sdk/include", "/unit/include" });
+        expect(n::effective_options(setOptions, std::nullopt).has_value() && !n::effective_options(std::nullopt, std::nullopt).has_value());
+
+        const auto gnu = n::options_arguments(*merged, s::Family::clang, "/llvm/bin/clang++", "/p/a.cpp");
+        expect(gnu.front() == "/llvm/bin/clang++" && gnu.back() == "/p/a.cpp");
+        expect(contains(gnu, "-std=c++26") && contains(gnu, "-DFROM_SET=1") && contains(gnu, "-UFROM_SET") && contains(gnu, "-fno-rtti") && contains(gnu, "-nostdinc++"));
+        expect(!contains(gnu, "/Zc:__cplusplus")) << "raw arguments of another family stay out";
+        const auto cl = n::options_arguments(*merged, s::Family::msvc, "cl.exe", "C:/p/a.cpp");
+        expect(contains(cl, "/std:c++latest") && contains(cl, "/DFROM_SET=1") && contains(cl, "/GR-") && contains(cl, "/external:I") && contains(cl, "/Zc:__cplusplus"));
+
+        // In a plan the options win over what the arguments say.
+        s::Database database;
+        s::Set set;
+        set.name = "app";
+        set.toolchain = "gcc";
+        set.options = setOptions;
+        s::TranslationUnit unit;
+        unit.source = "/p/src/main.cpp";
+        unit.workDirectory = "/p";
+        unit.arguments = { "/opt/gcc/bin/g++", "-std=c++20", "-DFROM_ARGUMENTS", "-c", "/p/src/main.cpp" };
+        set.units.push_back(unit);
+        database.sets.push_back(set);
+        std::map<std::string, ToolchainFacts, std::less<>> facts { { "gcc", gcc_facts() } };
+        n::PlanInput input;
+        input.database = &database;
+        input.facts = &facts;
+        input.engineDriverDirectory = "/payload/clangd/bin";
+        input.scanner = [](std::string_view) { return p::scan_source("int main() {}\n"); };
+        const auto plan = n::plan_engine(input);
+        expect(fatal(plan.entries.size() == 1u));
+        const auto& arguments = plan.entries.front().arguments;
+        expect(contains(arguments, "-DFROM_SET=1") && contains(arguments, "-std=c++23"));
+        expect(!contains(arguments, "-DFROM_ARGUMENTS") && !contains(arguments, "-std=c++20"));
     };
 
     "prime units and module hints"_test = [] {

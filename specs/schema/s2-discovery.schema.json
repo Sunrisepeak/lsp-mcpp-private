@@ -99,7 +99,8 @@
         },
         "database": {
           "type": "string",
-          "minLength": 1
+          "pattern": "^(/|[A-Za-z]:[\\\\/])",
+          "description": "An absolute path (section 3.3)."
         },
         "watch": {
           "type": "array",

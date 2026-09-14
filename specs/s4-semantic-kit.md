@@ -32,15 +32,15 @@ A semantic kit is a data-only package that gives a Clang-based semantic engine w
 
 | Field | Type | Requirement | Description |
 |---|---|---|---|
-| `kit-version` | integer | MUST | Manifest format version. This specification defines `1`. |
-| `name` | string | MUST | Kit name, for example `libcxx-23.1.0-x86_64-w64-mingw32`. |
-| `target` | string | MUST | Target triple the kit's headers are configured for. |
-| `stdlib` | object | MUST | `name` (string, MUST: `libc++`, `libstdc++`, `msvc-stl` or `other`), `version` (string, MUST) and `module-metadata` (kit path, MUST) of a module manifest in P3286 shape. |
-| `system-include-directories` | kit path[] | MUST | System header directories, in the order they are passed to the engine. |
+| `kit-version` | integer | MUST | Manifest format version. This specification defines `1`. <a id="S4-3-1"></a><sup>S4-3-1</sup> |
+| `name` | string | MUST | Kit name, for example `libcxx-23.1.0-x86_64-w64-mingw32`. <a id="S4-3-2"></a><sup>S4-3-2</sup> |
+| `target` | string | MUST | Target triple the kit's headers are configured for. <a id="S4-3-3"></a><sup>S4-3-3</sup> |
+| `stdlib` | object | MUST | `name` (string, MUST: `libc++`, `libstdc++`, `msvc-stl` or `other`), `version` (string, MUST) and `module-metadata` (kit path, MUST) of a module manifest in P3286 shape. <a id="S4-3-4"></a><a id="S4-3-5"></a><a id="S4-3-6"></a><a id="S4-3-7"></a><sup>S4-3-4, S4-3-5, S4-3-6, S4-3-7</sup> |
+| `system-include-directories` | kit path[] | MUST | System header directories, in the order they are passed to the engine. <a id="S4-3-8"></a><sup>S4-3-8</sup> |
 | `sysroot` | kit path or `null` | MAY | Sysroot passed to the engine. Absent is the same as `null`. |
 | `arguments` | string[] | MAY | Additional engine arguments, for example `-nostdinc++`. |
-| `requires` | object[] | MAY | External prerequisites. Each element has `kind` (string, MUST). This version defines the kind `macos-sdk`. |
-| `licenses` | kit path[] | MUST | License files of the kit's contents. |
+| `requires` | object[] | MAY | External prerequisites. Each element has `kind` (string, MUST). This version defines the kind `macos-sdk`. <a id="S4-3-9"></a><sup>S4-3-9</sup> |
+| `licenses` | kit path[] | MUST | License files of the kit's contents. <a id="S4-3-10"></a><sup>S4-3-10</sup> |
 
 Example (Windows semantics with libc++ over MinGW-w64):
 
@@ -64,12 +64,12 @@ The file named by `stdlib.module-metadata` uses the P3286 module metadata format
 
 ## 4. Rules
 
-1. A kit **MUST** contain only data files. It **MUST NOT** contain executables, shared libraries or scripts, and a consumer **MUST NOT** execute anything from a kit.
-2. A kit **MUST** keep the module manifest and the module sources at the relative positions the manifest refers to.
-3. The `stdlib.version` of a libc++ kit **MUST** equal the version of the semantic engine it is distributed with; for lsp-mcpp this is the pinned clangd version.
-4. A kit for macOS **MUST** declare `"requires": [{ "kind": "macos-sdk" }]` and **MUST NOT** contain the macOS SDK, whose license does not permit redistribution. Its C library headers come from the SDK installed on the user's machine.
-5. A kit for Windows provides MinGW-w64 runtime semantics. The MSVC STL depends on the Visual Studio toolset and the Windows SDK, which cannot be redistributed; a consumer that finds Visual Studio installed **SHOULD** use it instead of the kit.
-6. Every path in `kit.json` **MUST** be a kit path.
+1. A kit **MUST** contain only data files. It **MUST NOT** contain executables, shared libraries or scripts, and a consumer **MUST NOT** execute anything from a kit. <a id="S4-4-1"></a><a id="S4-4-2"></a><a id="S4-4-3"></a><sup>S4-4-1, S4-4-2, S4-4-3</sup>
+2. A kit **MUST** keep the module manifest and the module sources at the relative positions the manifest refers to. <a id="S4-4-4"></a><sup>S4-4-4</sup>
+3. The `stdlib.version` of a libc++ kit **MUST** equal the version of the semantic engine it is distributed with; for lsp-mcpp this is the pinned clangd version. <a id="S4-4-5"></a><sup>S4-4-5</sup>
+4. A kit for macOS **MUST** declare `"requires": [{ "kind": "macos-sdk" }]` and **MUST NOT** contain the macOS SDK, whose license does not permit redistribution. Its C library headers come from the SDK installed on the user's machine. <a id="S4-4-6"></a><a id="S4-4-7"></a><sup>S4-4-6, S4-4-7</sup>
+5. A kit for Windows provides MinGW-w64 runtime semantics. The MSVC STL depends on the Visual Studio toolset and the Windows SDK, which cannot be redistributed; a consumer that finds Visual Studio installed **SHOULD** use it instead of the kit. <a id="S4-4-8"></a><sup>S4-4-8</sup>
+6. Every path in `kit.json` **MUST** be a kit path. <a id="S4-4-9"></a><sup>S4-4-9</sup>
 
 ## 5. Consumer procedure
 
@@ -99,4 +99,4 @@ Their manifests are [`examples/s4-kit-linux-x64.json`](examples/s4-kit-linux-x64
 
 ## 7. Versioning
 
-`kit-version` is an integer. A new version is issued for any change a consumer of the previous version would misread. Optional fields MAY be added within a version; consumers **MUST** ignore fields they do not know.
+`kit-version` is an integer. A new version is issued for any change a consumer of the previous version would misread. Optional fields MAY be added within a version; consumers **MUST** ignore fields they do not know. <a id="S4-7-1"></a><sup>S4-7-1</sup>

@@ -68,6 +68,38 @@ def tree_size(path):
     return total, count
 
 
+EXECUTABLE_MAGIC = (b"\x7fELF", b"MZ", b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe", b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"#!")
+PROGRAM_SUFFIXES = (".so", ".dll", ".dylib", ".exe", ".sh", ".bat", ".cmd", ".ps1", ".py")
+
+
+def kit_problems(kit_dir, kit, platform, clangd_version):
+    """S4 section 4: what a kit may contain, checked on the assembled files."""
+    problems = []
+    for base, directories, files in os.walk(kit_dir):
+        for name in directories:
+            # Rule 4: the macOS SDK may not be redistributed.
+            if name.endswith(".sdk"):
+                problems.append(f"S4-4-7: the kit contains an SDK directory: {os.path.relpath(os.path.join(base, name), kit_dir)}")
+        for name in files:
+            path = os.path.join(base, name)
+            relative = os.path.relpath(path, kit_dir).replace(os.sep, "/")
+            if name in ("SDKSettings.json", "SDKSettings.plist"):
+                problems.append(f"S4-4-7: the kit contains SDK settings: {relative}")
+            with open(path, "rb") as f:
+                head = f.read(4)
+            # Rule 1: data files only, no executables, shared libraries or scripts.
+            if name.lower().endswith(PROGRAM_SUFFIXES) or any(head.startswith(magic) for magic in EXECUTABLE_MAGIC):
+                problems.append(f"S4-4-2: the kit contains a program, library or script: {relative}")
+    stdlib = kit.get("stdlib", {})
+    # Rule 3: a libc++ kit describes the headers of the engine it ships with.
+    if stdlib.get("name") == "libc++" and stdlib.get("version") != clangd_version:
+        problems.append(f"S4-4-5: libc++ {stdlib.get('version')} in the kit, clangd {clangd_version} in the payload")
+    # Rule 4: a macOS kit declares the SDK it needs.
+    if platform.startswith("darwin") and {"kind": "macos-sdk"} not in kit.get("requires", []):
+        problems.append("S4-4-6: a macOS kit does not declare requires macos-sdk")
+    return problems
+
+
 def verify(payload_dir):
     """Returns a list of problems; empty means the payload is complete."""
     problems = []
@@ -142,6 +174,7 @@ def verify(payload_dir):
                         problems.append(f"module {module.get('logical-name')} include directory is missing: {directory}")
             if "std" not in names:
                 problems.append("the kit's module manifest does not provide std")
+        problems.extend(kit_problems(kit_dir, kit, platform, str(manifest.get("clangd", {}).get("version", ""))))
 
     for name in ("lsp-mcpp-LICENSE.txt", "LLVM-LICENSE.TXT"):
         need_file(f"licenses/{name}", "license")
