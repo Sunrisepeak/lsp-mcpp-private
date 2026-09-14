@@ -518,6 +518,7 @@
 | W9 | W9.1–W9.5 完成 | `multi-root`（三个主机）、`s1-two-sets`、`watch-polling`、`payload-corrupt`；假引擎单元测试 |
 | W10 | 完成：示例校验，S1–S4 共 144 条规则编号并有证据 | `specifications` 任务 |
 | W11 | 完成：Windows 与 macOS 负载使用 Linux 交叉构建的服务端，组装时比对 sha256 | `payload` 任务及其下游任务 |
+| 5.2 nightly | 完成：计时三次取中位数、自举夹具，以及用 mcpp 最新发布版运行 `mcpp-gcc`、`mcpp-llvm`（`MCPP_VERSION=latest`） | 一次性分支上运行 nightly（run 34837141351）与最新 mcpp 任务（run 34841510727，mcpp 2026.9.14.3），全部通过 |
 
 ### 10.2 与方案不同的做法
 
@@ -530,7 +531,6 @@
 | W7：同一语义配置跨工作区共享 `std` 的 BMI | 暂缓，记入 issue #2 | clangd 的持久化缓存以模块源路径与“工作目录 + 完整命令”的哈希为键，`std` 条目继承工程参数，只有参数完全相同的工程才能命中 |
 | W7.3：CI 温启动门槛 2 秒 | 5 秒，三个主机相同；冷启动仍为 15 秒 | CI 机器（3–4 个虚拟核心）nightly 三次温启动中位数 Linux 1.96 秒、macOS 1.85 秒、Windows 2.88 秒；重建 `std` 这一严重退化由 SC4 断言拦截 |
 | W8：`std` 由 mcpp 以翻译单元输出（W3 之后） | 过渡方案：服务端沿编译数据库中的 `std.pcm` 找到 `build.ninja` 与 mcpp std 构建缓存中的 `std-module.json`（schema 1），把记录的 `std`、`std.compat` 源文件与命令作为单元加入 | 方案要求实施前确认可行性；本地确认 mcpp 2026.9.14.1 写出该记录 |
-| 5.2：nightly 以 mcpp 最新发布版运行 mcpp 夹具 | 未做，nightly 使用固定版本，记入 issue #2 | 固定版本之外的一行需要单独维护 mcpp 安装步骤，本轮未排入 |
 | 第 7 节：夹具默认检查超时从 180 秒降到 60 秒 | CI 仍传 `--timeout 180`，需要更短时限的检查在场景中写 `"timeout"` | 超时只影响失败时的等待；Windows 上构建 `std` 的夹具首个检查接近 20 秒 |
 | 第 9 节第 9 条：W1 完成后向 LLVM 报告 `align_val_t` 回归 | 未提交，记入 issue #2 | 属于对外提交，需先确认作为 D14 的例外 |
 
