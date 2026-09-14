@@ -77,7 +77,7 @@ std::size_t Primer::height_(std::string_view name) const {
     return it == heights_.end() ? 0 : it->second;
 }
 
-std::vector<const PrimeModule*> Primer::start_ready() {
+std::vector<const PrimeModule*> Primer::start_ready(const std::function<bool(const PrimeModule&)>& built) {
     std::vector<const PrimeModule*> started;
     for (bool progressed { true }; progressed;) {
         progressed = false;
@@ -86,8 +86,9 @@ std::vector<const PrimeModule*> Primer::start_ready() {
             if (state != State::waiting) continue;
             const PrimeModule& module { modules_.at(name) };
             if (!imports_done_(module)) continue;
-            if (module.primeFile.empty()) {
-                // Not importable on its own (a partition): its primary module's unit builds it.
+            if (module.primeFile.empty() || (built && built(module))) {
+                // Not importable on its own (a partition), so its primary module's unit builds it;
+                // or already built, so an importer's own build reuses it.
                 state = State::done;
                 progressed = true;
                 continue;

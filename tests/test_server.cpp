@@ -299,6 +299,27 @@ int main() {
         expect(!srv::keep_waiting(request, true, now - 2s, now)) << "only a client's request waits";
     };
 
+    "a module the engine has already built completes without a unit"_test = [] {
+        using State = srv::Primer::State;
+        srv::Primer primer;
+        primer.set_limit(4);
+        primer.set_modules({
+            { "std", {}, "/prime/std.cpp" },
+            { "base", { "std" }, "/prime/base.cpp" },
+            { "base:part", { "std" }, "" },
+            { "app", { "base", "base:part" }, "/prime/app.cpp" },
+        });
+        const std::vector<std::string> wanted { "app" };
+        expect(primer.want(wanted) == 4u);
+        // A warm start: std and base are cached, app changed since.
+        const auto cached = [](const srv::PrimeModule& module) { return module.name == "std" || module.name == "base"; };
+        const auto started = primer.start_ready(cached);
+        expect(fatal(started.size() == 1u));
+        expect(started.front()->name == "app") << "completions cascade to importers in the same call";
+        expect(primer.state("std") == State::done && primer.state("base") == State::done && primer.state("base:part") == State::done);
+        expect(primer.running() == 1u) << "nothing already built counts against the limit";
+    };
+
     "the module more work waits on starts first"_test = [] {
         srv::Primer primer;
         primer.set_limit(1);

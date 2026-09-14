@@ -40,8 +40,10 @@ public:
     // Wants `names` and everything they import, transitively. Returns how many modules became wanted.
     std::size_t want(std::span<const std::string> names);
     // Modules to start now: wanted, not started, every import done, within the limit, the ones
-    // with the most modules waiting above them first. They are marked running.
-    std::vector<const PrimeModule*> start_ready();
+    // with the most modules waiting above them first. They are marked running. A ready module
+    // `built` says the engine already has (its cached BMI, on a warm start) completes at once,
+    // like a partition, and needs no unit.
+    std::vector<const PrimeModule*> start_ready(const std::function<bool(const PrimeModule&)>& built = {});
     // A running module finished (built or failed; either way importers may proceed).
     void finish(std::string_view name);
     // Everything forgotten, as after an engine restart: nothing is running and nothing is done.

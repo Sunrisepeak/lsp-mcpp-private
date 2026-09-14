@@ -241,6 +241,11 @@ struct WorkspaceRoot::Impl {
     std::map<std::string, std::chrono::steady_clock::time_point, std::less<>> primeDeadlines;
     std::map<std::string, std::string, std::less<>> heldPrimeUnits;
     std::optional<Clock::time_point> lastPrimeProgressAt;   // when preparation last finished a module
+    std::map<std::string, std::string, std::less<>> moduleSources;   // importable module -> the unit providing it, from the plan
+    // clangd's persistent module cache as the plan found it (cached_bmis), read the first time a
+    // module becomes ready for preparation and not again until the next plan: what is built later in
+    // the session is known from the units that built it.
+    std::optional<std::map<std::string, std::vector<std::string>, std::less<>>> startupBmis;
 
     // Engine (usable plan W9.5): only ever used through the interface.
     std::unique_ptr<engine::Engine> engine;
@@ -287,7 +292,6 @@ struct WorkspaceRoot::Impl {
         databaseDirectory = base::join_path(cacheDirectory, "contexts/default/cdb");
         primeDirectory = base::join_path(cacheDirectory, "contexts/default/prime");
         moduleHintDirectory = base::join_path(cacheDirectory, "contexts/default/module-hints");   // never created
-        primer.set_limit(std::max<std::size_t>(2, std::thread::hardware_concurrency()));
         (void)platform::fs::create_directories(databaseDirectory);
         // clangd starts without a database; the first plan is written before any document reaches it.
         platform::fs::remove_all(base::join_path(databaseDirectory, "compile_commands.json"));
@@ -1027,6 +1031,11 @@ struct WorkspaceRoot::Impl {
                 primer.set_modules(std::move(modules));
             }
         }
+        moduleSources.clear();
+        for (const auto& entry : plan.entries) {
+            if (!entry.provides.empty()) moduleSources.emplace(entry.provides, entry.file);
+        }
+        startupBmis.reset();
         structures.clear();
         for (const auto& path : index.files()) {
             if (const auto* scan = index.scan_of(path)) structures[base::path_key(path)] = structure_of(*scan);
@@ -1071,9 +1080,55 @@ struct WorkspaceRoot::Impl {
         if (primer.want(names) > 0 && pump) pump_primer();
     }
 
+    // clangd's persistent module cache as it is now: for each source file name, the BMIs built from
+    // it (<database>/.cache/clangd/modules/<source file name>-<hash>/<command hash>/<module>.pcm).
+    std::map<std::string, std::vector<std::string>, std::less<>> cached_bmis() const {
+        std::map<std::string, std::vector<std::string>, std::less<>> bmis;
+        for (const auto& sourceDirectory : platform::fs::list_directory(base::join_path(databaseDirectory, ".cache/clangd/modules"))) {
+            const std::string_view name { base::file_name(sourceDirectory) };
+            const std::size_t dash { name.rfind('-') };
+            if (dash == std::string_view::npos || dash == 0) continue;
+            auto& files = bmis[std::string { name.substr(0, dash) }];
+            for (const auto& commandDirectory : platform::fs::list_directory(sourceDirectory)) {
+                for (auto& file : platform::fs::list_directory(commandDirectory)) {
+                    if (file.ends_with(".pcm")) files.push_back(std::move(file));
+                }
+            }
+        }
+        return bmis;
+    }
+
+    // usable plan W7: whether clangd already keeps `module`'s BMI, finished (no lock file beside it)
+    // and at least as new as the module's source. An importer's own build then reuses it, and a
+    // prime unit would only take clangd workers from the files a person opened.
+    bool module_already_built(const PrimeModule& module) {
+        const auto source = moduleSources.find(module.name);
+        if (source == moduleSources.end()) return false;
+        if (!startupBmis) startupBmis = cached_bmis();
+        const auto files = startupBmis->find(base::file_name(source->second));
+        if (files == startupBmis->end()) return false;
+        const auto sourceStamp = platform::fs::stamp(source->second);
+        if (!sourceStamp) return false;
+        std::string wanted { module.name };
+        std::ranges::replace(wanted, ':', '-');
+        wanted += ".pcm";
+        return std::ranges::any_of(files->second, [&](const std::string& file) {
+            if (base::file_name(file) != wanted || platform::fs::exists(file + ".lock")) return false;
+            const auto bmiStamp = platform::fs::stamp(file);
+            return bmiStamp && bmiStamp->modified >= sourceStamp->modified;
+        });
+    }
+
     void pump_primer() {
         if (!engineAccepting) return;
-        for (const PrimeModule* module : primer.start_ready()) {
+        // Prime units take the same clangd workers as the files a person opened. With no file waiting
+        // for its modules, preparation uses every thread; otherwise it leaves the waiting files a core
+        // each (hardware threads are counted as two per core except on macOS, where they are cores).
+        const std::size_t threads { std::max<std::size_t>(1, std::thread::hardware_concurrency()) };
+        const std::size_t cores { lspmcpp::os::FAMILY == lspmcpp::os::Family::macos ? threads : std::max<std::size_t>(1, threads / 2) };
+        const std::size_t waiting { awaitingDiagnostics.size() };
+        primer.set_limit(waiting == 0 ? std::max<std::size_t>(2, threads) : (cores > waiting ? cores - waiting : 1));
+        for (const PrimeModule* module : primer.start_ready([this](const PrimeModule& candidate) { return module_already_built(candidate); })) {
             const std::string uri { base::path_to_uri(module->primeFile) };
             Json params { { "textDocument", Json { { "uri", uri }, { "languageId", "cpp" }, { "version", 1 },
                                                    { "text", std::format("import {};\n", module->name) } } } };
