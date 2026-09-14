@@ -122,6 +122,7 @@ private:
     std::optional<spec::Kit> kit_;
     std::string macosSdk_;
     DocumentStore documents_;
+    mutable std::unordered_map<std::string, std::string> canonicalByUri_;
     index::ModuleIndex index_;
     spec::MetadataReader metadataReader_ { spec::caching_metadata_reader() };
 
@@ -213,37 +214,41 @@ private:
 
     void notify_client_(std::string_view method, Json params) { send_client_(lsp::make_notification(method, std::move(params))); }
 
-    // clangd names a Windows file "file:///C:/dir/f.cppm" and editors write
-    // "file:///c%3A/dir/f.cppm". The engine database uses the first form, and
-    // clangd matches unsaved buffers to module sources by exact path, so URIs
-    // are given to the engine in its own form.
+    // The engine is given every file under the one name the model uses for it,
+    // because clangd matches an unsaved buffer to the module source it builds by
+    // exact name. On Windows that is clangd's own spelling, "file:///C:/dir/f.cppm"
+    // where editors write "file:///c%3A/dir/f.cppm"; elsewhere it is the name with
+    // symbolic links followed, "/private/var/..." where the editor opened "/var/...".
     std::string engine_uri_(std::string_view uri) const {
-        auto path = base::uri_to_path(uri);
-        if (!path || path->size() < 2 || (*path)[1] != ':') return std::string { uri };
-        return "file:///" + path->substr(0, 2) + base::percent_encode_path(std::string_view { *path }.substr(2));
+        if constexpr (lspmcpp::os::FAMILY == lspmcpp::os::Family::windows) {
+            auto path = base::uri_to_path(uri);
+            if (!path || path->size() < 2 || (*path)[1] != ':') return std::string { uri };
+            return "file:///" + path->substr(0, 2) + base::percent_encode_path(std::string_view { *path }.substr(2));
+        } else {
+            const auto written = base::uri_to_path(uri);
+            if (!written) return std::string { uri };
+            const std::string path { path_of_uri_(uri) };
+            return path.empty() || path == *written ? std::string { uri } : base::path_to_uri(path);
+        }
     }
 
     Json engine_view_(const Json& message) const {
-        if constexpr (lspmcpp::os::FAMILY != lspmcpp::os::Family::windows) {
-            return message;
-        } else {
-            Json copy = message;
-            const auto fix = [&](Json& uri) {
-                if (uri.is_string()) uri = engine_uri_(uri.get<std::string>());
-            };
-            if (copy.contains("params") && copy["params"].is_object()) {
-                Json& params = copy["params"];
-                if (params.contains("textDocument") && params["textDocument"].is_object() && params["textDocument"].contains("uri")) {
-                    fix(params["textDocument"]["uri"]);
-                }
-                if (params.contains("changes") && params["changes"].is_array()) {
-                    for (auto& change : params["changes"]) {
-                        if (change.is_object() && change.contains("uri")) fix(change["uri"]);
-                    }
+        Json copy = message;
+        const auto fix = [&](Json& uri) {
+            if (uri.is_string()) uri = engine_uri_(uri.get<std::string>());
+        };
+        if (copy.contains("params") && copy["params"].is_object()) {
+            Json& params = copy["params"];
+            if (params.contains("textDocument") && params["textDocument"].is_object() && params["textDocument"].contains("uri")) {
+                fix(params["textDocument"]["uri"]);
+            }
+            if (params.contains("changes") && params["changes"].is_array()) {
+                for (auto& change : params["changes"]) {
+                    if (change.is_object() && change.contains("uri")) fix(change["uri"]);
                 }
             }
-            return copy;
         }
+        return copy;
     }
 
     // The client's URI for a document the engine names in its own form.
@@ -252,6 +257,28 @@ private:
         const std::string path { path_of_uri_(engineUri) };
         if (const Document* document = path.empty() ? nullptr : documents_.find_by_path(path)) return document->uri;
         return std::string { engineUri };
+    }
+
+    // An engine message with every location in an open document named the way
+    // the client named that document, so a definition in a file the editor has
+    // open does not arrive as a second file.
+    void client_view_(Json& value) const {
+        if (value.is_array()) {
+            for (auto& element : value) client_view_(element);
+            return;
+        }
+        if (!value.is_object()) return;
+        for (auto item = value.begin(); item != value.end(); ++item) {
+            if ((item.key() == "uri" || item.key() == "targetUri") && item.value().is_string()) {
+                item.value() = client_uri_(item.value().get<std::string>());
+            } else if (item.key() == "changes" && item.value().is_object()) {
+                Json renamed = Json::object();
+                for (auto change = item.value().begin(); change != item.value().end(); ++change) renamed[client_uri_(change.key())] = change.value();
+                item.value() = std::move(renamed);
+            } else {
+                client_view_(item.value());
+            }
+        }
     }
 
     bool send_engine_(const Json& message) {
@@ -263,9 +290,15 @@ private:
         return true;
     }
 
+    // A file's path under the one name the model uses for it (see engine_uri_).
     std::string path_of_uri_(std::string_view uri) const {
+        const std::string key { uri };
+        if (const auto cached = canonicalByUri_.find(key); cached != canonicalByUri_.end()) return cached->second;
         auto path = base::uri_to_path(uri);
-        return path ? *path : std::string {};
+        std::string canonical { path ? platform::fs::canonical_path(*path) : std::string {} };
+        if (canonicalByUri_.size() > 4096) canonicalByUri_.clear();
+        canonicalByUri_.emplace(key, canonical);
+        return canonical;
     }
 
     static std::string uri_of_params_(const Json& params) {
@@ -394,7 +427,7 @@ private:
             if (auto compiler = lsp::string_at(*init, "compiler")) compilerOverride_ = *compiler;
             if (auto kit = lsp::string_at(*init, "semanticKit")) kitEnabled_ = *kit != "off";
         }
-        root_ = workspace_root_(params);
+        root_ = platform::fs::canonical_path(workspace_root_(params));
         cacheDirectory_ = base::join_path(platform::dirs::cache_directory(), base::join_path("workspaces", project::workspace_key(root_)));
         databaseDirectory_ = base::join_path(cacheDirectory_, "contexts/default/cdb");
         (void)platform::fs::create_directories(databaseDirectory_);
@@ -782,6 +815,7 @@ private:
             engineToClient_[key] = { engineGeneration_, message["id"] };
             Json forwarded = message;
             forwarded["id"] = key;
+            if (forwarded.contains("params")) client_view_(forwarded["params"]);
             send_client_(forwarded);
             break;
         }
@@ -817,6 +851,7 @@ private:
                 return;
             }
             Json result = message.value("result", Json {});
+            client_view_(result);
             const std::string path { request.uri.empty() ? std::string {} : path_of_uri_(request.uri) };
             if (request.merge == Merge::document_symbols && !path.empty()) {
                 result = merge_document_symbols(result, index_.document_symbols(path));
@@ -836,7 +871,9 @@ private:
             const std::string uri { client_uri_(params.value("uri", std::string {})) };
             awaitingDiagnostics_.erase(uri);
             if (documents_.find(uri) == nullptr) {
-                send_client_(message);
+                Json forwarded = message;
+                client_view_(forwarded["params"]);
+                send_client_(forwarded);
             } else {
                 engineDiagnostics_[uri] = params.value("diagnostics", Json::array());
                 publish_diagnostics_(uri, true);

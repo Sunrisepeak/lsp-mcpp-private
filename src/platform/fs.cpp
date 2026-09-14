@@ -150,4 +150,16 @@ std::string current_directory() {
     return from_native(path);
 }
 
+std::string canonical_path(std::string_view path) {
+    if (path.empty()) return {};
+    if constexpr (base::NATIVE_PATH_STYLE == base::PathStyle::windows) {
+        return base::normalize_path(path);
+    } else {
+        std::error_code error;
+        const auto resolved = std::filesystem::weakly_canonical(native(path), error);
+        if (error || resolved.empty()) return base::normalize_path(path);
+        return from_native(resolved);
+    }
+}
+
 } // namespace lspmcpp::platform::fs

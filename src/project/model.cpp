@@ -100,7 +100,7 @@ std::vector<ModuleManifest> module_manifests(const ProjectModel& model, const sp
 
 ProjectModel load_project(std::string_view rootInput, const LoadOptions& options) {
     ProjectModel model;
-    model.root = base::normalize_path(rootInput);
+    model.root = platform::fs::canonical_path(rootInput);
     const Detection detection { detect_project(model.root, options.configuredDatabase) };
     const Scanner scanner { options.scanner ? options.scanner : file_scanner() };
     const Prober prober = [&](std::string_view driver, std::span<const std::string> relevant) -> std::optional<toolchain::ToolchainFacts> {
@@ -194,6 +194,14 @@ ProjectModel load_project(std::string_view rootInput, const LoadOptions& options
 
     model.database = std::move(loaded->database);
     model.facts = std::move(loaded->facts);
+    // One name for each file. A producer may reach a file through a symbolic
+    // link the workspace does not (mcpp resolves /var to /private/var on macOS),
+    // and everything after this compares files by name: open documents,
+    // exclusions, the module index, and clangd matching an unsaved buffer to
+    // the module source it builds.
+    for (auto& set : model.database.sets) {
+        for (auto& unit : set.units) unit.source = platform::fs::canonical_path(spec::absolute_source(unit));
+    }
     model.level = (model.source == SourceKind::build_database || model.database.generator.value_or(spec::Generator {}).name == "mcpp")
                       ? std::max(spec::conformance_level(model.database), 1) : 2;
     set_profile(model, options.kit);

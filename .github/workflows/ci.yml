@@ -205,6 +205,19 @@ jobs:
             exit 1
           fi
 
+      # A workspace reached through a symbolic link, which is where every macOS
+      # temporary directory is (/var is /private/var): mcpp names files by their
+      # resolved path, and an unsaved edit must still reach the modules that
+      # import it (check C7).
+      - name: A workspace reached through a symbolic link
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/real"
+          ln -sfn "$RUNNER_TEMP/real" "$RUNNER_TEMP/link"
+          TMPDIR="$RUNNER_TEMP/link" tools/lsp-mcpp-conformance run --server payload/bin/lsp-mcpp --payload payload \
+              --fixture conformance/fixtures/mcpp-llvm --timeout 180
+
   # ---------------------------------------------------------------------------
   # VS Code → extension → lsp-mcpp → clangd, and the platform VSIX (design 16).
   vscode-e2e:

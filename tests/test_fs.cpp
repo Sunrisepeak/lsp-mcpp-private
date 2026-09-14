@@ -109,6 +109,27 @@ int main() {
         expect(!fs::exists(base::join_path(root, "missing")));
     };
 
+    // Symbolic links need a privilege on Windows, where canonical_path only
+    // normalizes; the rule is observed on the systems that follow links.
+    "a file reached through a symbolic link has one canonical name"_test = [&] {
+        if constexpr (base::NATIVE_PATH_STYLE == base::PathStyle::windows) {
+            expect(fs::canonical_path("c:\\dir\\f.txt") == "C:/dir/f.txt") << fs::canonical_path("c:\\dir\\f.txt");
+        } else {
+            const std::string real { base::join_path(root, "canonical-real") };
+            const std::string link { base::join_path(root, "canonical-link") };
+            expect(fatal(fs::create_directories(real).has_value()));
+            expect(fatal(fs::write_file(base::join_path(real, "f.txt"), "x").has_value()));
+            std::error_code error;
+            std::filesystem::create_directory_symlink(std::filesystem::path { real }, std::filesystem::path { link }, error);
+            expect(fatal(!error)) << error.message();
+            const std::string throughLink { fs::canonical_path(base::join_path(link, "f.txt")) };
+            expect(throughLink == fs::canonical_path(base::join_path(real, "f.txt"))) << throughLink;
+            expect(!throughLink.contains("canonical-link")) << throughLink;
+            expect(fs::canonical_path(base::join_path(link, "missing/g.txt")).ends_with("canonical-real/missing/g.txt"))
+                << fs::canonical_path(base::join_path(link, "missing/g.txt"));
+        }
+    };
+
     "current directory is absolute"_test = [] {
         expect(base::is_absolute_path(fs::current_directory())) << fs::current_directory();
     };
