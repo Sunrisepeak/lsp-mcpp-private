@@ -25,6 +25,8 @@
 // Other:
 //   VSCODE_TEST_VERSION=stable      (optional)
 //   LSP_MCPP_CACHE_DIR=<dir>        Reuse a server cache directory across runs.
+//   LSP_MCPP_E2E_ONLY=<glob>        Run only the main suite's test files matching this glob, for
+//                                  example sdk-missing.test.js on a clean macOS machine.
 //   LSP_MCPP_E2E_EXPECT_SDK_MISSING=1
 //                                  Tells test/suite/sdk-missing.test.ts to
 //                                  run its assertions instead of skipping;
@@ -156,7 +158,7 @@ function packageStub(stubDir: string): string {
 // directories passed alongside it.
 function installExtensions(vscodeExecutablePath: string, extensionsDirectory: string, userDataDirectory: string, vsixPaths: readonly string[]): void {
     const [cli, ...cliArgs] = resolveCliArgsFromVSCodeExecutablePath(vscodeExecutablePath, { reuseMachineInstall: true });
-    const args = [...cliArgs, `--extensions-dir=${extensionsDirectory}`, `--user-data-dir=${userDataDirectory}`];
+    const args = [...cliArgs, `--extensions-dir=${extensionsDirectory}`, `--user-data-dir=${userDataDirectory}`, ...ROOT_ARGS];
     for (const vsixPath of vsixPaths) {
         args.push('--install-extension', vsixPath);
     }
@@ -165,6 +167,11 @@ function installExtensions(vscodeExecutablePath: string, extensionsDirectory: st
         throw new Error(`Installing extensions into ${extensionsDirectory} failed with exit code ${String(result.status)}.`);
     }
 }
+
+// Electron refuses to start as root without --no-sandbox, and a clean-machine container runs as root.
+const ROOT_ARGS: readonly string[] = process.platform === 'linux' && typeof process.getuid === 'function' && process.getuid() === 0
+    ? ['--no-sandbox']
+    : [];
 
 interface RunOptions {
     label: string;
@@ -188,6 +195,7 @@ function runDevPathMode(options: RunOptions): Promise<number> {
             '--skip-welcome',
             '--skip-release-notes',
             '--disable-telemetry',
+            ...ROOT_ARGS,
         ],
         extensionTestsEnv: {
             LSP_MCPP_TEST: '1',
@@ -221,6 +229,7 @@ async function runVsixMode(options: RunOptions & { vsixPath: string; extraVsixPa
             '--skip-welcome',
             '--skip-release-notes',
             '--disable-telemetry',
+            ...ROOT_ARGS,
         ],
         extensionTestsEnv: {
             LSP_MCPP_TEST: '1',

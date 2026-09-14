@@ -367,7 +367,8 @@ jobs:
   # ---------------------------------------------------------------------------
   # Clean machines (usable plan W5, design 20.2): no compiler and no Visual Studio.
   # Linux runs in a bare container; the Windows image cannot be emptied, so its
-  # toolchains are hidden and asserted invisible first.
+  # toolchains are hidden and asserted invisible first. The conformance fixture and
+  # the packaged extension's end-to-end suite both run there.
   clean-machine:
     name: clean machine (${{ matrix.platform }})
     needs: payload
@@ -389,6 +390,18 @@ jobs:
           name: payload-${{ matrix.platform }}
       - name: Unpack the payload
         run: tar -xzf payload-${{ matrix.platform }}.tar.gz
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - name: Package the extension, as the other end-to-end jobs do
+        run: |
+          set -euo pipefail
+          cp -r payload editors/vscode/payload
+          cd editors/vscode
+          npm ci && npm run compile
+          npx --no-install vsce package --target ${{ matrix.platform }} --out "$RUNNER_TEMP/lsp-mcpp.vsix"
       - name: A container without a compiler
         if: runner.os == 'Linux'
         run: |
@@ -399,10 +412,23 @@ jobs:
             done
             tools/lsp-mcpp-conformance run --server payload/bin/lsp-mcpp --payload payload \
                 --fixture conformance/fixtures/inferred-discover --timeout 180'
+      - name: The extension in the same kind of container
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm -v "$PWD:/w" -v "$RUNNER_TEMP:/t" -w /w/editors/vscode node:22-bookworm-slim bash -c '
+            set -euo pipefail
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends xvfb xauth ca-certificates libnss3 libatk1.0-0 libatk-bridge2.0-0 \
+                libgtk-3-0 libgbm1 libasound2 libxss1 libxkbfile1 libsecret-1-0 > /dev/null
+            for tool in c++ g++ gcc cc clang++ clang; do
+              if command -v "$tool"; then echo "::error::$tool is on PATH"; exit 1; fi
+            done
+            LSP_MCPP_E2E_VSIX=/t/lsp-mcpp.vsix xvfb-run -a npm test'
       - name: Visual Studio hidden and no compiler on PATH
         if: runner.os == 'Windows'
         run: |
           set -euo pipefail
+          NODE_PATH_FOR_E2E="$(command -v node)"
           mv "/c/Program Files (x86)/Microsoft Visual Studio/Installer" "/c/Program Files (x86)/Microsoft Visual Studio/Installer.hidden"
           export PATH="/c/Windows/system32:/c/Windows:/c/Windows/System32/Wbem:/usr/bin"
           for tool in vswhere cl clang-cl clang++ g++ c++ gcc; do
@@ -410,6 +436,9 @@ jobs:
           done
           tools/lsp-mcpp-conformance.exe run --server payload/bin/lsp-mcpp.exe --payload payload \
               --fixture conformance/fixtures/inferred-discover --timeout 180
+          # The packaged extension with the same machine view; node stays reachable for the test runner.
+          export PATH="$PATH:$(dirname "$NODE_PATH_FOR_E2E")"
+          cd editors/vscode && LSP_MCPP_E2E_VSIX="$RUNNER_TEMP/lsp-mcpp.vsix" npm test
 
   # ---------------------------------------------------------------------------
   # VS Code → extension → lsp-mcpp → clangd, and the platform VSIX (design 16).
