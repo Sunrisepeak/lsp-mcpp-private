@@ -488,3 +488,50 @@ Jobs, all required:
 ## Execution Strategy
 
 Tightly coupled C++ milestones (0–4) run inline in this session with a build and `mcpp test` after every task; isolated work (specs port, VS Code extension, payload scripts) runs through subagents with the interfaces above. Every milestone ends with a push and a green CI run on the PR branch before the next milestone starts.
+
+---
+
+## Execution Record
+
+Delivered as Sunrisepeak/lsp-mcpp-private#1 (`feat/lsp-mcpp-v1` → `main`). The C++ source is 99 files (43 `.cppm` interfaces, 56 `.cpp` implementation units) with no header files and no preprocessor directives. All milestones were implemented, and the design document follows the implementation (§12.9, §13, §14.3, §19).
+
+### Where execution departed from the plan
+
+| Plan | What was done | Why |
+|---|---|---|
+| Task 1.2: tests on `boost.ut` 2.3.1 | An in-repo `lspmcpp.testing` harness (`testing/`), a path dev-dependency | `boost.ut` crashes clang 22.1.8 on a Windows host and every test binary linking it segfaults at startup on macOS (design §12.9 K5) |
+| Tech stack: `openkal-llvm-runtime` 0.9.2 | 0.9.5 | Defects found while building and testing lsp-mcpp were fixed upstream and released through the whole pinned chain (below) |
+| Payloads carry a release server | Release, after running on dev while K7 and K13 were open | Both release-only defects are fixed in 0.9.5; CI runs the unit tests in both profiles on every host |
+| Task 6.1: `fetch_clangd.py`, `packaging/kits/*.kit.json` templates | `packaging/scripts/fetch.py` fetches every lock entry; `build_kit.py` writes `kit.json`; `packaging/kits/README.md` documents each kit; `xlings_artifacts.py` splits release payloads for xlings | A generated manifest cannot drift from the files it describes |
+| Task 7.1: Windows conformance `inferred, msvc` | Windows runs `inferred`, `untrusted`, `mingw` and `cmake-msvc`; macOS runs `inferred`, `untrusted`, `mcpp-llvm`; Linux runs all six fixtures and `mcpp-llvm` again through a symbolic link | The MSVC fixture is a CMake project built by cl.exe in a developer environment, so it measures P7. clang-cl (P6) has no fixture |
+| Task 6.2: @vscode/test-electron 2.5 | 3.1 on Node 22, with a short `--user-data-dir` | VS Code 1.110 renamed the macOS executable, and macOS limits the IPC socket path to 104 bytes |
+| Task 7.3: `mcpp emit build-database` upstream | Not proposed. The mcpp provider asks for it first (S2) and falls back to `mcpp build --configure-only` | lsp-mcpp does not depend on it, as the plan allowed |
+| Task 7.3: xim-pkgindex descriptors | Rendered by `xlings_artifacts.py` in the release workflow, not submitted | They need published release archives |
+
+### Upstream changes
+
+Every defect is recorded in design §12.9 with its root cause. Version requirements are exact, so each fix was released by every package that pins it, mirrored to GitCode, and added to mcpp-index.
+
+| Package | PRs and releases |
+|---|---|
+| openkal-llvm-runtime | #17 → 0.9.2 (`_GNU_SOURCE`, K1), #18 → 0.9.3, #19 → 0.9.4, #20 → 0.9.5 (with a release-build run on each host) |
+| openkal-musl | #31 → 0.13.2 (C++ `pthread_t` on Windows, K6), #32 → 0.13.3 (detached thread exit overran the shared stack, K9), #33 → 0.13.4 |
+| openkal-windows | #20 → 0.7.1 (loops became C runtime calls under `-O2`, K7), #21 → 0.7.2 (inheritable channel ends, K10), #22 → 0.7.3 (argument quoting, argument narrowing and the `\\?\` prefix, K11), #23 → 0.7.4 (environment values, K12) |
+| openkal-macos | #20 → 0.9.1 (a returned register declared an input; release programs faulted before `main`, K13) |
+| mcpp-index | #414 to #423 |
+
+Recorded without a fix: K2 (MinGW `mm_malloc.h`), K5 (`boost.ut`), K8 (libc++ wide strings over 32-bit musl `wcslen`), and the requirements K3 and K4.
+
+### Verification
+
+Every job in `.github/workflows/ci.yml` passes on the pull request:
+
+| Job | Hosts | What it establishes |
+|---|---|---|
+| build and unit tests | ubuntu-24.04, macos-14, windows-2022 | 15 test programs in the dev and the release profile; the three executables start; the generated protocol is fresh |
+| cross-build from Linux | x86_64-windows-gnu, aarch64-macos | one Linux host builds every platform's executables |
+| payload | linux-x64, win32-x64, darwin-arm64 | release server, trimmed clangd 23.1.0 and `lsp-mcpp-kit`, verified layout, no case-only name pairs |
+| conformance | Linux: seven runs over six fixtures and a symbolic-link workspace; macOS: `inferred`, `untrusted`, `mcpp-llvm`; Windows: `inferred`, `untrusted`, `mingw`, `cmake-msvc` | the specifications against real toolchains, through the payload that ships |
+| VS Code end to end | linux-x64, darwin-arm64, win32-x64 | the extension starts the payload's server in a downloaded VS Code, the module features answer, and the platform VSIX packages |
+
+Found and fixed on the way, besides the upstream defects above: unsaved module edits did not reach importers when the workspace was reached by another name (a symbolic link on macOS, a short alias on Windows), a server that exited or hung made every later conformance check wait out its timeout, Linux kernel headers with case-only name pairs broke VSIX packaging, and VS Code 1.110's renamed macOS executable and 104-byte socket limit broke the end-to-end tests.

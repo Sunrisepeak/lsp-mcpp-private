@@ -757,9 +757,9 @@ mcpp emit build-database [--toolchain SPEC] [--target TRIPLE] [--format json|jso
 
 实现补充：
 
-- 没有构建系统时，发现的编译器只有在其标准库提供模块清单（`*.modules.json`）时才用于语义；Apple clang 与 MSVC 不参与这一步（MSVC 语义只在构建系统记录了 cl.exe 或 clang-cl 时使用，P6/P7 仍待验证），否则使用语义工具包。
+- 没有构建系统时，发现的编译器只有在其标准库提供模块清单（`*.modules.json`）时才用于语义；Apple clang 与 MSVC 不参与这一步（MSVC 语义只在构建系统记录了 cl.exe 或 clang-cl 时使用；P7 已由 cmake-msvc 夹具实测，P6 待验证），否则使用语义工具包。
 - 构建以 `-nostdinc++ -isystem <前缀>/include/c++/v1` 显式选择 libc++ 时（mcpp 的 LLVM 工具链即如此），驱动查询回答不出清单，探测从该包含目录推出 `<前缀>/lib[/<target>]/libc++.modules.json`。
-- 同一文件只有一个名字：工作区根目录、打开的文档与数据库中的源文件在 POSIX 系统上都取解析符号链接后的路径（macOS 的 `/var` 即 `/private/var`，mcpp 记录的是后者）。clangd 收到的也是这个名字，因为它按精确路径把未保存缓冲区匹配到模块源；引擎返回的位置若属于客户端打开的文档，则换回客户端自己的 URI。Windows 上只统一盘符与分隔符。
+- 同一文件只有一个名字：工作区根目录、打开的文档与数据库中的源文件在 POSIX 系统上都取解析符号链接后的路径（macOS 的 `/var` 即 `/private/var`，mcpp 记录的是后者）。clangd 收到的也是这个名字，因为它按精确路径把未保存缓冲区匹配到模块源；引擎返回的位置若属于客户端打开的文档，则换回客户端自己的 URI。Windows 上统一盘符与分隔符，并把含 `~` 的短名分量换成长名：在父目录的条目中找文件标识相同的那一个（GitHub Windows 机器的 `TEMP` 是 `RUNNER~1`，mcpp 记录的是 `runneradmin`）。
 
 ### 14.4 归一化规则
 
@@ -771,7 +771,7 @@ mcpp emit build-database [--toolchain SPEC] [--target TRIPLE] [--format json|jso
 | P4 Clang macOS | 原驱动 | 同 P3 | 显式 SDK 路径 | 待验证 |
 | P5 clang++ MSVC ABI | 原驱动 | 同 P3 | 显式 `--target=x86_64-pc-windows-msvc` 与 MSVC 工具集、Windows SDK 路径 | 待验证 |
 | P6 clang-cl | clang-cl | MSVC 模块参数：`/reference`、`/ifcOutput`、`/ifcSearchDir`、`/interface`、`/internalPartition`、`/headerUnit`、`/scanDependencies`、`/sourceDependencies` | 显式 `/vctoolsdir`、`/winsdkdir`；接口单元补模块模式 | 待验证 |
-| P7 cl.exe | clang-cl | 同 P6；clang-cl 不认识的 cl 参数 | 同 P6；按 cl 版本设置 `-fms-compatibility-version`；`/std:` 映射 | 待验证 |
+| P7 cl.exe | clang-cl | 同 P6；clang-cl 不认识的 cl 参数 | 同 P6；按 cl 版本设置 `-fms-compatibility-version`；`/std:` 映射 | Windows 实测（cmake-msvc 夹具：CMake 3.31、Ninja、MSVC 19.44 记录的 `.modmap` 中 `-interface`、`-ifcOutput`、`-reference`） |
 | K1–K3 工具包 | 占位驱动路径 | — | 按 `kit.json` 生成 target、头文件目录、sysroot 与额外参数 | K1、K2 实测 |
 
 其余步骤：
