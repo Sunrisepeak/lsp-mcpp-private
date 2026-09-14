@@ -118,6 +118,11 @@ std::map<std::string, platform::fs::FileStamp> watched_files_snapshot_of(std::st
 
 std::map<std::string, platform::fs::FileStamp> watched_files_snapshot(std::string_view root) { return watched_files_snapshot_of(root, {}); }
 
+bool keep_waiting(const PendingRequest& request, bool filePreparing, std::optional<Clock::time_point> lastProgress, Clock::time_point now) {
+    if (request.purpose != Purpose::client || !filePreparing || !lastProgress) return false;
+    return now < request.limit && now - *lastProgress < INTERACTIVE_TIMEOUT;
+}
+
 void send_client_message(const Json& message) {
     if (auto written = platform::stdio::write_output(lsp::encode_frame(message)); !written) {
         log::error("cannot write to the client: {}", written.error().message);
@@ -235,6 +240,7 @@ struct WorkspaceRoot::Impl {
     std::map<std::string, std::string, std::less<>> primeModuleByPath;
     std::map<std::string, std::chrono::steady_clock::time_point, std::less<>> primeDeadlines;
     std::map<std::string, std::string, std::less<>> heldPrimeUnits;
+    std::optional<Clock::time_point> lastPrimeProgressAt;   // when preparation last finished a module
 
     // Engine (usable plan W9.5): only ever used through the interface.
     std::unique_ptr<engine::Engine> engine;
@@ -488,7 +494,8 @@ struct WorkspaceRoot::Impl {
         }
         const std::int64_t engineId { nextEngineId++ };
         const auto timeout = is_interactive(method) ? std::min(options.requestTimeout, INTERACTIVE_TIMEOUT) : options.requestTimeout;
-        pending[engineId] = PendingRequest { Purpose::client, id, method, uri, decision.merge, params, Clock::now() + timeout, engineGeneration };
+        const auto now = Clock::now();
+        pending[engineId] = PendingRequest { Purpose::client, id, method, uri, decision.merge, params, now + timeout, engineGeneration, now + options.requestTimeout };
         Json forwarded = message;
         forwarded["id"] = engineId;
         if (!send_engine(forwarded)) {
@@ -1093,6 +1100,7 @@ struct WorkspaceRoot::Impl {
         primeDeadlines.erase(module);
         heldPrimeUnits.emplace(pathKey, *path);
         primer.finish(module);
+        lastPrimeProgressAt = Clock::now();
         pump_primer();
         release_prime_units_if_idle();
         return true;
@@ -1279,6 +1287,12 @@ struct WorkspaceRoot::Impl {
             pending.erase(id);
             switch (request.purpose) {
             case Purpose::client: {
+                const bool filePreparing { awaitingDiagnostics.contains(client_uri(request.uri)) && primer.busy() };
+                if (keep_waiting(request, filePreparing, lastPrimeProgressAt, now)) {
+                    request.deadline = std::min(now + PREPARING_GRACE, request.limit);
+                    pending[id] = std::move(request);
+                    break;
+                }
                 log::warning("clangd ({}) did not answer {} in time", root, request.method);
                 reply(request.clientId, local_fallback(request.merge, request.params, path_of_uri(request.uri)));
                 (void)send_engine(lsp::make_notification("$/cancelRequest", Json { { "id", id } }));

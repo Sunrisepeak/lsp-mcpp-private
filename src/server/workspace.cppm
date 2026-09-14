@@ -77,6 +77,7 @@ struct PendingRequest {
     Json params;
     Clock::time_point deadline;
     int generation { 0 };
+    Clock::time_point limit {};   // how long a request may be kept waiting at most; see keep_waiting
 };
 
 struct Issue {
@@ -86,6 +87,13 @@ struct Issue {
 };
 
 inline constexpr std::chrono::milliseconds INTERACTIVE_TIMEOUT { std::chrono::seconds { 10 } };
+
+// usable plan W7: a request whose deadline passed while the modules its file imports are still
+// being prepared waits on, a little at a time, as long as preparation keeps finishing modules and
+// the request's limit allows: on a large project the first answer after half a minute is worth more
+// than an empty one after ten seconds. `lastProgress` is when preparation last finished a module.
+bool keep_waiting(const PendingRequest& request, bool filePreparing, std::optional<Clock::time_point> lastProgress, Clock::time_point now);
+inline constexpr std::chrono::milliseconds PREPARING_GRACE { std::chrono::seconds { 5 } };
 
 bool is_build_file(std::string_view name);
 bool is_interactive(std::string_view method);

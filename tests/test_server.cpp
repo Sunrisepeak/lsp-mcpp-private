@@ -281,6 +281,24 @@ int main() {
         expect(primer.state("std") == State::unwanted && !primer.busy());
     };
 
+    "a request about a file still being prepared waits while preparation progresses"_test = [] {
+        using namespace std::chrono_literals;
+        const auto now = srv::Clock::now();
+        srv::PendingRequest request;
+        request.purpose = srv::Purpose::client;
+        request.deadline = now;
+        request.limit = now + 50s;
+        expect(srv::keep_waiting(request, true, now - 2s, now)) << "a module finished two seconds ago";
+        expect(!srv::keep_waiting(request, false, now - 2s, now)) << "the file's modules are ready: answer";
+        expect(!srv::keep_waiting(request, true, std::nullopt, now)) << "nothing has finished yet: no sign of progress";
+        expect(!srv::keep_waiting(request, true, now - 11s, now)) << "no module finished for longer than a request's own wait";
+        request.limit = now;
+        expect(!srv::keep_waiting(request, true, now - 2s, now)) << "the request's limit is reached";
+        request.limit = now + 50s;
+        request.purpose = srv::Purpose::engine_initialize;
+        expect(!srv::keep_waiting(request, true, now - 2s, now)) << "only a client's request waits";
+    };
+
     "the module more work waits on starts first"_test = [] {
         srv::Primer primer;
         primer.set_limit(1);
