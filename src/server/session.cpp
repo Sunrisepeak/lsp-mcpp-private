@@ -147,6 +147,7 @@ private:
     std::string databaseDirectory_;
     PayloadPaths payload_;
     std::optional<spec::Kit> kit_;
+    bool payloadCorrupt_ { false };   // usable plan W9.4: payload.json's declared files did not check out
     std::string macosSdk_;
     DocumentStore documents_;
     mutable std::unordered_map<std::string, std::string> canonicalByUri_;
@@ -498,7 +499,17 @@ private:
         payload_ = resolve_payload(PayloadRequest { options_.payloadDirectory, options_.clangd, options_.kit });
         log::info("lsp-mcpp {} ({}) root {}", base::VERSION, lspmcpp::os::FAMILY_NAME, root_);
         log::info("clangd {} at {}", payload_.clangdVersion.empty() ? "?" : payload_.clangdVersion, payload_.clangd.empty() ? "(none)" : payload_.clangd);
-        if (kitEnabled_ && !payload_.kit.empty()) {
+        // usable plan W9.4: checked before the payload is trusted with anything else. A corrupt
+        // payload leaves neither the engine nor the kit used (error, not degraded): 13.6 promises
+        // only a report and a reinstall prompt, not semantics built on a file that failed its check.
+        {
+            const std::string integrityCache { base::join_path(platform::dirs::cache_directory(), "payload-integrity.json") };
+            for (const auto& problem : verify_payload_integrity(payload_, integrityCache)) {
+                log::error("payload integrity: {} {}", problem.path, problem.reason);
+                payloadCorrupt_ = true;
+            }
+        }
+        if (!payloadCorrupt_ && kitEnabled_ && !payload_.kit.empty()) {
             if (auto kit = spec::load_kit(payload_.kit)) {
                 kit_ = std::move(*kit);
                 if (spec::requires_macos_sdk(*kit_)) {
@@ -858,6 +869,13 @@ private:
     void start_engine_() {
         engineHandshakeDone_ = false;
         engineAccepting_ = false;
+        if (payloadCorrupt_) {
+            engineUnavailable_ = true;
+            add_engine_issue_(Issue { "payload-corrupt", "the extension's payload is corrupt or was modified; reinstall the extension", "lspMcpp.showLogs" });
+            flush_deferred_without_engine_();
+            update_status_();
+            return;
+        }
         if (payload_.clangd.empty() || !platform::fs::is_regular_file(payload_.clangd)) {
             engineUnavailable_ = true;
             add_engine_issue_(Issue { "engine-missing", "clangd was not found; only module-level features are available", "lspMcpp.showLogs" });
@@ -1404,6 +1422,9 @@ private:
     }
 
     State compute_state_() const {
+        // usable plan W9.4: a corrupt payload is not merely degraded (13.6): only syntax-level
+        // features are trustworthy, the same as three engine crashes in a row.
+        if (payloadCorrupt_) return State::error;
         if (engineUnavailable_ && crashes_.size() >= 3) return State::error;
         if (!model_) return loading_ ? State::loading : State::starting;
         if (loading_) return State::loading;

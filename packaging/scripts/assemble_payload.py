@@ -19,6 +19,7 @@ The layout is the contract the server and the VS Code extension rely on:
 build_kit.py. Assembling always ends with the same verification --verify runs.
 """
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -33,7 +34,23 @@ sys.path.insert(0, HERE)
 import fetch  # noqa: E402  (same directory)
 
 PLATFORMS = ("linux-x64", "win32-x64", "darwin-arm64")
-PAYLOAD_VERSION = 1
+# 2: "files" (usable plan W9.4) records size and sha256 of clangd and the kit manifest, so the
+# server can tell a corrupt or tampered payload from a working one at startup.
+PAYLOAD_VERSION = 2
+# Payload-relative paths of the files the server checks at startup; see verify()'s "files" handling
+# and lspmcpp.server.payload.verify_payload_integrity.
+INTEGRITY_FILES = ("clangd/bin/clangd{exe}", "kit/kit.json")
+
+
+def sha256_of(path):
+    """Size and lowercase hex sha256, read a block at a time (never the whole file in memory)."""
+    hasher = hashlib.sha256()
+    size = 0
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 16), b""):
+            hasher.update(block)
+            size += len(block)
+    return size, hasher.hexdigest()
 
 
 def log(message):
@@ -146,6 +163,22 @@ def verify(payload_dir):
     for name in ("lsp-mcpp-LICENSE.txt", "LLVM-LICENSE.TXT"):
         need_file(f"licenses/{name}", "license")
 
+    # usable plan W9.4: every file the server checks at startup must be exactly what "files"
+    # promises, or the check assemble_payload.py exists to guarantee is worthless.
+    integrity_files = manifest.get("files") or {}
+    for expected in (path.format(exe=exe) for path in INTEGRITY_FILES):
+        if expected not in integrity_files:
+            problems.append(f"payload.json \"files\" does not list {expected}")
+    for relative, expected in integrity_files.items():
+        path = need_file(relative, "an integrity-checked file")
+        if path is None:
+            continue
+        size, digest = sha256_of(path)
+        if size != expected.get("size"):
+            problems.append(f"{relative} is {size} bytes, but payload.json says {expected.get('size')!r}")
+        if digest != expected.get("sha256"):
+            problems.append(f"{relative} sha256 does not match payload.json")
+
     # A VSIX cannot hold two paths that differ only in case, and neither can
     # the file systems of Windows and macOS.
     seen = {}
@@ -193,12 +226,20 @@ def assemble(args):
         raise SystemExit(f"assemble_payload: {args.clangd} has no LICENSE.TXT")
     shutil.copyfile(clangd_license, os.path.join(licenses, "LLVM-LICENSE.TXT"))
 
+    # usable plan W9.4: the server compares these at startup (cheap: two small reads and, unless
+    # a file changed, a cached hash) and reports payload-corrupt on a mismatch.
+    files = {}
+    for relative in (path.format(exe=exe) for path in INTEGRITY_FILES):
+        size, digest = sha256_of(os.path.join(out, *relative.split("/")))
+        files[relative] = {"size": size, "sha256": digest}
+
     manifest = {
         "payload-version": PAYLOAD_VERSION,
         "platform": args.platform,
         "server": {"version": args.server_version or server_version_from_manifest(), "path": f"bin/lsp-mcpp{exe}"},
         "clangd": {"version": lock["clangd-version"], "path": f"clangd/bin/clangd{exe}"},
         "kit": {"name": kit["name"], "path": "kit"},
+        "files": files,
     }
     with open(os.path.join(out, "payload.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)

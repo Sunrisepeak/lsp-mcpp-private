@@ -76,14 +76,18 @@ void copy_tree(const std::string& from, const std::string& to) {
 struct Expansion {
     std::string workspace;
     std::string runnerDirectory;
+    std::string payload;   // usable plan W9.4: the --payload this runner itself was given, if any
 };
 
 // "{exe}" is the executable suffix; "{env:NAME|fallback}" is a variable or the fallback;
-// "{workspace}" is the fixture's scratch copy; "{runner-dir}" is where this program lives.
+// "{workspace}" is the fixture's scratch copy; "{runner-dir}" is where this program lives;
+// "{payload}" is the runner's own --payload (usable plan W9.4's payload-corrupt fixture copies
+// and mutates it, then points server-arguments' own --payload at the mutated copy).
 std::string expand(std::string word, const Expansion& expansion = {}) {
     word = base::replace_all(word, "{exe}", lspmcpp::os::EXECUTABLE_SUFFIX);
     word = base::replace_all(word, "{workspace}", expansion.workspace);
     word = base::replace_all(word, "{runner-dir}", expansion.runnerDirectory);
+    word = base::replace_all(word, "{payload}", expansion.payload);
     for (std::size_t at { word.find("{env:") }; at != std::string::npos; at = word.find("{env:", at)) {
         const std::size_t close { word.find('}', at) };
         if (close == std::string::npos) break;
@@ -467,9 +471,11 @@ public:
         // A check may bring its own unsaved buffer.
         if (auto text = check.find("text"); text != check.end()) open(file, text->get<std::string>());
         if (kind == "status") {
+            // usable plan W9.4: error is as settled a state as ready or degraded (a corrupt
+            // payload, for instance, does not become anything else once reported).
             const bool ok { client_.wait_for([&] {
                 const std::string state { state_of(client_.status) };
-                return state == "ready" || state == "degraded";
+                return state == "ready" || state == "degraded" || state == "error";
             }, timeout_) };
             std::string detail { lsp::dump(client_.status) };
             bool matches { ok };
@@ -477,6 +483,10 @@ public:
             if (auto profile = check.find("profile-kind"); profile != check.end()) matches = matches && client_.status["profile"].value("kind", std::string {}) == profile->get<std::string>();
             if (auto state = check.find("state"); state != check.end()) matches = matches && state_of(client_.status) == state->get<std::string>();
             if (auto level = check.find("level"); level != check.end()) matches = matches && client_.status["project"].value("level", 0) == level->get<int>();
+            if (auto issueCode = check.find("issue-code"); issueCode != check.end()) {
+                matches = matches && std::ranges::any_of(client_.status.value("issues", Json::array()),
+                    [&](const Json& issue) { return issue.value("code", std::string {}) == issueCode->get<std::string>(); });
+            }
             if (auto compiler = check.find("profile-compiler"); compiler != check.end()) {
                 matches = matches && client_.status["profile"].value("compiler", std::string {}).starts_with(compiler->get<std::string>());
             }
@@ -694,7 +704,7 @@ int run(const Options& options) {
     }
     say("fixture {} in {}{}", name, workspace, alreadyPrepared ? " (prepared before)" : "");
 
-    Expansion expansion { workspace, base::parent_path(absolute(lspmcpp::platform::env::arguments().front())) };
+    Expansion expansion { workspace, base::parent_path(absolute(lspmcpp::platform::env::arguments().front())), options.payload };
     std::optional<std::vector<std::string>> prepareEnvironment;
     if (scenario.value("prepare-environment", std::string {}) == "msvc") {
         if (options.msvcEnvironment.empty()) {

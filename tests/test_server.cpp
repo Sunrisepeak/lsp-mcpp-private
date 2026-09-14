@@ -3,11 +3,16 @@ import std;
 import nlohmann.json;
 import lspmcpp.testing;
 import lspmcpp.base.error;
+import lspmcpp.base.path;
+import lspmcpp.base.sha256;
 import lspmcpp.base.text;
 import lspmcpp.base.uri;
+import lspmcpp.platform.fs;
+import lspmcpp.platform.dirs;
 import lspmcpp.index.modules;
 import lspmcpp.server.documents;
 import lspmcpp.server.router;
+import lspmcpp.server.payload;
 import lspmcpp.engine;
 import lspmcpp.engine.clangd;
 import lspmcpp.server.primer;
@@ -323,6 +328,78 @@ int main() {
 
         fake.stop(std::chrono::milliseconds { 0 });
         expect(!fake.running());
+    };
+
+    "payload integrity checks size and sha256, and caches the hash"_test = [] {
+        // usable plan W9.4.
+        namespace fs = lspmcpp::platform::fs;
+        const std::string root { lspmcpp::base::join_path(lspmcpp::platform::dirs::temp_directory(),
+            std::format("lsp-mcpp-test-payload-{}", std::chrono::steady_clock::now().time_since_epoch().count())) };
+        (void)fs::create_directories(root);
+        const std::string clangdPath { lspmcpp::base::join_path(root, "clangd") };
+        const std::string kitJsonPath { lspmcpp::base::join_path(root, "kit.json") };
+        const std::string content { "pretend-clangd-bytes" };
+        const std::string kitContent { "{\"name\":\"k\"}" };
+        (void)fs::write_file(clangdPath, content);
+        (void)fs::write_file(kitJsonPath, kitContent);
+        const std::string cacheFile { lspmcpp::base::join_path(root, "cache.json") };
+
+        srv::PayloadPaths payload;
+        payload.directory = root;
+        payload.files.emplace("clangd", srv::PayloadFileIntegrity { content.size(), lspmcpp::base::sha256_hex(content) });
+        payload.files.emplace("kit.json", srv::PayloadFileIntegrity { kitContent.size(), lspmcpp::base::sha256_hex(kitContent) });
+
+        expect(srv::verify_payload_integrity(payload, cacheFile).empty()) << "both files match their manifest entry";
+        expect(fs::is_regular_file(cacheFile)) << "a hash was computed and cached";
+
+        // A no-op payload.files: nothing to check, regardless of what is on disk.
+        srv::PayloadPaths empty;
+        empty.directory = root;
+        expect(srv::verify_payload_integrity(empty, cacheFile).empty());
+
+        // Truncated: the size check alone catches it, no need to hash.
+        srv::PayloadPaths truncated { payload };
+        truncated.files.at("clangd").size = content.size() + 1;
+        {
+            const auto issues = srv::verify_payload_integrity(truncated, cacheFile);
+            expect(fatal(issues.size() == 1u));
+            expect(issues.front().path == "clangd" && issues.front().reason.find("expected") != std::string::npos) << issues.front().reason;
+        }
+
+        // Same size, wrong sha256 (a manifest that does not describe this file).
+        srv::PayloadPaths wrongHash { payload };
+        wrongHash.files.at("clangd").sha256 = std::string(64, '0');
+        {
+            const auto issues = srv::verify_payload_integrity(wrongHash, cacheFile);
+            expect(fatal(issues.size() == 1u));
+            expect(issues.front().path == "clangd");
+        }
+
+        // Missing entirely.
+        srv::PayloadPaths missing { payload };
+        missing.files.emplace("nonexistent", srv::PayloadFileIntegrity { 1, "x" });
+        {
+            const auto issues = srv::verify_payload_integrity(missing, cacheFile);
+            expect(fatal(issues.size() == 1u));
+            expect(issues.front().path == "nonexistent" && issues.front().reason == "is missing");
+        }
+
+        // The cache is trusted while size and modification time have not changed: tampering the
+        // cached hash for an unmodified file (same stamp) changes the verdict, proving the second
+        // call reused it instead of re-hashing the untouched file.
+        expect(srv::verify_payload_integrity(payload, cacheFile).empty());
+        auto tampered = fs::read_file(cacheFile);
+        expect(fatal(tampered.has_value()));
+        Json cacheJson = Json::parse(*tampered);
+        cacheJson[clangdPath]["sha256"] = std::string(64, 'f');
+        (void)fs::write_file(cacheFile, cacheJson.dump());
+        {
+            const auto issues = srv::verify_payload_integrity(payload, cacheFile);
+            expect(fatal(issues.size() == 1u)) << "the tampered cache entry was trusted, not recomputed";
+            expect(issues.front().path == "clangd");
+        }
+
+        fs::remove_all(root);
     };
 
     return report();
