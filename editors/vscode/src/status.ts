@@ -35,6 +35,8 @@ export interface CxxModulesStatus {
     engine: { name: 'clangd'; version: string };
     progress?: { done: number; total: number };
     issues?: ModuleIssue[];
+    // Facts worth showing that reduce no feature, e.g. a Visual Studio without the std module (S3 4).
+    notices?: ModuleIssue[];
 }
 
 const SHOW_LOGS: vscode.Command = { title: 'Show Logs', command: 'lspMcpp.showLogs' };
@@ -141,6 +143,9 @@ export class StatusController implements vscode.Disposable {
         const issues = status.issues ?? [];
         if ((status.state === 'degraded' || status.state === 'error') && issues.length > 0) {
             details.push(issues[0].message);
+        } else if (status.notices && status.notices.length > 0) {
+            // Shown in the item's hover only: a notice changes neither the state nor the severity.
+            details.push(status.notices[0].message);
         }
         this.item.detail = details.join(' · ');
         this.item.busy = BUSY_STATES.includes(status.state);

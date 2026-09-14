@@ -343,6 +343,26 @@ int main() {
         fs::remove_all(root);
     };
 
+    "a Visual Studio without the std module is named in a notice"_test = [] {
+        const std::string root { make_root("visual-studio") };
+        lspmcpp::toolchain::ToolchainFacts facts;
+        facts.toolchain.family = s::Family::msvc;
+        facts.toolchain.version = "19.29.30133";
+        facts.msvc = lspmcpp::toolchain::MsvcEnvironment { b::join_path(root, "MSVC/14.29.30133"), "14.29.30133", "", "" };
+        facts.toolchain.stdlib = s::Stdlib { "msvc-stl", "14.29.30133", "" };
+        const auto notice = p::visual_studio_notice(facts);
+        expect(fatal(notice.has_value()));
+        expect(notice->code == "msvc-without-std-module" && notice->message.contains("14.29.30133")) << notice->message;
+
+        write(root, "MSVC/14.44.35207/modules/modules.json", R"({"version": 1, "revision": 0, "library": "microsoft/STL", "module-sources": ["std.ixx"]})");
+        facts.msvc->toolsVersion = "14.44.35207";
+        facts.toolchain.stdlib = s::Stdlib { "msvc-stl", "14.44.35207", b::join_path(root, "MSVC/14.44.35207/modules/modules.json") };
+        expect(!p::visual_studio_notice(facts).has_value()) << "a toolset with the std module is used, not explained";
+        facts.msvc.reset();
+        expect(!p::visual_studio_notice(facts).has_value()) << "no Visual Studio, nothing to say";
+        fs::remove_all(root);
+    };
+
     "workspace keys are stable and distinct"_test = [] {
         expect(p::workspace_key("/home/u/project") == p::workspace_key("/home/u/project/"));
         expect(p::workspace_key("/home/u/project") != p::workspace_key("/home/u/project2"));

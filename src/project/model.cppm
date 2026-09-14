@@ -52,6 +52,9 @@ struct LoadOptions {
 };
 
 ProjectModel load_project(std::string_view root, const LoadOptions& options);
+// usable plan W2.3: a Visual Studio whose toolset has no std module is not used for a workspace
+// without a build system, and the status says why as a notice, not an issue: nothing is reduced.
+std::optional<ModelIssue> visual_studio_notice(const toolchain::ToolchainFacts& facts);
 // A stable directory name for a workspace root.
 std::string workspace_key(std::string_view root);
 

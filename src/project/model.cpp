@@ -43,6 +43,17 @@ bool usable_for_semantics(const toolchain::ToolchainFacts& facts) {
         && platform::fs::is_regular_file(facts.toolchain.stdlib->moduleMetadata);
 }
 
+} // namespace
+
+std::optional<ModelIssue> visual_studio_notice(const toolchain::ToolchainFacts& facts) {
+    if (!facts.msvc || usable_for_semantics(facts)) return std::nullopt;
+    return ModelIssue { "msvc-without-std-module",
+                        std::format("Visual Studio's MSVC {} has no std module (MSVC 14.38 and newer have one), so its semantics are not used",
+                                    facts.msvc->toolsVersion) };
+}
+
+namespace {
+
 void set_profile(ProjectModel& model, const spec::Kit* kit) {
     for (const auto& set : model.database.sets) {
         const auto it = model.facts.find(set.toolchain);
@@ -188,10 +199,12 @@ ProjectModel load_project(std::string_view rootInput, const LoadOptions& options
                 if constexpr (lspmcpp::os::FAMILY == lspmcpp::os::Family::windows) {
                     for (const auto& candidate : candidates) {
                         if (candidate.origin != "visual-studio" || candidate.family != spec::Family::msvc) continue;
-                        if (auto facts = prober(candidate.driver, std::vector<std::string> {}); facts && usable_for_semantics(*facts)) {
+                        auto facts = prober(candidate.driver, std::vector<std::string> {});
+                        if (facts && usable_for_semantics(*facts)) {
                             infer.facts = std::move(*facts);
                             break;
                         }
+                        if (auto notice = facts ? visual_studio_notice(*facts) : std::nullopt) model.notices.push_back(std::move(*notice));
                     }
                 }
                 for (const auto& candidate : candidates) {
