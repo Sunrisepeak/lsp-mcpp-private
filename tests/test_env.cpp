@@ -18,6 +18,16 @@ int main() {
         expect(!env::get("LSPMCPP_SURELY_UNSET_VARIABLE").has_value());
     };
 
+    "a value is reported as it was set"_test = [] {
+        if constexpr (lspmcpp::os::FAMILY == lspmcpp::os::Family::windows) {
+            const auto interpreter = env::get("ComSpec");
+            expect(fatal(interpreter.has_value()));
+            expect(interpreter->contains('\\') && !interpreter->contains('/')) << *interpreter;
+        } else {
+            expect(env::get("PATH").value_or("").contains('/'));
+        }
+    };
+
     "a system executable is found on PATH"_test = [] {
         if constexpr (lspmcpp::os::FAMILY == lspmcpp::os::Family::windows) {
             const auto found = env::find_executable("cmd");

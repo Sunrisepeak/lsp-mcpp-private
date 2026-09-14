@@ -146,6 +146,18 @@ int main() {
         expect(result->output == "from-parent") << result->output;
     };
 
+    // A value is reported as it was set, backslashes included: a program that
+    // starts the command interpreter from %ComSpec% received a forward-slashed
+    // name, which the interpreter reads as switches.
+    "an environment value arrives unaltered"_test = [&] {
+        auto environment = platform::env::variables();
+        environment.push_back("LSPMCPP_TEST_PATHS=C:\\dir\\sub;\\\\host\\share\\x;a\"b");
+        auto result = platform::run({ .program = self, .arguments = { "--env", "LSPMCPP_TEST_PATHS" },
+                                      .environment = environment }, std::chrono::seconds { 60 });
+        expect(fatal(result.has_value()));
+        expect(result->output == "C:\\dir\\sub;\\\\host\\share\\x;a\"b") << result->output;
+    };
+
     "work directory is where relative names resolve"_test = [&] {
         const std::string directory { base::join_path(platform::dirs::temp_directory(),
             std::format("lsp-mcpp-test-process-{}", std::chrono::steady_clock::now().time_since_epoch().count())) };
