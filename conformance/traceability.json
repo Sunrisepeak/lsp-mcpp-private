@@ -660,6 +660,9 @@
   {
    "script": "src/project/mcpp.cpp",
    "contains": "protocol->kinds.contains(\"mcpp.build-database\")"
+  },
+  {
+   "check": "mcpp-watch/S1"
   }
  ],
  "S2-3.4-11": [
@@ -695,6 +698,12 @@
   },
   {
    "check": "mcpp-emit-package-std/W1"
+  },
+  {
+   "check": "mcpp-llvm/W1"
+  },
+  {
+   "check": "mcpp-gcc/W1"
   }
  ],
  "S2-4-5": [
@@ -802,6 +811,12 @@
   {
    "script": "src/server/workspace.cpp",
    "contains": "void register_model_watch() {"
+  },
+  {
+   "check": "mcpp-watch/W1-new-module"
+  },
+  {
+   "check": "mcpp-watch/W2-manifest-broken"
   }
  ],
  "S2-5-2": [
@@ -819,6 +834,15 @@
   },
   {
    "check": "mcpp-emit-watch/S4-fresh"
+  },
+  {
+   "check": "mcpp-watch/S3-stale"
+  },
+  {
+   "check": "mcpp-watch/C2-still"
+  },
+  {
+   "check": "mcpp-watch/S4-fresh"
   }
  ],
  "S3-3-1": [

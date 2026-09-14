@@ -501,7 +501,7 @@
 
 ## 10. 执行记录
 
-交付于 Sunrisepeak/lsp-mcpp-private#1（分支 `feat/lsp-mcpp-v1`），2026-09-14。按目标“先用模拟数据保证全部实现”，mcpp 一侧的 `emit build-database` 由 `lsp-mcpp-mock-mcpp` 按 mcpp-community/mcpp#636 的契约模拟；其余工作项都在 lsp-mcpp 中实现，由 CI 在三个主机上验证。
+交付于 Sunrisepeak/lsp-mcpp-private#1（分支 `feat/lsp-mcpp-v1`），2026-09-14。按目标“先用模拟数据保证全部实现”，mcpp 一侧的 `emit build-database` 由 `lsp-mcpp-mock-mcpp` 按 mcpp-community/mcpp#636 的契约模拟；其余工作项都在 lsp-mcpp 中实现，由 CI 在三个主机上验证。2026-09-15 mcpp 2026.9.15.1 发布该命令后，改用真实 mcpp 做闭环验证（第 10.6 节）。
 
 ### 10.1 工作项结果
 
@@ -509,7 +509,7 @@
 |---|---|---|
 | W1 | 完成：两种标准库清单形状；显式传入 Visual Studio 工具集与 Windows SDK；cl 模式的 `.cppm` 副本；MSVC STL 上下文关闭对齐分配；模块构建失败时降级（`module-build-failed`）；交互请求 10 秒应答 | windows-2022 上服务端不带开发者环境运行：`cmake-msvc`、`cmake-msvc-std`、`cmake-clangxx-msvc`、`cmake-clang-cl`、`compdb-clangxx-msvc-std`、`compdb-clang-cl-std`、`mcpp-msvc`、`mcpp-llvm-msvc` |
 | W2 | 完成；工具集没有 `std` 模块时状态带提示 `msvc-without-std-module`，不降级 | `inferred-msvc`；单元测试 |
-| W3 | 消费端与 S2 0.2 单文档模式完成，生产方由模拟数据验证；模拟数据按 mcpp 在 #636 的答复输出等级 2、按包划分集合，服务端用 S1 库补全到等级 3 | `mcpp-emit`（含 `hello:test` 跨集合导入）、`mcpp-emit-package-std`（等级 3，工作区不变）、`mcpp-emit-broken`、`mcpp-emit-watch`；`validate.py` 的 mcpp 契约检查 |
+| W3 | 完成：mcpp 2026.9.15.1 提供 `emit build-database`（mcpp#639），输出等级 2、按包划分集合，服务端用 S1 库补全到等级 3；三个主机上的真实 mcpp 夹具断言等级 3 与工作区不变，mcpp 的输出逐主机通过 S1、S2 与 #636 契约校验（第 10.6 节）。模拟夹具只保留真实 mcpp 无法按需复现的情形，数据录自真实输出 | `mcpp-gcc`、`mcpp-llvm`、`mcpp-msvc`、`mcpp-llvm-msvc`、`mcpp-watch`、`multi-root`；`mcpp-emit`、`mcpp-emit-package-std`、`mcpp-emit-broken`、`mcpp-emit-unavailable`、`mcpp-emit-watch`；conformance 任务的 mcpp 输出校验步骤 |
 | W4 | 完成：CMake 4.4.2 的开关 UUID 表，私有配置构建 `build_database.json` | `cmake-clang-bdb`（Linux）、`cmake-msvc-bdb`（Windows） |
 | W5 | 完成，三个干净机器任务每次提交运行 | Linux：`ubuntu:24.04` 容器中的 `inferred-discover` 与容器中的端到端测试；Windows：隐藏 Visual Studio 后同样两项；macOS：移走 Command Line Tools 与 Xcode 后的 `inferred-no-sdk` 与“只询问一次”的端到端测试 |
 | W6 | 完成：VSIX 形态、界面计数、工作区不变、冲突处理 | 三个主机的 VS Code 端到端任务 |
@@ -527,12 +527,12 @@
 | W3 方案第 1 条：`database` 是完整的 S1 等级 3 文档 | mcpp 只输出等级 2，不写 `ide.options`；服务端加载时用 S1 库 `lspmcpp.spec.options` 把参数结构化为 options，模型达到等级 3。推导出的 options 标为派生，只是参数的重述，引擎仍编译 `arguments` | mcpp 维护者在 #636 的答复：等级 3 交给 S1 库，结构化规则只维护一份 |
 | W3 隐含的集合划分：按构建目标，`visible-sets` 只列依赖 | 每个包一个集合，另有 `<包>:test` 与 `mcpp:std`；每个集合的 `visible-sets` 列出其余所有集合 | 同上：mcpp 在一张扁平的模块图上解析 import，写得更窄就描述了一条构建并不执行的规则 |
 | W1.3：cl.exe 与 clang-cl 的命令以 clangd 的 cl 驱动模式交给引擎 | MSVC 家族的命令统一翻译为 GNU 模式的 clang++ 命令，显式传入工具集、SDK 与 `-fms-compatibility-version` | cl 模式下 `/clang:` 参数排在输入之后，`.ixx` 无法标为模块单元；clangd 的 CommandMangler 还会丢掉未知的 `-x`（E7） |
-| W3 退出标准：使用 mcpp 正式发布的版本 | 生产方由 `lsp-mcpp-mock-mcpp` 模拟；`mcpp-gcc`、`mcpp-llvm`、`mcpp-msvc`、`mcpp-llvm-msvc` 仍经真实 mcpp 的 `--configure-only` 得到等级 2，状态带提示 `producer-writes-project` | 本轮目标要求先用模拟数据；mcpp#636 尚未实现 |
+| W3 退出标准：使用 mcpp 正式发布的版本 | 起初生产方由 `lsp-mcpp-mock-mcpp` 模拟，`mcpp-gcc`、`mcpp-llvm`、`mcpp-msvc`、`mcpp-llvm-msvc` 经真实 mcpp 的 `--configure-only` 得到等级 2。2026-09-15 起 CI 固定 mcpp 2026.9.15.1，这一偏离已消除 | 当时目标要求先用模拟数据，mcpp#636 尚未实现 |
 | W5.1：Linux 干净机器全部在 `ubuntu:24.04` 容器中运行 | 一致性夹具在 `ubuntu:24.04`；端到端测试在 `node:22-bookworm-slim`，同样不带编译器（任务中断言） | 端到端测试需要 Node；apt 安装图形库时 shared-mime-info 的 `update-mime-database` 逐个文件同步写盘，容器内曾卡满整个任务时限，关闭同步后 15 秒装完 |
 | W7：后台预构建 `std`，按拓扑顺序预构建被导入最多的模块 | 每个模块一个 `import M;` 准备单元，导入就绪即打开，等待链最长的先开，准备好的单元保持打开到空闲；引擎数据库写出模块提示，跳过 clangd 对整个数据库的串行扫描；clangd 缓存中已有的模块不再准备；准备单元为每个等待模块的文件保留一个核心，另外总为请求保留一个 | 读 clangd 23.1 源码并实测：全局扫描每个工作线程数秒；已构建的模块只在有打开文件持有时保留；准备单元与打开的文件、编辑与补全共用 clangd 的工作线程，温启动时只会争抢（第 10.4 节） |
 | W7：同一语义配置跨工作区共享 `std` 的 BMI | 暂缓，记入 issue #2 | clangd 的持久化缓存以模块源路径与“工作目录 + 完整命令”的哈希为键，`std` 条目继承工程参数，只有参数完全相同的工程才能命中 |
 | W7.3：CI 温启动门槛 2 秒 | 5 秒，三个主机相同；冷启动仍为 15 秒 | CI 机器（3–4 个虚拟核心）nightly 三次温启动中位数 Linux 1.96 秒、macOS 1.85 秒、Windows 2.88 秒；重建 `std` 这一严重退化由 SC4 断言拦截 |
-| W8：`std` 由 mcpp 以翻译单元输出（W3 之后） | 过渡方案：服务端沿编译数据库中的 `std.pcm` 找到 `build.ninja` 与 mcpp std 构建缓存中的 `std-module.json`（schema 1），把记录的 `std`、`std.compat` 源文件与命令作为单元加入 | 方案要求实施前确认可行性；本地确认 mcpp 2026.9.14.1 写出该记录 |
+| W8：`std` 由 mcpp 以翻译单元输出（W3 之后） | 过渡方案：服务端沿编译数据库中的 `std.pcm` 找到 `build.ninja` 与 mcpp std 构建缓存中的 `std-module.json`（schema 1），把记录的 `std`、`std.compat` 源文件与命令作为单元加入 | 方案要求实施前确认可行性；本地确认 mcpp 2026.9.14.1 写出该记录。mcpp 2026.9.15.1 起这些单元由 mcpp 在 `mcpp:std` 中给出，过渡路径只在回退到 `--configure-only` 时使用，例如工程的 `.xlings.json` 固定了更早的 mcpp |
 | 第 7 节：夹具默认检查超时从 180 秒降到 60 秒 | CI 仍传 `--timeout 180`，需要更短时限的检查在场景中写 `"timeout"` | 超时只影响失败时的等待；Windows 上构建 `std` 的夹具首个检查接近 20 秒 |
 | 第 9 节第 9 条：W1 完成后向 LLVM 报告 `align_val_t` 回归 | 不再需要：上游已有 llvm/llvm-project#218152，由 #219151 修复并随 clang 23.1.1 发布；CI 探测确认 23.1.0 出错、23.1.1 与 22.1.8 通过（run 34843950329），详细记录在 mcpp-community/mcpp#640（`upstream-bug`）。负载升级到 23.1.1 后，关闭对齐分配的绕过只保留给 23.1.0（issue #2）。短期决定走路线 1：负载继续使用 clangd/clangd 发布的 23.1.0 并保留绕过，因为 clangd/clangd 没有 23.1.1 发布，LLVM 官方 23.1.1 的 Linux clangd 需要 GLIBC 2.34 | 提交前检索上游时发现已报告并修复 |
 
@@ -578,8 +578,31 @@
 | openkal-musl | #34：Windows 上 mmap 模拟按整页分配（K14：musl mallocng 使用单独映射的大块内存直到页尾，按字节分配时越界写入） | 0.13.5 |
 | openkal-llvm-runtime | #21：带上 openkal-musl 0.13.5 | 0.9.6 |
 | mcpp-index | #424、#425：收录上述两个版本 | — |
-| mcpp | #636：`emit build-database` 功能需求，尚未实现；维护者答复三点（只输出等级 2、`visible-sets` 列出其余所有集合、按包划分集合），issue 正文与模拟数据已按答复修订 | — |
+| mcpp | #636：`emit build-database` 功能需求；维护者答复三点（只输出等级 2、`visible-sets` 列出其余所有集合、按包划分集合），issue 正文与模拟数据按答复修订；由 mcpp 在 #639 实现 | 2026.9.15.1 |
 | mcpp | #640：clangd 23.1.0 在 MSVC STL 上的 `align_val_t` 回归，标签 `upstream-bug` | — |
 
 此前各轮的上游改动（K1–K13）见设计文档第 12.9 节；只记录、未修复的事项与暂缓工作集中在 issue #2。
+
+### 10.6 真实 mcpp 闭环验证（2026-09-15）
+
+mcpp 在 mcpp-community/mcpp#639 中实现 `emit build-database`，随 2026.9.15.1 发布。CI、nightly 与发布流程的 `MCPP_VERSION` 改为 2026.9.15.1，生产方与消费方两侧都用真实 mcpp 验证。
+
+| 验证 | 内容 |
+|---|---|
+| 生产方输出 | conformance 任务在每个主机上，对该主机列表中的真实 mcpp 夹具（`mcpp-gcc`、`mcpp-llvm`、`mcpp-msvc`、`mcpp-llvm-msvc`、`mcpp-watch`）运行 `mcpp emit build-database --format json`，把信封交给 `specs/tools/validate.py`：S2 信封与 S1 Schema、S1 语义规则、#636 契约（等级 2、按包划分集合、每个集合看见其余所有集合、标准库单元在 `mcpp:std`、`<包>:test` 为测试集合） |
+| 消费方 | `mcpp-gcc`、`mcpp-llvm`、`mcpp-msvc`、`mcpp-llvm-msvc` 断言等级 3、测试文件经 `hello:test` 跨集合跳转、工作区不变；`multi-root` 中的 mcpp 根断言等级 3 |
+| 监视 | 新夹具 `mcpp-watch`：新增模块接口触发重新加载；写坏 `mcpp.toml` 后保留上次的模型，状态为 degraded、`model-stale`，消息带 mcpp 的 `MCPP_BUILD_DATABASE_PLAN_FAILED`；修复后恢复 ready。三个主机都运行，Linux 另以轮询模式运行 |
+| 模拟数据 | `mcpp-emit`、`mcpp-emit-package-std`、`mcpp-emit-watch` 的 `mcpp-mock.json` 改为录制 mcpp 2026.9.15.1 的输出（路径写成 `${root}`、`${env:HOME}`）。模拟夹具只保留真实 mcpp 无法按需复现的情形：失败、答案变化、依赖包提供 `std` 的路径，以及工程固定的 mcpp 未安装 |
+| 自举 | 本地 `self-lsp-mcpp`：等级 3，11 个集合，`std` 为 openkal-llvm-runtime 提供的 `mcpp:std` 单元。mcpp 2026.9.15.1 对 lsp-mcpp 仓库自身的输出也通过上述校验 |
+
+闭环中发现并处理的问题：
+
+| 问题 | 处理 |
+|---|---|
+| mcpp 给标准库单元写的 `local-arguments` 带有源文件与输出（`--precompile <源文件> -o <BMI>`），S1 库把源文件放进了 `raw-semantic-arguments` | `complete_options` 从 `local-arguments` 中去掉输入；单元测试按 mcpp 的写法覆盖 |
+| 工具链的 `stdlib` 不带 `module-metadata` 时（mcpp 以 `mcpp:std` 单元提供 `std`），导出的 S1 文档写出空字符串 | 为空时不写 |
+| 依赖包的 `std` 单元的工作目录是 mcpp 的 std 缓存目录，在从未构建过的机器上不存在 | 实测不影响：`mcpp-emit-package-std` 录制的目录在 CI 机器上不存在，本地以不存在的目录复验通过 |
+| 工程的 `.xlings.json` 固定 mcpp 版本时，xlings 在工程目录中运行那个版本。mcpp 仓库自身固定 2026.9.14.3（`self-mcpp` 所用提交固定 2026.9.14.1），在编辑器中打开它仍走 `--configure-only` 回退；固定的版本未安装时 xlings 拒绝运行，状态此前只显示 `mcpp did not produce compile_commands.json` | 状态改为 `mcpp could not describe the project: <xlings 或 mcpp 自己的说明>`（新夹具 `mcpp-emit-unavailable`）；`producer-writes-project` 只在回退确实写入工程时给出，并写明 mcpp 的版本与“2026.9.15.1 起提供该命令”；nightly 的 `self-mcpp` 先安装该提交固定的 mcpp |
+
+测量（开发机）：`emit build-database` 在示例工程上 0.55–0.60 秒，在 lsp-mcpp 仓库（11 个集合、1747 个单元）上 1.6 秒，与 `--configure-only` 同一量级；运行前后工程目录的文件清单与内容哈希不变。
 

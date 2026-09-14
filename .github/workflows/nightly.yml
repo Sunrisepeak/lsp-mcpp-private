@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 env:
-  MCPP_VERSION: 2026.9.14.1
+  MCPP_VERSION: 2026.9.15.1
   LLVM_VERSION: 22.1.8
   XLINGS_VERSION: v2026.8.17.2
   XLINGS_NON_INTERACTIVE: '1'
@@ -95,7 +95,7 @@ jobs:
           set -euo pipefail
           mcpp --version | tee -a "$GITHUB_STEP_SUMMARY"
           failed=''
-          for fixture in mcpp-gcc mcpp-llvm; do
+          for fixture in mcpp-gcc mcpp-llvm mcpp-watch; do
             echo "::group::$fixture"
             if ! tools/lsp-mcpp-conformance run --server payload/bin/lsp-mcpp --payload payload --fixture "conformance/fixtures/$fixture" --timeout 180; then
               failed="$failed $fixture"
@@ -132,6 +132,16 @@ jobs:
       - name: GCC 16, which the mcpp repository builds with
         if: matrix.fixture == 'self-mcpp'
         run: mcpp toolchain install gcc 16.1.0
+      # The mcpp repository's .xlings.json asks for the mcpp it is built with, and xlings runs that one
+      # inside it, refusing to when it is not installed. A developer sets the repository up with
+      # `xlings install`; here the version it names is installed next to MCPP_VERSION, which stays the default.
+      - name: The mcpp the mcpp repository asks for
+        if: matrix.fixture == 'self-mcpp'
+        run: |
+          set -euo pipefail
+          xlings install mcpp@2026.9.14.1 -y -g
+          xlings use mcpp "$MCPP_VERSION"
+          mcpp --version
       - uses: actions/download-artifact@v4
         with:
           name: payload-${{ matrix.platform }}

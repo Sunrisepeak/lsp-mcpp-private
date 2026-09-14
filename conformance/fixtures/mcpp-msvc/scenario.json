@@ -1,6 +1,6 @@
 {
   "name": "mcpp-msvc",
-  "description": "An mcpp package built by the machine's Visual Studio (msvc@system) with import std: cl.exe arguments translated, the MSVC STL std module injected.",
+  "description": "An mcpp package built by the machine's Visual Studio (msvc@system) with import std, described by mcpp's own `emit build-database` (mcpp 2026.9.15.1, mcpp-community/mcpp#636), a level 2 database that the S1 library completes to level 3: cl.exe arguments are translated, the MSVC STL std module injected, a test imports the package's module across sets, and nothing is written into the project.",
   "checks": [
     {
       "id": "S1",
@@ -8,6 +8,7 @@
       "source": "mcpp",
       "profile-kind": "build-toolchain",
       "profile-compiler": "msvc",
+      "level": 3,
       "state": "ready"
     },
     {
@@ -105,6 +106,20 @@
         "src/main.cpp",
         "src/greet/greet.cppm"
       ]
+    },
+    {
+      "id": "C10-test",
+      "kind": "definition",
+      "file": "tests/greet_test.cpp",
+      "at": [
+        4,
+        20
+      ],
+      "expect": "src/greet/greet.cppm"
+    },
+    {
+      "id": "W1",
+      "kind": "workspace-unchanged"
     }
   ]
 }

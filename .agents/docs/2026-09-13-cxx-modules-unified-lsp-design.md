@@ -75,7 +75,7 @@ lsp-mcpp 要让 C++ 模块代码在任何编译器、任何平台、甚至没有
 |---|---|---|---|
 | 无感 | 有编译器的工程首次打开时的弹窗数 | 0 | VS Code 端到端测试在三个平台断言扩展发起的通知、面板、页面为 0 |
 | 无感 | 常驻状态栏项、自动打开的面板或页面 | 0 | 同上；语言状态项恰好一个 |
-| 无感 | 写入用户工程目录的文件数 | 0，冲突处理经同意除外 | 服务端只写缓存目录。mcpp 的 `emit build-database`（mcpp#636，暂以模拟生产方验证）与 CMake、编译数据库来源的夹具断言工作区不变；尚不支持该命令的 mcpp 版本由 `--configure-only` 写入 `compile_commands.json` 与 `target/`，状态中给出提示 `producer-writes-project` |
+| 无感 | 写入用户工程目录的文件数 | 0，冲突处理经同意除外 | 服务端只写缓存目录。mcpp 2026.9.15.1 的 `emit build-database`（mcpp#636、#639）在三个主机的真实 mcpp 夹具上、CMake 与编译数据库来源的夹具上都断言工作区不变；更早的 mcpp 版本（包括工程 `.xlings.json` 固定的旧版本）由 `--configure-only` 写入 `compile_commands.json` 与 `target/`，状态中给出提示 `producer-writes-project` |
 | 无感 | 必需设置项 | 0 | 端到端测试不做任何设置 |
 | 无感 | 首次打开到可跳转，示例工程冷启动 | ≤ 5 秒 | 开发机（i9-13900K）2.1–2.5 秒，限定 2 至 32 个核心结果相近；CI 机器三次中位数 Linux 5.5 秒、macOS 4.4 秒、Windows 8.5 秒（4、3、4 个虚拟核心）。171 个模块的 mcpp 仓库首次跨模块跳转在开发机上 25–26 秒、CI 机器上 125 秒：首次跳转要等所导入的整个模块闭包构建完成，这个指标不适用于大工程的冷启动 |
 | 无感 | 温启动到可跳转 | ≤ 1 秒 | 开发机 0.8 秒；CI 机器三次中位数 Linux 2.0 秒、macOS 1.9 秒、Windows 2.9 秒；mcpp 仓库在开发机上 4.9 秒。剩余耗时主要在 clangd 为每个翻译单元串行扫描并校验所导入模块的缓存 BMI，服务端无法绕过（第 15.1 节） |
@@ -194,7 +194,7 @@ lsp-mcpp 采用的做法：
 | SC3 | 有编译器与构建系统的工程，首次打开时弹窗数、常驻状态栏项、自动打开的面板都为零 | 端到端测试断言 |
 | SC4 | 温启动不重新构建 std 模块 | clangd 日志与计时 |
 | SC5 | 未保存的模块接口修改在防抖间隔后反映到导入方 | 探针 C7 |
-| SC6 | mcpp 输出等级 2 的 S1 文档，经 S1 库补全为等级 3；CMake 构建数据库经适配达到等级 2 | Schema 校验 + 一致性测试 |
+| SC6 | mcpp 输出等级 2 的 S1 文档，经 S1 库补全为等级 3；CMake 构建数据库经适配达到等级 2 | Schema 校验 + 一致性测试；mcpp 2026.9.15.1 的真实输出在 CI 中逐主机校验并由夹具消费 |
 | SC7 | lsp-mcpp 仓库与 mcpp 仓库在 VS Code 中可完整导航 | 自举与大工程基准 |
 | SC8 | 服务端全部平台的二进制由一台 Linux 主机交叉构建，并在各平台原生通过测试 | CI |
 
@@ -749,7 +749,7 @@ mcpp emit build-database [--toolchain SPEC] [--target TRIPLE] [--format json|jso
 
 `--format jsonl` 实现 S2 发现协议。
 
-上表按 mcpp 维护者在 mcpp-community/mcpp#636 中的答复（2026-09-14）修订：mcpp 只输出等级 2，等级 3 交给 S1 库（`lspmcpp.spec.options`，推导出的 options 是参数的重述，引擎仍编译 `arguments`）；mcpp 在一张扁平的模块图上解析 import，`visible-sets` 写得比这更窄就描述了一条构建并不执行的规则；集合按包划分。S1 第 7、9、11.1 节为此增加了说明性文字。单文档模式（`--format json`）见 S2 0.2 与第一版可用方案 W3。
+上表按 mcpp 维护者在 mcpp-community/mcpp#636 中的答复（2026-09-14）修订：mcpp 只输出等级 2，等级 3 交给 S1 库（`lspmcpp.spec.options`，推导出的 options 是参数的重述，引擎仍编译 `arguments`）；mcpp 在一张扁平的模块图上解析 import，`visible-sets` 写得比这更窄就描述了一条构建并不执行的规则；集合按包划分。S1 第 7、9、11.1 节为此增加了说明性文字。单文档模式（`--format json`）见 S2 0.2 与第一版可用方案 W3。mcpp 在 mcpp-community/mcpp#639 中实现了本节的命令，随 2026.9.15.1 发布；闭环验证记录在可用方案第 10.6 节。
 
 ### 14.3 工具链探测
 

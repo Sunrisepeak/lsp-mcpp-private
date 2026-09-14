@@ -2,6 +2,7 @@
 """Validates the specifications' machine-readable parts (specs/README.md: "CI validates every example against its schema").
 
     python3 specs/tools/validate.py            # from the repository root; needs the jsonschema package
+    python3 specs/tools/validate.py ENVELOPE...  # also envelopes a real `mcpp emit build-database --format json` printed
 
 Checks: every JSON file parses and every schema is valid draft 2020-12; examples, JSON blocks in the text and the
 simulated producer data of conformance fixtures validate; semantic rules a schema cannot express; negative cases the
@@ -305,6 +306,18 @@ for mock in sorted((repository / "conformance" / "fixtures").glob("*/mcpp-mock.j
 # and so is the database of the S2 example, an mcpp.build-database envelope
 s1_semantics("s2-envelope.json", base_envelope["data"]["database"])
 mcpp_contract("s2-envelope.json", base_envelope["data"]["database"])
+# and so is what a real mcpp prints (usable plan W3): CI's conformance jobs record mcpp's envelope for each mcpp
+# fixture and pass them here, so the simulated data and the contract cannot drift from the producer
+for path in map(pathlib.Path, sys.argv[1:]):
+    envelope = load(path)
+    validate(f"S2 envelope printed by mcpp validates: {path.name}", s2, envelope)
+    check(f"mcpp {path.name}: the command succeeded", "data" in envelope and not any(d.get("severity") == "error" for d in envelope.get("diagnostics", [])))
+    if "data" not in envelope:
+        continue
+    check(f"mcpp {path.name}: the command wrote nothing into the project", "write-project" not in envelope.get("effects", []))
+    validate(f"S1 database printed by mcpp validates: {path.name}", s1, envelope["data"]["database"])
+    s1_semantics(path.name, envelope["data"]["database"])
+    mcpp_contract(path.name, envelope["data"]["database"])
 
 # 8. traceability (usable plan W10.2): every requirement keyword carries a rule identifier S<n>-<section>-<ordinal>,
 #    and conformance/traceability.json names evidence for each: a check above, a unit test, a conformance check, a

@@ -1,12 +1,13 @@
 {
   "name": "mcpp-llvm",
-  "description": "An mcpp package with LLVM 22: Clang arguments are kept, BMI arguments removed, libc++'s std module is injected.",
+  "description": "An mcpp package with LLVM 22, described by mcpp's own `emit build-database` (mcpp 2026.9.15.1, mcpp-community/mcpp#636), a level 2 database that the S1 library completes to level 3: Clang arguments are kept, BMI arguments removed, libc++'s std module comes from its manifest, a test imports the package's module across sets, and nothing is written into the project.",
   "checks": [
     {
       "id": "S1",
       "kind": "status",
       "source": "mcpp",
       "profile-kind": "build-toolchain",
+      "level": 3,
       "state": "ready"
     },
     {
@@ -104,6 +105,20 @@
         "src/main.cpp",
         "src/greet/greet.cppm"
       ]
+    },
+    {
+      "id": "C10-test",
+      "kind": "definition",
+      "file": "tests/greet_test.cpp",
+      "at": [
+        4,
+        20
+      ],
+      "expect": "src/greet/greet.cppm"
+    },
+    {
+      "id": "W1",
+      "kind": "workspace-unchanged"
     }
   ]
 }
