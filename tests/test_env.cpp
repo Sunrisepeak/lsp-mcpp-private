@@ -4,6 +4,7 @@ import lspmcpp.os;
 import lspmcpp.base.path;
 import lspmcpp.platform.env;
 import lspmcpp.platform.dirs;
+import lspmcpp.platform.fs;
 
 namespace env = lspmcpp::platform::env;
 namespace base = lspmcpp::base;
@@ -39,6 +40,23 @@ int main() {
             expect(base::is_absolute_path(*found)) << *found;
         }
         expect(!env::find_executable("lsp-mcpp-no-such-program").has_value());
+    };
+
+    "an executable is found on another environment's PATH"_test = [] {
+        const std::string first { base::join_path(lspmcpp::platform::dirs::temp_directory(),
+            std::format("lsp-mcpp-test-env-first-{}", std::chrono::steady_clock::now().time_since_epoch().count())) };
+        const std::string second { first + "-second" };
+        const std::string name { std::string { "lsp-mcpp-fake-tool" } + std::string { lspmcpp::os::EXECUTABLE_SUFFIX } };
+        (void)lspmcpp::platform::fs::create_directories(first);
+        (void)lspmcpp::platform::fs::create_directories(second);
+        (void)lspmcpp::platform::fs::write_file(base::join_path(second, name), "");
+        const std::string pathList { first + std::string { lspmcpp::os::PATH_LIST_SEPARATOR } + second };
+        const auto found = env::find_executable("lsp-mcpp-fake-tool", pathList);
+        expect(found.has_value() && base::same_path(*found, base::join_path(second, name))) << found.value_or("<none>");
+        expect(!env::find_executable("lsp-mcpp-fake-tool").has_value()) << "not on this process's PATH";
+        expect(!env::find_executable("lsp-mcpp-fake-tool", first).has_value());
+        lspmcpp::platform::fs::remove_all(first);
+        lspmcpp::platform::fs::remove_all(second);
     };
 
     "arguments include this program"_test = [] {

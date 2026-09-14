@@ -67,11 +67,11 @@ std::optional<std::string> get(std::string_view name) {
     return std::nullopt;
 }
 
-std::vector<std::string> search_path() {
+namespace {
+
+std::vector<std::string> split_path_list(std::string_view pathList) {
     std::vector<std::string> result;
-    const auto path = get("PATH");
-    if (!path) return result;
-    for (auto piece : base::split(*path, lspmcpp::os::PATH_LIST_SEPARATOR)) {
+    for (auto piece : base::split(pathList, lspmcpp::os::PATH_LIST_SEPARATOR)) {
         piece = base::trim(piece);
         if (piece.size() >= 2 && piece.front() == '"' && piece.back() == '"') piece = piece.substr(1, piece.size() - 2);
         if (piece.empty()) continue;
@@ -80,7 +80,16 @@ std::vector<std::string> search_path() {
     return result;
 }
 
-std::optional<std::string> find_executable(std::string_view name) {
+} // namespace
+
+std::vector<std::string> search_path() {
+    const auto path = get("PATH");
+    return path ? split_path_list(*path) : std::vector<std::string> {};
+}
+
+std::optional<std::string> find_executable(std::string_view name) { return find_executable(name, get("PATH").value_or("")); }
+
+std::optional<std::string> find_executable(std::string_view name, std::string_view pathList) {
     if (name.empty()) return std::nullopt;
     std::string file { name };
     const std::string_view suffix { lspmcpp::os::EXECUTABLE_SUFFIX };
@@ -90,7 +99,7 @@ std::optional<std::string> find_executable(std::string_view name) {
         return std::nullopt;
     }
     if (file.find('/') != std::string::npos || file.find('\\') != std::string::npos) return std::nullopt;
-    for (const auto& directory : search_path()) {
+    for (const auto& directory : split_path_list(pathList)) {
         if (!base::is_absolute_path(directory)) continue;
         const std::string candidate { base::join_path(directory, file) };
         if (fs::is_regular_file(candidate)) return candidate;

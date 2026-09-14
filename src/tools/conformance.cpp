@@ -125,7 +125,16 @@ bool run_prepare(const Json& command, const std::string& workspace, bool verbose
     for (const auto& word : command) argv.push_back(expand(word.get<std::string>(), expansion));
     std::string program { argv.front() };
     if (!base::is_absolute_path(program)) {
-        auto found = lspmcpp::platform::env::find_executable(program);
+        // Found where the step runs: a developer environment may put another version of a tool first.
+        std::optional<std::string> pathList;
+        if (environment) {
+            const bool caseInsensitive { lspmcpp::os::FAMILY == lspmcpp::os::Family::windows };
+            for (const auto& entry : *environment) {
+                const std::string name { entry.substr(0, entry.find('=')) };
+                if (caseInsensitive ? base::to_lower_ascii(name) == "path" : name == "PATH") pathList = entry.substr(entry.find('=') + 1);
+            }
+        }
+        auto found = pathList ? lspmcpp::platform::env::find_executable(program, *pathList) : lspmcpp::platform::env::find_executable(program);
         if (!found) {
             say("prepare: {} is not on PATH", program);
             return false;
