@@ -1,8 +1,8 @@
 name: nightly
 
 # What is too slow or too variable for every commit (usable plan W7, W8): the whole CI,
-# then three cold and warm starts per host with their medians, and the self-hosting
-# fixtures with their timings. The measure files are uploaded.
+# then three cold and warm starts per host with their medians, the self-hosting fixtures
+# with their timings, and the mcpp fixtures with the latest mcpp. The measure files are uploaded.
 on:
   schedule:
     - cron: '30 18 * * *'
@@ -66,6 +66,46 @@ jobs:
         with:
           name: nightly-timing-${{ matrix.platform }}
           path: ${{ runner.temp }}/timing-results
+
+  # usable plan 5.2: the mcpp fixtures with the newest mcpp the index has, so that a change on the
+  # producer's side shows up here before the pinned MCPP_VERSION moves.
+  mcpp-latest:
+    name: mcpp fixtures with the latest mcpp (linux-x64)
+    needs: ci
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      MCPP_VERSION: latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-mcpp
+      - name: GCC 16, which mcpp-gcc builds with
+        run: mcpp toolchain install gcc 16.1.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: payload-linux-x64
+      - name: Unpack the payload
+        run: tar -xzf payload-linux-x64.tar.gz
+      - name: The mcpp fixtures
+        run: |
+          set -euo pipefail
+          mcpp --version | tee -a "$GITHUB_STEP_SUMMARY"
+          failed=''
+          for fixture in mcpp-gcc mcpp-llvm; do
+            echo "::group::$fixture"
+            if ! tools/lsp-mcpp-conformance run --server payload/bin/lsp-mcpp --payload payload --fixture "conformance/fixtures/$fixture" --timeout 180; then
+              failed="$failed $fixture"
+            fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::failed with the latest mcpp:$failed"
+            exit 1
+          fi
 
   # The two repositories of usable plan W8 at fixed commits. lsp-mcpp is not self-hosted
   # on Windows: its build there needs --target x86_64-windows-gnu, which no editor setting
