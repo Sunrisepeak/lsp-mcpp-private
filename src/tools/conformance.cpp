@@ -224,7 +224,10 @@ private:
 public:
     std::map<std::string, Json> diagnostics;     // uri -> latest diagnostics
     std::map<std::string, int> diagnosticsCount; // uri -> publishes received
-    Json status;
+    Json status;                                 // the latest cxxModules/status, whichever root sent it
+    // usable plan W9.1: a multi-root session sends one cxxModules/status per root, each naming its
+    // own project.root; `status` alone cannot tell them apart, so every root's latest is kept too.
+    std::map<std::string, Json> statusByRoot;    // project.root (a DocumentUri) -> latest status
     std::vector<std::string> statusHistory;
     std::optional<Clock::time_point> firstReady;         // the first status in state ready
     std::optional<Clock::time_point> firstDiagnostics;   // the first diagnostics published once the server is ready or degraded
@@ -331,6 +334,7 @@ public:
                 if (!firstDiagnostics && (state == "ready" || state == "degraded")) firstDiagnostics = Clock::now();
             } else if (method == "cxxModules/status") {
                 status = message["params"];
+                statusByRoot[status.value("project", Json::object()).value("root", std::string {})] = status;
                 statusHistory.push_back(status.value("state", std::string {}));
                 if (!firstReady && statusHistory.back() == "ready") firstReady = Clock::now();
                 if (verbose_) say("  status: {}", lsp::dump(status));
@@ -471,24 +475,42 @@ public:
         // A check may bring its own unsaved buffer.
         if (auto text = check.find("text"); text != check.end()) open(file, text->get<std::string>());
         if (kind == "status") {
+            // usable plan W9.1: "folder" selects one root's own status in a multi-root fixture
+            // (relative to the fixture root, like a check's own "file"); absent, this checks
+            // whatever cxxModules/status arrived most recently, the way a single-root fixture,
+            // which only ever gets the one root's, always has.
+            const auto folder = check.find("folder");
+            const std::string rootUri { folder != check.end() ? uri(folder->get<std::string>()) : std::string {} };
+            auto current = [&]() -> Json {
+                if (rootUri.empty()) return client_.status;
+                const auto it = client_.statusByRoot.find(rootUri);
+                return it == client_.statusByRoot.end() ? Json {} : it->second;
+            };
             // usable plan W9.4: error is as settled a state as ready or degraded (a corrupt
             // payload, for instance, does not become anything else once reported).
             const bool ok { client_.wait_for([&] {
-                const std::string state { state_of(client_.status) };
+                const std::string state { state_of(current()) };
                 return state == "ready" || state == "degraded" || state == "error";
             }, timeout_) };
-            std::string detail { lsp::dump(client_.status) };
+            const Json snapshot = current();   // `Json x { y }` would wrap y in a one-element array; `=` copies it
+            std::string detail { lsp::dump(snapshot) };
             bool matches { ok };
-            if (auto source = check.find("source"); source != check.end()) matches = matches && client_.status["project"].value("source", std::string {}) == source->get<std::string>();
-            if (auto profile = check.find("profile-kind"); profile != check.end()) matches = matches && client_.status["profile"].value("kind", std::string {}) == profile->get<std::string>();
-            if (auto state = check.find("state"); state != check.end()) matches = matches && state_of(client_.status) == state->get<std::string>();
-            if (auto level = check.find("level"); level != check.end()) matches = matches && client_.status["project"].value("level", 0) == level->get<int>();
+            if (auto source = check.find("source"); source != check.end()) {
+                matches = matches && snapshot.value("project", Json::object()).value("source", std::string {}) == source->get<std::string>();
+            }
+            if (auto profile = check.find("profile-kind"); profile != check.end()) {
+                matches = matches && snapshot.value("profile", Json::object()).value("kind", std::string {}) == profile->get<std::string>();
+            }
+            if (auto state = check.find("state"); state != check.end()) matches = matches && state_of(snapshot) == state->get<std::string>();
+            if (auto level = check.find("level"); level != check.end()) {
+                matches = matches && snapshot.value("project", Json::object()).value("level", 0) == level->get<int>();
+            }
             if (auto issueCode = check.find("issue-code"); issueCode != check.end()) {
-                matches = matches && std::ranges::any_of(client_.status.value("issues", Json::array()),
+                matches = matches && std::ranges::any_of(snapshot.value("issues", Json::array()),
                     [&](const Json& issue) { return issue.value("code", std::string {}) == issueCode->get<std::string>(); });
             }
             if (auto compiler = check.find("profile-compiler"); compiler != check.end()) {
-                matches = matches && client_.status["profile"].value("compiler", std::string {}).starts_with(compiler->get<std::string>());
+                matches = matches && snapshot.value("profile", Json::object()).value("compiler", std::string {}).starts_with(compiler->get<std::string>());
             }
             return { matches, detail };
         }
@@ -747,8 +769,20 @@ int run(const Options& options) {
         { "workspace", Json { { "didChangeWatchedFiles", Json { { "dynamicRegistration", !options.noDynamicWatch } } }, { "configuration", true } } },
         { "experimental", Json { { "cxxModules", Json { { "version", 1 }, { "status", true }, { "graph", true }, { "contexts", true } } } } },
     };
+    // usable plan W9.1: a fixture with several roots names them, relative to the fixture's own
+    // root, in "folders"; a check names a file or a folder the same way, relative to that root,
+    // regardless of how many workspace folders the fixture actually declares.
+    Json workspaceFolders = Json::array();
+    if (const auto folders = scenario.find("folders"); folders != scenario.end() && folders->is_array() && !folders->empty()) {
+        for (const auto& folder : *folders) {
+            const std::string relative { folder.get<std::string>() };
+            workspaceFolders.push_back(Json { { "uri", base::path_to_uri(base::join_path(workspace, relative)) }, { "name", relative } });
+        }
+    } else {
+        workspaceFolders.push_back(Json { { "uri", base::path_to_uri(workspace) }, { "name", name } });
+    }
     auto initialized = client.request("initialize", Json { { "processId", nullptr }, { "rootUri", base::path_to_uri(workspace) },
-        { "workspaceFolders", Json::array({ Json { { "uri", base::path_to_uri(workspace) }, { "name", name } } }) },
+        { "workspaceFolders", workspaceFolders },
         { "capabilities", capabilities } }, std::chrono::seconds { 120 });
     if (!initialized || !initialized->is_object()) {
         say("FAIL initialize: no result");

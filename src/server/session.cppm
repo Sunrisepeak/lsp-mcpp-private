@@ -1,27 +1,13 @@
-// The language server session: one event loop owning all state, fed by the
-// editor's standard input, the engine's output and background model loads
-// (design sections 12.3 and 12.5).
+// The language server session: one event loop feeding one or more workspace roots (usable plan
+// W9.1), from the editor's standard input, each root's engine output, and background model loads
+// (design sections 12.3 and 12.5). SessionOptions and the per-root WorkspaceRoot type live in
+// lspmcpp.server.workspace, re-exported here so a caller needs only this one import.
 export module lspmcpp.server.session;
 
 import std;
-import lspmcpp.engine;
+export import lspmcpp.server.workspace;
 
 export namespace lspmcpp::server {
-
-struct SessionOptions {
-    std::string payloadDirectory;
-    std::string clangd;
-    std::string kit;
-    std::string mcpp;                      // the mcpp executable for mcpp projects; empty: found on PATH
-    std::string database;                  // a workspace's own S1 document, relative to the root (usable plan W9.2)
-    bool trusted { true };
-    bool discoverCompilers { true };
-    bool verboseEngineLog { false };
-    std::chrono::milliseconds requestTimeout { std::chrono::seconds { 60 } };
-    // usable plan W9.5: empty means a real clangd (lspmcpp.engine.clangd::Clangd); a test can supply
-    // a fake engine instead, since the session only ever uses the lspmcpp.engine interface.
-    std::function<std::unique_ptr<engine::Engine>()> engineFactory;
-};
 
 // Serves the Language Server Protocol on standard input and output until the
 // client exits. Returns the process exit code.

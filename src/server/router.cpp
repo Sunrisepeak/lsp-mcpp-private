@@ -109,6 +109,11 @@ Json merge_capabilities(const Json& engineCapabilities) {
     }
     if (!capabilities.contains("experimental") || !capabilities["experimental"].is_object()) capabilities["experimental"] = Json::object();
     capabilities["experimental"]["cxxModules"] = Json { { "version", 1 }, { "databaseSpec", ">=0.2 <1" } };
+    // usable plan W9.1: without this, a client has no reason to ever send
+    // workspace/didChangeWorkspaceFolders, and the session would never learn of an added or
+    // removed root.
+    if (!capabilities.contains("workspace") || !capabilities["workspace"].is_object()) capabilities["workspace"] = Json::object();
+    capabilities["workspace"]["workspaceFolders"] = Json { { "supported", true }, { "changeNotifications", true } };
     return capabilities;
 }
 
