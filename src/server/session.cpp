@@ -10,6 +10,7 @@ import lspmcpp.base.text;
 import lspmcpp.base.uri;
 import lspmcpp.base.version;
 import lspmcpp.platform.dirs;
+import lspmcpp.platform.env;
 import lspmcpp.platform.fs;
 import lspmcpp.platform.stdio;
 import lspmcpp.platform.task;
@@ -27,6 +28,7 @@ import lspmcpp.index.modules;
 import lspmcpp.engine.clangd;
 import lspmcpp.server.documents;
 import lspmcpp.server.payload;
+import lspmcpp.server.primer;
 import lspmcpp.server.router;
 
 namespace lspmcpp::server {
@@ -144,12 +146,24 @@ private:
     normalize::EnginePlan plan_;
     std::set<std::string> excluded_;          // path keys
     std::string writtenDatabase_;
+    std::string writtenStructure_;            // the written database without module hints
     bool firstPlanWritten_ { false };
     std::string contextSet_;
     std::map<std::string, std::string, std::less<>> structures_;   // path key -> module structure at planning time
 
     // Modules clangd could not build, by name, with the reason; cleared when sources change.
     std::map<std::string, std::string, std::less<>> failedModules_;
+
+    // Parallel module preparation (primer.cppm): `import M;` units opened in the engine.
+    Primer primer_;
+    std::string primeDirectory_;
+    std::string moduleHintDirectory_;
+    std::map<std::string, std::string, std::less<>> primeModuleByPath_;           // path key of a prime unit being prepared -> module
+    std::map<std::string, Clock::time_point, std::less<>> primeDeadlines_;        // module -> when to stop waiting for it
+    // Prepared prime units still open. clangd keeps a module it built only while an open file
+    // holds it; a unit opened after the last holder closed validates and copies every module it
+    // reaches again. So they stay open until nothing is being prepared or waited for.
+    std::map<std::string, std::string, std::less<>> heldPrimeUnits_;              // path key -> path
 
     // Engine.
     engine::Clangd clangd_;
@@ -330,6 +344,7 @@ private:
         consider(replanAt_);
         consider(restartAt_);
         consider(loadGiveUpAt_);
+        for (const auto& [module, at] : primeDeadlines_) consider(at);
         return deadline;
     }
 
@@ -447,6 +462,9 @@ private:
         root_ = platform::fs::canonical_path(workspace_root_(params));
         cacheDirectory_ = base::join_path(platform::dirs::cache_directory(), base::join_path("workspaces", project::workspace_key(root_)));
         databaseDirectory_ = base::join_path(cacheDirectory_, "contexts/default/cdb");
+        primeDirectory_ = base::join_path(cacheDirectory_, "contexts/default/prime");
+        moduleHintDirectory_ = base::join_path(cacheDirectory_, "contexts/default/module-hints");   // never created
+        primer_.set_limit(std::max<std::size_t>(2, std::thread::hardware_concurrency()));
         (void)platform::fs::create_directories(databaseDirectory_);
         // clangd starts without a database; the first plan is written before any document reaches it.
         platform::fs::remove_all(base::join_path(databaseDirectory_, "compile_commands.json"));
@@ -637,7 +655,10 @@ private:
             note_structure_change_(path);
         }
         publish_diagnostics_(uri);
-        if (engineAccepting_ && !path_excluded_(path)) open_in_engine_(document);
+        if (engineAccepting_ && !path_excluded_(path)) {
+            open_in_engine_(document);
+            prepare_imports_of_(document);
+        }
     }
 
     void did_change_(const Json& message, const Json& params) {
@@ -678,6 +699,7 @@ private:
         }
         awaitingDiagnostics_.erase(uri);
         if (engineAccepting_ && !excluded) (void)send_engine_(message);
+        release_prime_units_if_idle_();
         // Diagnostics of a closed file are cleared; the engine may send its own empty set too.
         publishedDiagnostics_.erase(uri);
         engineDiagnostics_.erase(uri);
@@ -779,6 +801,12 @@ private:
         config.databaseDirectory = databaseDirectory_;
         config.workDirectory = root_;
         config.verboseLog = options_.verboseEngineLog;
+        // Extra engine arguments for troubleshooting, e.g. LSP_MCPP_ENGINE_ARGUMENTS="-j=8 --background-index-priority=background".
+        if (auto extra = platform::env::get("LSP_MCPP_ENGINE_ARGUMENTS")) {
+            for (auto word : base::split(*extra, ' ')) {
+                if (!base::trim(word).empty()) config.extraArguments.emplace_back(base::trim(word));
+            }
+        }
         auto events = events_;
         auto started = clangd_.start(
             config,
@@ -825,6 +853,7 @@ private:
             it = pending_.erase(it);
         }
         engineToClient_.clear();
+        forget_primes_();
         ++engineGeneration_;   // late events of the old process are ignored
         clangd_.stop(std::chrono::milliseconds { 500 });
         engineDiagnostics_.clear();
@@ -893,8 +922,10 @@ private:
         const std::string method { message.value("method", std::string {}) };
         if (method == lsp::method::TEXT_DOCUMENT_PUBLISH_DIAGNOSTICS) {
             const Json& params { message["params"] };
+            if (finish_prime_(params.value("uri", std::string {}))) return;
             const std::string uri { client_uri_(params.value("uri", std::string {})) };
             awaitingDiagnostics_.erase(uri);
+            release_prime_units_if_idle_();
             if (documents_.find(uri) == nullptr) {
                 Json forwarded = message;
                 client_view_(forwarded["params"]);
@@ -919,6 +950,7 @@ private:
     void handle_engine_closed_() {
         engineHandshakeDone_ = false;
         engineAccepting_ = false;
+        forget_primes_();
         if (shutdownRequested_ || exitRequested_) return;
         log::warning("clangd exited unexpectedly");
         for (auto it = pending_.begin(); it != pending_.end();) {
@@ -952,6 +984,7 @@ private:
             if (lsp::kind_of(message) == lsp::Kind::request) route_client_request_(message);
             else (void)send_engine_(message);
         }
+        prepare_modules_();
         update_status_();
     }
 
@@ -1106,9 +1139,16 @@ private:
         };
         input.metadataReader = metadataReader_;
         input.failedModules = failedModules_;
+        input.primeDirectory = primeDirectory_;
+        input.moduleHintDirectory = moduleHintDirectory_;
         normalize::EnginePlan plan { normalize::plan_engine(input) };
+        write_prime_sources_(plan);
         const std::string database { normalize::to_compile_commands(plan).dump(1) };
+        const std::string structure { normalize::to_compile_commands(plan, false).dump(1) };
         const bool changed { database != writtenDatabase_ };
+        // Hints alone change as imports do; clangd rereads the database within five seconds.
+        const bool structureChanged { structure != writtenStructure_ };
+        writtenStructure_ = structure;
         if (changed) {
             (void)platform::fs::create_directories(databaseDirectory_);
             if (auto written = platform::fs::write_file_atomic(base::join_path(databaseDirectory_, "compile_commands.json"), database); !written) {
@@ -1120,7 +1160,7 @@ private:
         }
         std::set<std::string> excluded;
         for (const auto& file : plan.excludedFiles) excluded.insert(base::path_key(file));
-        const bool restartNeeded { changed && firstPlanWritten_ && engineHandshakeDone_ };
+        const bool restartNeeded { structureChanged && firstPlanWritten_ && engineHandshakeDone_ };
         if (!restartNeeded && engineAccepting_) {
             for (const Document* document : documents_.all()) {
                 if (document->path.empty()) continue;
@@ -1135,6 +1175,12 @@ private:
         }
         excluded_ = std::move(excluded);
         plan_ = std::move(plan);
+        close_prime_units_();
+        {
+            std::vector<PrimeModule> modules;
+            for (const auto& module : plan_.modules) modules.push_back(PrimeModule { module.name, module.requires_, module.primeFile });
+            primer_.set_modules(std::move(modules));
+        }
         structures_.clear();
         for (const auto& path : index_.files()) {
             if (const auto* scan = index_.scan_of(path)) structures_[base::path_key(path)] = structure_of(*scan);
@@ -1144,9 +1190,101 @@ private:
             restart_engine_("the engine database changed");
         } else {
             accept_traffic_if_ready_();
+            prepare_modules_();
         }
         for (const Document* document : documents_.all()) publish_diagnostics_(document->uri);
         update_status_();
+    }
+
+    // ---- parallel module preparation ----------------------------------------------------
+
+    void write_prime_sources_(const normalize::EnginePlan& plan) {
+        if (plan.primeSources.empty()) return;
+        (void)platform::fs::create_directories(primeDirectory_);
+        for (const auto& [file, content] : plan.primeSources) {
+            if (platform::fs::read_file(file).value_or("") != content) (void)platform::fs::write_file(file, content);
+        }
+    }
+
+    // The standard library and the imports of every open document, then as many ready modules as the limit allows.
+    void prepare_modules_() {
+        if (!engineAccepting_) return;
+        const std::vector<std::string> standard { "std", "std.compat" };
+        primer_.want(standard);
+        for (const Document* document : documents_.all()) prepare_imports_of_(*document, false);
+        pump_primer_();
+    }
+
+    void prepare_imports_of_(const Document& document, bool pump = true) {
+        if (document.path.empty() || path_excluded_(document.path)) return;
+        const auto* scan = index_.scan_of(document.path);
+        if (scan == nullptr) return;
+        const auto names = project::required_names(*scan);
+        if (primer_.want(names) > 0 && pump) pump_primer_();
+    }
+
+    void pump_primer_() {
+        if (!engineAccepting_) return;
+        for (const PrimeModule* module : primer_.start_ready()) {
+            const std::string uri { base::path_to_uri(module->primeFile) };
+            Json params { { "textDocument", Json { { "uri", uri }, { "languageId", "cpp" }, { "version", 1 },
+                                                   { "text", std::format("import {};\n", module->name) } } } };
+            if (!send_engine_(lsp::make_notification("textDocument/didOpen", std::move(params)))) {
+                primer_.finish(module->name);
+                continue;
+            }
+            primeModuleByPath_[base::path_key(module->primeFile)] = module->name;
+            primeDeadlines_[module->name] = Clock::now() + std::chrono::minutes { 3 };
+        }
+        update_status_();
+    }
+
+    // Diagnostics for a prime unit: when it was being prepared, its module is built (or failed,
+    // which the log reports). True for any prime unit, whose diagnostics are nobody's.
+    bool finish_prime_(std::string_view engineUri) {
+        if (primeDirectory_.empty()) return false;
+        auto path = base::uri_to_path(engineUri);
+        if (!path || !base::is_within(*path, primeDirectory_)) return false;
+        const std::string key { base::path_key(*path) };
+        const auto it = primeModuleByPath_.find(key);
+        if (it == primeModuleByPath_.end()) return true;
+        const std::string module { it->second };
+        primeModuleByPath_.erase(it);
+        primeDeadlines_.erase(module);
+        heldPrimeUnits_.emplace(key, *path);
+        primer_.finish(module);
+        pump_primer_();
+        release_prime_units_if_idle_();
+        return true;
+    }
+
+    void release_prime_units_if_idle_() {
+        if (heldPrimeUnits_.empty() || primer_.busy() || !awaitingDiagnostics_.empty()) return;
+        log::info("module preparation idle: closing {} prime units", heldPrimeUnits_.size());
+        close_prime_units_();
+    }
+
+    // Every prime unit leaves the engine, prepared or not.
+    void close_prime_units_() {
+        std::set<std::string> uris;
+        for (const auto& [key, module] : primeModuleByPath_) {
+            if (const auto* planned = primer_.find(module)) uris.insert(base::path_to_uri(planned->primeFile));
+        }
+        for (const auto& [key, path] : heldPrimeUnits_) uris.insert(base::path_to_uri(path));
+        if (engineAccepting_) {
+            for (const auto& uri : uris) (void)send_engine_(lsp::make_notification("textDocument/didClose", Json { { "textDocument", Json { { "uri", uri } } } }));
+        }
+        primeModuleByPath_.clear();
+        primeDeadlines_.clear();
+        heldPrimeUnits_.clear();
+    }
+
+    // The engine's state is gone: nothing is open and nothing is known to be built.
+    void forget_primes_() {
+        primeModuleByPath_.clear();
+        primeDeadlines_.clear();
+        heldPrimeUnits_.clear();
+        primer_.reset();
     }
 
     // clangd could not build a module: importers of it, and of the module whose source failed
@@ -1198,7 +1336,7 @@ private:
         if (engineUnavailable_ && crashes_.size() >= 3) return State::error;
         if (!model_) return loading_ ? State::loading : State::starting;
         if (loading_) return State::loading;
-        if (!awaitingDiagnostics_.empty() && engineAccepting_) return State::preparing;
+        if ((!awaitingDiagnostics_.empty() || primer_.busy()) && engineAccepting_) return State::preparing;
         if (!engineIssues_.empty() || !model_->issues.empty() || !plan_.issues.empty()) return State::degraded;
         return State::ready;
     }
@@ -1240,6 +1378,10 @@ private:
             { "issues", issues },
         };
         if (!notices.empty()) params["notices"] = std::move(notices);
+        if (primer_.busy()) {
+            const auto [done, total] = primer_.progress();
+            params["progress"] = Json { { "done", done }, { "total", total } };
+        }
         std::string serialized { lsp::dump(params) };
         if (serialized == lastStatus_) return;
         lastStatus_ = std::move(serialized);
@@ -1280,6 +1422,14 @@ private:
             }
         }
         if (restart && !shutdownRequested_) restart_engine_("repeated timeouts");
+        std::vector<std::string> overdue;
+        for (const auto& [module, at] : primeDeadlines_) {
+            if (at <= now) overdue.push_back(module);
+        }
+        for (const auto& module : overdue) {
+            log::warning("stopped waiting for module {} to be prepared", module);
+            if (const auto* planned = primer_.find(module)) (void)finish_prime_(base::path_to_uri(planned->primeFile));
+        }
         if (reloadAt_ && *reloadAt_ <= now) {
             reloadAt_.reset();
             start_model_load_();

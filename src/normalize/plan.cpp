@@ -62,6 +62,13 @@ bool usable(const toolchain::ToolchainFacts* facts) {
 
 bool is_std_module(std::string_view name) { return name == "std" || name == "std.compat"; }
 
+// The name a prime unit is written under: stable, file-system safe and unique per module.
+std::string prime_file_name(std::size_t index, std::string_view module) {
+    std::string name { std::format("{:04}-", index) };
+    for (const char c : module) name += (std::isalnum(static_cast<unsigned char>(c)) || c == '.' || c == '_') ? c : '-';
+    return name + ".cpp";
+}
+
 } // namespace
 
 EnginePlan plan_engine(const PlanInput& input) {
@@ -237,7 +244,52 @@ EnginePlan plan_engine(const PlanInput& input) {
         entry.arguments.push_back(candidate.driver);
         entry.arguments.insert(entry.arguments.end(), candidate.arguments.begin(), candidate.arguments.end());
         entry.arguments.push_back(candidate.source);
+        if (spec::is_importable(candidate.role)) entry.provides = candidate.provided;
+        entry.imports = candidate.required;
         plan.entries.push_back(std::move(entry));
+    }
+
+    // An importer's arguments for a module: a unit that imports it, else the provider's own without module mode.
+    auto importer_of = [&](std::string_view module) -> std::optional<std::size_t> {
+        std::optional<std::size_t> fallback;
+        for (std::size_t i { 0 }; i < candidates.size(); ++i) {
+            if (excluded[i] || std::ranges::find(candidates[i].required, module) == candidates[i].required.end()) continue;
+            if (!spec::is_importable(candidates[i].role)) return i;
+            if (!fallback) fallback = i;
+        }
+        return fallback;
+    };
+    auto without_module_mode = [](std::vector<std::string> arguments) {
+        for (std::size_t k { 0 }; k + 1 < arguments.size();) {
+            if (arguments[k] == "-x" && arguments[k + 1] == "c++-module") arguments.erase(arguments.begin() + static_cast<std::ptrdiff_t>(k), arguments.begin() + static_cast<std::ptrdiff_t>(k + 2));
+            else ++k;
+        }
+        return arguments;
+    };
+    auto add_module = [&](const std::string& name, std::vector<std::string> requires_, std::optional<std::size_t> importer,
+                          const std::string& workDirectory) {
+        PlannedModule module { name, std::move(requires_), {} };
+        if (!input.primeDirectory.empty() && name.find(':') == std::string::npos && importer) {
+            const auto& unit = candidates[*importer];
+            module.primeFile = base::join_path(input.primeDirectory, prime_file_name(plan.modules.size(), name));
+            EngineEntry entry { workDirectory, module.primeFile, {} };
+            entry.arguments.push_back(unit.driver);
+            for (auto& argument : without_module_mode(unit.arguments)) entry.arguments.push_back(std::move(argument));
+            entry.arguments.push_back(module.primeFile);
+            entry.imports.push_back(name);
+            plan.entries.push_back(std::move(entry));
+            plan.primeSources.emplace_back(module.primeFile, std::format("import {};\n", name));
+        }
+        plan.modules.push_back(std::move(module));
+    };
+    for (std::size_t i { 0 }; i < candidates.size(); ++i) {
+        const auto& candidate = candidates[i];
+        if (excluded[i] || candidate.provided.empty() || !spec::is_importable(candidate.role)) continue;
+        const auto owners = providers.find(candidate.provided);
+        if (owners == providers.end() || owners->second.front() != i) continue;   // the provider in use
+        auto importer = importer_of(candidate.provided);
+        if (!importer) importer = i;
+        add_module(candidate.provided, candidate.required, importer, candidate.unit->workDirectory);
     }
 
     // 5. Standard library units, once for the context, with the arguments of a representative unit.
@@ -267,8 +319,13 @@ EnginePlan plan_engine(const PlanInput& input) {
             entry.arguments.emplace_back("-x");
             entry.arguments.emplace_back("c++-module");
             entry.arguments.push_back(module.source);
+            std::vector<std::string> requires_;
+            if (module.logicalName == "std.compat") requires_.emplace_back("std");
+            entry.provides = module.logicalName;
+            entry.imports = requires_;
             plan.entries.push_back(std::move(entry));
             ++plan.stdUnits;
+            add_module(module.logicalName, std::move(requires_), templateIndex, representative.unit->workDirectory);
         }
     } else if (anyStd && stdEntries.empty()) {
         for (const auto& candidate : candidates) {
@@ -278,13 +335,50 @@ EnginePlan plan_engine(const PlanInput& input) {
             }
         }
     }
+
+    // 6. Module hints (usable plan W7). To find the unit that provides a module, clangd 23.1
+    //    scans every file of the database, one after another, each time it prepares a file whose
+    //    imports it has not looked up yet: seconds for a few hundred files, in every worker that
+    //    starts at once. A producer's -fmodule-output=<path> and an importer's
+    //    -fmodule-file=<name>=<path> name the unit instead, and clangd scans only that file to
+    //    confirm it (ProjectModules.cpp, CompileCommandsProjectModules). It resolves every module
+    //    a file reaches through that file's own command, so an entry names all of them. The
+    //    paths are never written: clangd builds into its own cache.
+    if (!input.moduleHintDirectory.empty()) {
+        std::map<std::string_view, const std::vector<std::string>*, std::less<>> graph;
+        for (const auto& entry : plan.entries) {
+            if (!entry.provides.empty()) graph.emplace(entry.provides, &entry.imports);
+        }
+        auto hint_path = [&](std::string_view module) {
+            std::string name { module };
+            std::ranges::replace(name, ':', '-');   // a partition; ':' appears in no other module name
+            return base::join_path(input.moduleHintDirectory, name + ".pcm");
+        };
+        for (auto& entry : plan.entries) {
+            std::set<std::string_view, std::less<>> reached;
+            std::vector<std::string_view> pending { entry.imports.begin(), entry.imports.end() };
+            while (!pending.empty()) {
+                const std::string_view name { pending.back() };
+                pending.pop_back();
+                const auto provider = graph.find(name);
+                if (provider == graph.end() || !reached.insert(name).second) continue;
+                for (const auto& required : *provider->second) pending.emplace_back(required);
+            }
+            for (const std::string_view name : reached) entry.moduleHints.push_back(std::format("-fmodule-file={}={}", name, hint_path(name)));
+            if (!entry.provides.empty()) entry.moduleHints.push_back("-fmodule-output=" + hint_path(entry.provides));
+        }
+    }
     return plan;
 }
 
-nlohmann::json to_compile_commands(const EnginePlan& plan) {
+nlohmann::json to_compile_commands(const EnginePlan& plan, bool moduleHints) {
     nlohmann::json entries = nlohmann::json::array();
     for (const auto& entry : plan.entries) {
-        entries.push_back(nlohmann::json { { "directory", entry.directory }, { "file", entry.file }, { "arguments", entry.arguments } });
+        std::vector<std::string> arguments { entry.arguments };
+        if (moduleHints && !entry.moduleHints.empty() && !arguments.empty()) {
+            arguments.insert(arguments.end() - 1, entry.moduleHints.begin(), entry.moduleHints.end());
+        }
+        entries.push_back(nlohmann::json { { "directory", entry.directory }, { "file", entry.file }, { "arguments", std::move(arguments) } });
     }
     return entries;
 }

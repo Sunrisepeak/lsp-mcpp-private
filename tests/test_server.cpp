@@ -8,6 +8,7 @@ import lspmcpp.index.modules;
 import lspmcpp.server.documents;
 import lspmcpp.server.router;
 import lspmcpp.engine.clangd;
+import lspmcpp.server.primer;
 
 using Json = nlohmann::json;
 using lspmcpp::base::Position;
@@ -175,6 +176,73 @@ int main() {
         expect(capabilities["definitionProvider"] == true && capabilities["textDocumentSync"]["change"] == 2);
         const Json client = Json::parse(R"({"experimental": {"cxxModules": {"version": 1, "status": true}}})");
         expect(srv::client_supports(client, "status") && !srv::client_supports(client, "graph"));
+    };
+
+    "modules are prepared as soon as their imports are, within the limit"_test = [] {
+        using State = srv::Primer::State;
+        srv::Primer primer;
+        primer.set_limit(2);
+        primer.set_modules({
+            { "std", {}, "/prime/std.cpp" },
+            { "base", { "std" }, "/prime/base.cpp" },
+            { "util", { "std" }, "/prime/util.cpp" },
+            { "app:part", { "base" }, "" },
+            { "app", { "app:part", "util" }, "/prime/app.cpp" },
+            { "tool", { "std" }, "/prime/tool.cpp" },
+        });
+        const std::vector<std::string> wanted { "app" };
+        expect(primer.want(wanted) == 5u) << "everything app reaches, and nothing else";
+        expect(primer.state("tool") == State::unwanted);
+        expect(primer.busy());
+        auto names = [](const std::vector<const srv::PrimeModule*>& modules) {
+            std::vector<std::string> result;
+            for (const auto* module : modules) result.push_back(module->name);
+            return result;
+        };
+        expect(names(primer.start_ready()) == std::vector<std::string> { "std" }) << "only std has no imports";
+        expect(primer.start_ready().empty()) << "a started module is not started twice";
+        primer.finish("std");
+        expect(names(primer.start_ready()) == std::vector<std::string> { "base", "util" });
+        expect(primer.running() == 2u);
+        primer.finish("base");
+        // app:part has no unit of its own: it completes with base, and app still waits for util.
+        expect(primer.start_ready().empty());
+        expect(primer.state("app:part") == State::done);
+        primer.finish("util");
+        expect(names(primer.start_ready()) == std::vector<std::string> { "app" });
+        expect(primer.progress() == std::pair<std::size_t, std::size_t> { 4u, 5u });
+        primer.finish("app");
+        expect(!primer.busy());
+        primer.finish("app");
+        expect(primer.running() == 0u) << "a module finished twice is counted once";
+
+        // A new graph keeps what is done; reset forgets it, as after an engine restart.
+        primer.set_modules({ { "std", {}, "/prime/std.cpp" }, { "base", { "std" }, "/prime/base.cpp" } });
+        expect(primer.state("std") == State::done && primer.state("base") == State::done);
+        expect(primer.find("app") == nullptr && primer.find("base") != nullptr);
+        primer.reset();
+        expect(primer.state("std") == State::unwanted && !primer.busy());
+    };
+
+    "the module more work waits on starts first"_test = [] {
+        srv::Primer primer;
+        primer.set_limit(1);
+        primer.set_modules({
+            { "std", {}, "/prime/std.cpp" },
+            { "a-leaf", { "std" }, "/prime/a-leaf.cpp" },     // first by name, nothing above it
+            { "z-root", { "std" }, "/prime/z-root.cpp" },     // last by name, two modules above it
+            { "middle", { "z-root" }, "/prime/middle.cpp" },
+            { "top", { "middle" }, "/prime/top.cpp" },
+        });
+        const std::vector<std::string> wanted { "top", "a-leaf" };
+        expect(primer.want(wanted) == 5u);
+        auto first = primer.start_ready();
+        expect(fatal(first.size() == 1u));
+        expect(first.front()->name == "std");
+        primer.finish("std");
+        const auto next = primer.start_ready();
+        expect(fatal(next.size() == 1u));
+        expect(next.front()->name == "z-root") << next.front()->name;
     };
 
     return report();

@@ -341,5 +341,107 @@ int main() {
         expect(stdEntries == 1) << "the build's std.ixx unit is replaced by the injected one";
     };
 
+    "prime units and module hints"_test = [] {
+        const std::map<std::string, std::string> sources {
+            { "/p/src/main.cpp", "import std;\nimport app;\nint main() {}\n" },
+            { "/p/src/app.cppm", "export module app;\nexport import :part;\nimport lib;\n" },
+            { "/p/src/part.cppm", "export module app:part;\nimport lib;\n" },
+            { "/p/src/lib.cppm", "export module lib;\nimport std;\n" },
+            { "/p/src/lib.cpp", "module lib;\n" },
+        };
+        s::Database database;
+        s::Set set;
+        set.name = "app";
+        set.toolchain = "gcc";
+        for (const auto& [path, text] : sources) {
+            s::TranslationUnit unit;
+            unit.source = path;
+            unit.workDirectory = "/p";
+            unit.arguments = { "/opt/gcc/bin/g++", "-std=c++23", "-fmodules", "-c", path };
+            set.units.push_back(std::move(unit));
+        }
+        database.sets.push_back(set);
+        std::map<std::string, ToolchainFacts, std::less<>> facts { { "gcc", gcc_facts() } };
+        n::PlanInput input;
+        input.database = &database;
+        input.facts = &facts;
+        input.engineDriverDirectory = "/payload/clangd/bin";
+        input.scanner = [&](std::string_view path) {
+            const auto it = sources.find(std::string { path });
+            return it == sources.end() ? p::ScanResult {} : p::scan_source(it->second);
+        };
+        input.metadataReader = [](std::string_view) {
+            return std::vector<s::ModuleEntry> { { "std", "/opt/gcc/include/c++/16/bits/std.cc", true, {}, {} },
+                                                 { "std.compat", "/opt/gcc/include/c++/16/bits/std.compat.cc", true, {}, {} } };
+        };
+        input.primeDirectory = "/cache/prime";
+        input.moduleHintDirectory = "/cache/hints";
+        const auto plan = n::plan_engine(input);
+        expect(plan.issues.empty()) << (plan.issues.empty() ? "" : plan.issues.front().message);
+
+        const auto hint = [](std::string_view file) { return lspmcpp::base::join_path("/cache/hints", file); };
+        const auto entry_for = [&](std::string_view file) -> const n::EngineEntry* {
+            const auto it = std::ranges::find_if(plan.entries, [&](const n::EngineEntry& entry) { return entry.file == file; });
+            return it == plan.entries.end() ? nullptr : &*it;
+        };
+        const auto* main = entry_for("/p/src/main.cpp");
+        expect(fatal(main != nullptr));
+        expect(main->provides.empty());
+        expect(contains(main->moduleHints, "-fmodule-file=app=" + hint("app.pcm")));
+        expect(contains(main->moduleHints, "-fmodule-file=app:part=" + hint("app-part.pcm"))) << "a module reached through another is named too";
+        expect(contains(main->moduleHints, "-fmodule-file=lib=" + hint("lib.pcm")));
+        expect(contains(main->moduleHints, "-fmodule-file=std=" + hint("std.pcm")));
+        expect(!contains_prefix(main->moduleHints, "-fmodule-output=")) << "a unit that provides nothing produces nothing";
+
+        const auto* app = entry_for("/p/src/app.cppm");
+        expect(fatal(app != nullptr));
+        expect(app->provides == "app");
+        expect(contains(app->moduleHints, "-fmodule-output=" + hint("app.pcm")));
+        expect(contains(app->moduleHints, "-fmodule-file=lib=" + hint("lib.pcm")) && contains(app->moduleHints, "-fmodule-file=std=" + hint("std.pcm")));
+        expect(!contains(app->moduleHints, "-fmodule-file=app=" + hint("app.pcm"))) << "a module does not reach itself";
+        const auto* part = entry_for("/p/src/part.cppm");
+        expect(fatal(part != nullptr));
+        expect(contains(part->moduleHints, "-fmodule-output=" + hint("app-part.pcm")));
+        const auto* implementation = entry_for("/p/src/lib.cpp");
+        expect(fatal(implementation != nullptr));
+        expect(contains(implementation->moduleHints, "-fmodule-file=lib=" + hint("lib.pcm"))) << "an implementation unit reaches its interface";
+        expect(!contains_prefix(implementation->moduleHints, "-fmodule-output="));
+        const auto* compat = entry_for("/opt/gcc/include/c++/16/bits/std.compat.cc");
+        expect(fatal(compat != nullptr));
+        expect(contains(compat->moduleHints, "-fmodule-output=" + hint("std.compat.pcm")) && contains(compat->moduleHints, "-fmodule-file=std=" + hint("std.pcm")));
+
+        // Prime units: one per importable module except partitions, each importing its module.
+        std::set<std::string> primed;
+        for (const auto& module : plan.modules) {
+            if (module.name == "app:part") expect(module.primeFile.empty()) << "a partition is built through its primary module";
+            if (module.name == "app") expect(contains(module.requires_, "lib") && contains(module.requires_, "app:part"));
+            if (!module.primeFile.empty()) primed.insert(module.name);
+        }
+        expect(primed == std::set<std::string> { "app", "lib", "std", "std.compat" });
+        for (const auto& [file, content] : plan.primeSources) {
+            const auto* prime = entry_for(file);
+            expect(fatal(prime != nullptr));
+            expect(fatal(prime->imports.size() == 1u));
+            expect(content == std::format("import {};\n", prime->imports.front()));
+            expect(contains(prime->moduleHints, std::format("-fmodule-file={}={}", prime->imports.front(), hint(prime->imports.front() + ".pcm"))));
+            expect(!contains(prime->arguments, "c++-module")) << "a prime unit is not a module unit";
+        }
+
+        // Hints are written before the source, and a database without them is the plan's structure.
+        const auto written = n::to_compile_commands(plan);
+        const auto structure = n::to_compile_commands(plan, false);
+        for (std::size_t i { 0 }; i < plan.entries.size(); ++i) {
+            const auto arguments = written[i]["arguments"].get<std::vector<std::string>>();
+            expect(arguments.back() == plan.entries[i].file);
+            expect(arguments.size() == plan.entries[i].arguments.size() + plan.entries[i].moduleHints.size());
+            expect(structure[i]["arguments"].get<std::vector<std::string>>() == plan.entries[i].arguments);
+        }
+
+        // Without a hint directory the plan has none.
+        input.moduleHintDirectory.clear();
+        const auto plain = n::plan_engine(input);
+        expect(std::ranges::all_of(plain.entries, [](const n::EngineEntry& entry) { return entry.moduleHints.empty(); }));
+    };
+
     return report();
 }
