@@ -35,6 +35,7 @@ checks fail at once with that reason instead of each waiting out its timeout.
 | `cmake-msvc-bdb` | `cmake-msvc`'s build-database counterpart: the prepare steps build `build_database.json` with cl.exe and CMake 4.4+, the server under test still without a developer environment (D30) |
 | `cmake-msvc-std` | CMake's `import std` with cl.exe and an `.ixx` interface: the build's own `std.ixx` units are replaced by the MSVC STL manifest's (P7) |
 | `cmake-clangxx-msvc` | CMake modules built by clang++ for the MSVC ABI (P5) |
+| `cmake-clang-cl` | CMake 4.4 modules built by clang-cl (P6), the first CMake that scans clang-cl module sources |
 | `compdb-clangxx-msvc-std` | clang++ for the MSVC ABI with `import std`, built by the fixture's own script (P5) |
 | `compdb-clang-cl-std` | clang-cl with `import std`, built by the fixture's own script (P6) |
 | `mcpp-msvc` | mcpp with `msvc@system` and `import std` |

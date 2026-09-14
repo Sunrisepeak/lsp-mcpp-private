@@ -218,7 +218,7 @@ jobs:
             fixtures: inferred untrusted mcpp-llvm
           - platform: win32-x64
             os: windows-2022
-            fixtures: inferred inferred-msvc untrusted mingw cmake-msvc cmake-msvc-bdb cmake-msvc-std cmake-clangxx-msvc compdb-clangxx-msvc-std compdb-clang-cl-std mcpp-msvc mcpp-llvm-msvc
+            fixtures: inferred inferred-msvc untrusted mingw cmake-msvc cmake-msvc-bdb cmake-msvc-std cmake-clangxx-msvc cmake-clang-cl compdb-clangxx-msvc-std compdb-clang-cl-std mcpp-msvc mcpp-llvm-msvc
     defaults:
       run:
         shell: bash
@@ -276,7 +276,7 @@ jobs:
           Set-Content -Path "$env:RUNNER_TEMP\capture-msvc.cmd" -Value "@call `"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul`r`n@set"
           cmd /d /c "$env:RUNNER_TEMP\capture-msvc.cmd" | Out-File -Encoding utf8 "$env:RUNNER_TEMP\msvc.env"
           Select-String -Path "$env:RUNNER_TEMP\msvc.env" -Pattern '^(VCToolsInstallDir|WindowsSDKVersion)='
-          # A second snapshot, only for cmake-msvc-bdb: the same developer
+          # A second snapshot, only for cmake-msvc-bdb and cmake-clang-cl: the same developer
           # environment with CMake 4.4.2 first on PATH, so that fixture's own
           # prepare steps use it while every other MSVC fixture keeps using
           # the runner's own CMake untouched.
@@ -305,7 +305,7 @@ jobs:
             local -a fixture_extra=(${extra[@]+"${extra[@]}"})
             case "$fixture" in
               cmake-clang-bdb) path_prefix="$RUNNER_TEMP/cmake-4.4.2/bin:" ;;
-              cmake-msvc-bdb) fixture_extra=(--msvc-env "$RUNNER_TEMP/msvc-bdb.env") ;;
+              cmake-msvc-bdb|cmake-clang-cl) fixture_extra=(--msvc-env "$RUNNER_TEMP/msvc-bdb.env") ;;
             esac
             PATH="$path_prefix$PATH" "tools/lsp-mcpp-conformance$exe" run --server "payload/bin/lsp-mcpp$exe" --payload payload \
                 ${fixture_extra[@]+"${fixture_extra[@]}"} --fixture "conformance/fixtures/$fixture" "$@"
