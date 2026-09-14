@@ -99,27 +99,42 @@ void reply_error(const Json& id, int code, std::string_view message) { send_clie
 void notify_client(std::string_view method, Json params) { send_client_message(lsp::make_notification(method, std::move(params))); }
 
 std::string make_engine_request_key(std::string_view rootKey, int generation, const Json& engineId) {
-    return std::format("e:{}:{}:{}", rootKey, generation, lsp::dump(engineId));
+    return std::format("e:{}:{}:{}:{}", rootKey.size(), rootKey, generation, lsp::dump(engineId));
 }
 
 bool parse_engine_request_key(std::string_view key, std::string& rootKey, int& generation, Json& engineId) {
     if (!key.starts_with("e:")) return false;
     std::string_view rest { key.substr(2) };
-    const std::size_t firstColon { rest.find(':') };
-    if (firstColon == std::string_view::npos) return false;
-    rootKey = std::string { rest.substr(0, firstColon) };
-    rest = rest.substr(firstColon + 1);
-    const std::size_t secondColon { rest.find(':') };
-    if (secondColon == std::string_view::npos) return false;
-    const std::string generationText { rest.substr(0, secondColon) };
-    const Json parsedId { Json::parse(rest.substr(secondColon + 1), nullptr, false) };
-    if (parsedId.is_discarded()) return false;
+    // The root key is length-prefixed, not delimiter-split like the rest: a workspace root's own
+    // path is exactly the kind of thing that might contain ':' and break a naive split on it —
+    // every Windows path does, right after its drive letter.
+    const std::size_t lengthEnd { rest.find(':') };
+    if (lengthEnd == std::string_view::npos) return false;
+    std::size_t rootKeyLength { 0 };
     try {
-        generation = std::stoi(generationText);
+        rootKeyLength = static_cast<std::size_t>(std::stoull(std::string { rest.substr(0, lengthEnd) }));
     } catch (...) {
         return false;
     }
-    engineId = parsedId;
+    rest = rest.substr(lengthEnd + 1);
+    if (rest.size() < rootKeyLength + 1 || rest[rootKeyLength] != ':') return false;
+    const std::string_view keyText { rest.substr(0, rootKeyLength) };
+    rest = rest.substr(rootKeyLength + 1);
+    const std::size_t generationEnd { rest.find(':') };
+    if (generationEnd == std::string_view::npos) return false;
+    int parsedGeneration { 0 };
+    try {
+        parsedGeneration = std::stoi(std::string { rest.substr(0, generationEnd) });
+    } catch (...) {
+        return false;
+    }
+    // `Json parsedId { ... }` would wrap a scalar (e.g. the plain integer ids clangd itself uses)
+    // in a one-element array; `=` parses it as the value it is.
+    Json parsedId = Json::parse(rest.substr(generationEnd + 1), nullptr, false);
+    if (parsedId.is_discarded()) return false;
+    rootKey = std::string { keyText };
+    generation = parsedGeneration;
+    engineId = std::move(parsedId);
     return true;
 }
 

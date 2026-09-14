@@ -13,6 +13,7 @@ import lspmcpp.index.modules;
 import lspmcpp.server.documents;
 import lspmcpp.server.router;
 import lspmcpp.server.payload;
+import lspmcpp.server.workspace;
 import lspmcpp.engine;
 import lspmcpp.engine.clangd;
 import lspmcpp.server.primer;
@@ -400,6 +401,48 @@ int main() {
         }
 
         fs::remove_all(root);
+    };
+
+    "engine request keys round-trip and tell roots apart"_test = [] {
+        // usable plan W9.1: the session parses this back out of a client response's id to find
+        // which root's engine to forward it to, and to discard a stale generation.
+        // `Json id { 42 }` would wrap the plain integer in a one-element array; `=` keeps it a
+        // scalar, matching the plain integer ids clangd itself sends.
+        const Json id = 42;
+        const std::string key { srv::make_engine_request_key("/work/root-a", 3, id) };
+        std::string rootKey;
+        int generation { 0 };
+        Json parsedId;
+        expect(srv::parse_engine_request_key(key, rootKey, generation, parsedId));
+        expect(rootKey == "/work/root-a" && generation == 3 && parsedId == id);
+
+        // A different root or generation makes a different key, so the session's lookup cannot
+        // confuse one root's in-flight request with another's, or an old engine with the current one.
+        expect(srv::make_engine_request_key("/work/root-b", 3, id) != key);
+        expect(srv::make_engine_request_key("/work/root-a", 4, id) != key);
+
+        // Not a value this function ever produced: parsed as not-a-key rather than misread.
+        expect(!srv::parse_engine_request_key("not-a-key", rootKey, generation, parsedId));
+        expect(!srv::parse_engine_request_key("e:onlyonecolon", rootKey, generation, parsedId));
+
+        // A string id, and a root key that itself contains ':' (every Windows path does, right
+        // after its drive letter): the root key is length-prefixed rather than split on ':', so it
+        // round-trips exactly regardless of what it contains.
+        // `Json("s:5")` (parentheses): `Json { "s:5" }` would, like the integer above, wrap the
+        // string in a one-element array instead of holding it as the one string value.
+        const Json stringId("s:5");
+        const std::string key2 { srv::make_engine_request_key("/work/a:b", 1, stringId) };
+        expect(srv::parse_engine_request_key(key2, rootKey, generation, parsedId));
+        expect(rootKey == "/work/a:b" && generation == 1 && parsedId == stringId);
+    };
+
+    "build files, interactive methods and state names"_test = [] {
+        expect(srv::is_build_file("mcpp.toml") && srv::is_build_file("CMakeLists.txt") && srv::is_build_file("x.cmake"));
+        expect(!srv::is_build_file("main.cpp") && !srv::is_build_file("greet.cppm"));
+        expect(srv::is_interactive("textDocument/hover") && srv::is_interactive("textDocument/definition"));
+        expect(!srv::is_interactive("textDocument/didOpen") && !srv::is_interactive("workspace/symbol"));
+        expect(srv::to_string(srv::State::ready) == "ready" && srv::to_string(srv::State::error) == "error");
+        expect(srv::to_string(srv::State::degraded) == "degraded" && srv::to_string(srv::State::preparing) == "preparing");
     };
 
     return report();
