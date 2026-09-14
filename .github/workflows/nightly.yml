@@ -24,6 +24,8 @@ jobs:
   timing:
     name: startup timing (${{ matrix.platform }})
     needs: ci
+    # Timings and self-hosting need only the payloads: a failure elsewhere in CI does not skip them.
+    if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -71,6 +73,7 @@ jobs:
   self-hosting:
     name: self-hosting (${{ matrix.fixture }}, ${{ matrix.platform }})
     needs: ci
+    if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     strategy:
