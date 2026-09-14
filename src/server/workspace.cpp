@@ -4,6 +4,7 @@ import std;
 import nlohmann.json;
 import lspmcpp.os;
 import lspmcpp.base.error;
+import lspmcpp.base.glob;
 import lspmcpp.base.log;
 import lspmcpp.base.path;
 import lspmcpp.base.text;
@@ -77,14 +78,42 @@ bool is_interactive(std::string_view method) {
     return std::ranges::find(INTERACTIVE, method) != INTERACTIVE.end();
 }
 
-std::map<std::string, platform::fs::FileStamp> watched_files_snapshot(std::string_view root) {
+// The inputs a producer named in its database's watch list (S2 5), shared with the polling worker.
+struct WatchPatterns {
+    std::mutex mutex;
+    std::vector<std::string> entries;   // glob patterns relative to the root, or absolute paths
+    int generation { 0 };               // advanced whenever `entries` is replaced
+};
+
+// Whether `path` is one of `entries`: an absolute entry names the file, a relative one is a glob under `root`.
+bool matches_watch_entries(std::span<const std::string> entries, std::string_view root, std::string_view path) {
+    const auto relative = base::relative_path(path, root);
+    return std::ranges::any_of(entries, [&](const std::string& entry) {
+        if (base::is_absolute_path(entry)) return base::same_path(base::normalize_path(entry), path);
+        return relative && base::glob_match(entry, *relative);
+    });
+}
+
+// Whether a watch covers `path`: the build descriptions and sources every root watches, and the model's own entries.
+bool watch_covers(std::span<const std::string> entries, std::string_view root, std::string_view path) {
+    return is_build_file(base::file_name(path)) || project::is_cxx_source_name(path) || matches_watch_entries(entries, root, path);
+}
+
+std::map<std::string, platform::fs::FileStamp> watched_files_snapshot_of(std::string_view root, std::span<const std::string> entries) {
     std::map<std::string, platform::fs::FileStamp> files;
     for (const auto& file : platform::fs::list_files(root, {}, WATCH_POLL_SKIP_DIRECTORIES)) {
-        if (!is_build_file(base::file_name(file)) && !project::is_cxx_source_name(file)) continue;
+        if (!watch_covers(entries, root, file)) continue;
         if (auto fileStamp = platform::fs::stamp(file)) files.emplace(file, *fileStamp);
+    }
+    // An absolute entry outside the root is watched too; the database of S2 stream mode is one.
+    for (const auto& entry : entries) {
+        if (!base::is_absolute_path(entry) || base::is_within(entry, root)) continue;
+        if (auto fileStamp = platform::fs::stamp(entry)) files.emplace(base::normalize_path(entry), *fileStamp);
     }
     return files;
 }
+
+std::map<std::string, platform::fs::FileStamp> watched_files_snapshot(std::string_view root) { return watched_files_snapshot_of(root, {}); }
 
 void send_client_message(const Json& message) {
     if (auto written = platform::stdio::write_output(lsp::encode_frame(message)); !written) {
@@ -164,8 +193,14 @@ struct WorkspaceRoot::Impl {
     index::ModuleIndex index;
     spec::MetadataReader metadataReader { spec::caching_metadata_reader() };
     std::map<std::string, platform::fs::FileStamp> watchBaseline;
+    std::shared_ptr<WatchPatterns> watchPatterns { std::make_shared<WatchPatterns>() };
+    bool dynamicWatch { false };             // the client registers watchers for us (else this root polls)
+    int watchRegistration { 0 };             // the id suffix of the model's current watcher registration, 0 for none
+    // S2 5: a model whose producer failed to answer again is not replaced by the fallback; this says why.
+    std::string staleModelReason;
 
     Json clientParams;
+    std::string clientUri;                   // this folder's URI as the client named it (set_client_uri)
     bool clientSupportsStatus { false };
     // Sending anything before the client has even received its own `initialize` response would be
     // a protocol violation; update_status can otherwise fire synchronously from deep inside start()
@@ -176,6 +211,7 @@ struct WorkspaceRoot::Impl {
     // Project model and plan.
     std::shared_ptr<project::ProjectModel> model;
     int modelGeneration { 0 };
+    std::string modelDescription;            // describe_model of `model`, to recognize an unchanged reload
     bool loading { false };
     bool reloadAfterLoad { false };
     normalize::EnginePlan plan;
@@ -365,20 +401,41 @@ struct WorkspaceRoot::Impl {
     void start_watch_polling() {
         auto queue = events;
         const std::string rootPath { root };
-        std::thread { [queue, rootPath, known = watchBaseline]() mutable {
+        std::thread { [queue, rootPath, known = watchBaseline, patterns = watchPatterns]() mutable {
+            std::vector<std::string> knownEntries;
+            int knownGeneration { 0 };
             while (true) {
                 std::this_thread::sleep_for(std::chrono::seconds { 2 });
-                std::map<std::string, platform::fs::FileStamp> current { watched_files_snapshot(rootPath) };
+                std::vector<std::string> entries;
+                int generation { 0 };
+                {
+                    const std::lock_guard lock { patterns->mutex };
+                    entries = patterns->entries;
+                    generation = patterns->generation;
+                }
+                std::map<std::string, platform::fs::FileStamp> current { watched_files_snapshot_of(rootPath, entries) };
+                // A model that names new inputs brings files into the watch that were there all along:
+                // they start from what they are now rather than being reported as created (and a file
+                // the new model no longer names is simply left behind, not reported as deleted).
+                const bool entriesChanged { generation != knownGeneration };
                 Json changes = Json::array();
                 for (const auto& [file, fileStamp] : current) {
                     const auto previous = known.find(file);
-                    if (previous == known.end()) changes.push_back(Json { { "uri", base::path_to_uri(file) }, { "type", 1 } });
-                    else if (previous->second != fileStamp) changes.push_back(Json { { "uri", base::path_to_uri(file) }, { "type", 2 } });
+                    if (previous == known.end()) {
+                        if (entriesChanged && !watch_covers(knownEntries, rootPath, file)) continue;
+                        changes.push_back(Json { { "uri", base::path_to_uri(file) }, { "type", 1 } });
+                    } else if (previous->second != fileStamp) {
+                        changes.push_back(Json { { "uri", base::path_to_uri(file) }, { "type", 2 } });
+                    }
                 }
                 for (const auto& [file, fileStamp] : known) {
-                    if (!current.contains(file)) changes.push_back(Json { { "uri", base::path_to_uri(file) }, { "type", 3 } });
+                    if (current.contains(file)) continue;
+                    if (entriesChanged && !watch_covers(entries, rootPath, file)) continue;
+                    changes.push_back(Json { { "uri", base::path_to_uri(file) }, { "type", 3 } });
                 }
                 known = std::move(current);
+                knownEntries = std::move(entries);
+                knownGeneration = generation;
                 if (changes.empty()) continue;
                 // `Json message { make_notification(...) }` would wrap the result in a one-element
                 // array (nlohmann's initializer-list constructor); `=` copies it as intended.
@@ -724,6 +781,21 @@ struct WorkspaceRoot::Impl {
         log::info("restored the previous model's module index for {} ({} files)", root, files);
     }
 
+    // Everything about a model that the index and the plan are built from, as one comparable string.
+    static std::string describe_model(const project::ProjectModel& candidate) {
+        Json facts = Json::object();
+        for (const auto& [driver, driverFacts] : candidate.facts) facts[driver] = Json::parse(toolchain::facts_to_json(driverFacts).dump());
+        const Json description {
+            { "source", std::string { project::to_string(candidate.source) } },
+            { "level", candidate.level },
+            { "usesKit", candidate.usesKit },
+            { "profile", Json::array({ candidate.profile.kind, candidate.profile.compiler, candidate.profile.stdlib, candidate.profile.target }) },
+            { "facts", std::move(facts) },
+            { "database", Json::parse(spec::to_json(candidate.database).dump()) },
+        };
+        return description.dump();
+    }
+
     void save_model_cache() const {
         if (!model) return;
         Json envelope {
@@ -732,6 +804,40 @@ struct WorkspaceRoot::Impl {
             { "database", Json::parse(spec::to_json(model->database).dump()) },
         };
         (void)platform::fs::write_file_atomic(model_cache_path(), envelope.dump());
+    }
+
+    // S2 5: the inputs the model's producer named are watched like the build files are. The client
+    // watches them when it registers watchers dynamically, as patterns under this root; otherwise the
+    // polling worker reads the same entries. A new model replaces the previous registration.
+    void register_model_watch() {
+        if (!dynamicWatch || !model || !initializeAnswered) return;
+        if (watchRegistration != 0) {
+            Json unregister { { "unregisterations", Json::array({ Json { { "id", std::format("lsp-mcpp-model-watch:{}:{}", key, watchRegistration) },
+                                                                        { "method", "workspace/didChangeWatchedFiles" } } }) } };
+            send_client_message(lsp::make_request(std::format("w:{}:u{}", key, watchRegistration), "client/unregisterCapability", std::move(unregister)));
+            watchRegistration = 0;
+        }
+        // An inferred model watches the sources the session's own watchers already cover.
+        if (model->watch.empty() || model->source == project::SourceKind::inferred) return;
+        const Json* relative { lsp::find_path(clientParams, { "capabilities", "workspace", "didChangeWatchedFiles", "relativePatternSupport" }) };
+        const bool relativePatterns { relative != nullptr && relative->is_boolean() && relative->get<bool>() };
+        Json watchers = Json::array();
+        for (const auto& entry : model->watch) {
+            const bool absolute { base::is_absolute_path(entry) };
+            if (relativePatterns) {
+                const std::string base { absolute ? base::parent_path(entry) : root };
+                const std::string pattern { absolute ? std::string { base::file_name(entry) } : entry };
+                watchers.push_back(Json { { "globPattern", Json { { "baseUri", base::path_to_uri(base) }, { "pattern", pattern } } } });
+            } else {
+                watchers.push_back(Json { { "globPattern", absolute ? base::normalize_path(entry) : base::join_path(root, entry) } });
+            }
+        }
+        static int nextRegistration { 0 };
+        watchRegistration = ++nextRegistration;
+        Json registrations { { "registrations", Json::array({ Json { { "id", std::format("lsp-mcpp-model-watch:{}:{}", key, watchRegistration) },
+                                                                    { "method", "workspace/didChangeWatchedFiles" },
+                                                                    { "registerOptions", Json { { "watchers", std::move(watchers) } } } } }) } };
+        send_client_message(lsp::make_request(std::format("w:{}:r{}", key, watchRegistration), "client/registerCapability", std::move(registrations)));
     }
 
     void start_model_load() {
@@ -766,9 +872,52 @@ struct WorkspaceRoot::Impl {
 
     void handle_model_loaded(std::shared_ptr<project::ProjectModel> loadedModel) {
         loading = false;
-        failedModules.clear();
         loadGiveUpAt.reset();
+        // S2 5: a producer that answered before and fails now (or answers with nothing) leaves the last
+        // model in place, and the status says it may be stale, rather than the project falling back to
+        // scanned sources. A project that is no longer that kind of project (its build file is gone)
+        // takes the new model.
+        const bool fellBack { loadedModel->detected != project::SourceKind::inferred && loadedModel->source == project::SourceKind::inferred };
+        if (model && model->source != project::SourceKind::inferred && model->source == loadedModel->detected && fellBack) {
+            const std::string why { loadedModel->issues.empty() ? std::string {} : std::format(" ({})", loadedModel->issues.front().message) };
+            staleModelReason = std::format("{} could not describe the project again{}; the last model that loaded is kept and may be stale",
+                                           project::to_string(model->source), why);
+            for (const auto& issue : loadedModel->issues) log::warning("model reload failed ({}): [{}] {}", root, issue.code, issue.message);
+            if (reloadAfterLoad) {
+                reloadAfterLoad = false;
+                start_model_load();
+            }
+            update_status();
+            return;
+        }
+        staleModelReason.clear();
+        const bool watchChanged { !model || model->watch != loadedModel->watch };
+        std::string description { describe_model(*loadedModel) };
+        const bool unchanged { model && description == modelDescription };
         model = std::move(loadedModel);
+        if (watchChanged) {
+            {
+                const std::lock_guard lock { watchPatterns->mutex };
+                watchPatterns->entries = model->watch;
+                ++watchPatterns->generation;
+            }
+            register_model_watch();
+        }
+        if (unchanged) {
+            // The usual answer to a saved source the producer watches: the same project. The index
+            // already has the file and the plan already has the graph, so the work of a new model
+            // (reading every source again, planning, restarting preparation) is skipped entirely.
+            log::info("project model ({}) loaded again: unchanged", root);
+            for (const auto& issue : model->issues) log::info("model issue [{}] {}", issue.code, issue.message);
+            if (reloadAfterLoad) {
+                reloadAfterLoad = false;
+                start_model_load();
+            }
+            update_status();
+            return;
+        }
+        modelDescription = std::move(description);
+        failedModules.clear();
         log::info("project model ({}): source {}, level {}, {} sets, profile {} {} {}", root, project::to_string(model->source), model->level,
                   model->database.sets.size(), model->profile.kind, model->profile.compiler, model->profile.stdlib);
         for (const auto& issue : model->issues) log::info("model issue [{}] {}", issue.code, issue.message);
@@ -855,11 +1004,14 @@ struct WorkspaceRoot::Impl {
         }
         excluded = std::move(newExcluded);
         plan = std::move(newPlan);
-        close_prime_units();
         {
             std::vector<PrimeModule> modules;
             for (const auto& module : plan.modules) modules.push_back(PrimeModule { module.name, module.requires_, module.primeFile });
-            primer.set_modules(std::move(modules));
+            // An edit that leaves the module graph as it was leaves its preparation running, units and all.
+            if (restartNeeded || !primer.same_modules(modules)) {
+                close_prime_units();
+                primer.set_modules(std::move(modules));
+            }
         }
         structures.clear();
         for (const auto& path : index.files()) {
@@ -1034,7 +1186,8 @@ struct WorkspaceRoot::Impl {
         if ((!awaitingDiagnostics.empty() || primer.busy()) && engineAccepting) return State::preparing;
         // usable plan W5.4: degraded regardless of whether any open file happens to need std yet.
         if (kit && spec::requires_macos_sdk(*kit) && macosSdk.empty()) return State::degraded;
-        if (!engineIssues.empty() || !model->issues.empty() || !plan.issues.empty()) return State::degraded;
+        // S2 5: a kept model the producer could not confirm may be stale: said, not hidden in a ready state.
+        if (!engineIssues.empty() || !model->issues.empty() || !plan.issues.empty() || !staleModelReason.empty()) return State::degraded;
         return State::ready;
     }
 
@@ -1051,6 +1204,7 @@ struct WorkspaceRoot::Impl {
             issues.push_back(std::move(issue));
         };
         for (const auto& issue : engineIssues) add(issue.code, issue.message, issue.command);
+        if (!staleModelReason.empty()) add("model-stale", staleModelReason, "lspMcpp.showLogs", "Show Logs");
         if (model) {
             for (const auto& issue : model->issues) add(issue.code, issue.message, "lspMcpp.showLogs");
         }
@@ -1070,7 +1224,8 @@ struct WorkspaceRoot::Impl {
         // usable plan W9.1: `project.root` is this WorkspaceRoot's own path, so a multi-root
         // session's several notifications (one per root, S3's backward-compatible addition) are
         // told apart by it, exactly as a single-root session's one notification always named it.
-        Json project { { "root", base::path_to_uri(root) }, { "source", model ? std::string { project::to_string(model->source) } : std::string { "inferred" } } };
+        Json project { { "root", clientUri.empty() ? base::path_to_uri(root) : clientUri },
+                       { "source", model ? std::string { project::to_string(model->source) } : std::string { "inferred" } } };
         if (model) project["level"] = model->level;
         Json params {
             { "state", std::string { to_string(state) } },
@@ -1174,12 +1329,15 @@ WorkspaceRoot::WorkspaceRoot(std::string root, std::string key, SessionOptions o
 
 WorkspaceRoot::~WorkspaceRoot() = default;
 
+void WorkspaceRoot::set_client_uri(std::string uri) { impl_->clientUri = std::move(uri); }
+
 bool WorkspaceRoot::owns_path(std::string_view path) const { return !path.empty() && base::is_within(path, root_); }
 
 void WorkspaceRoot::start(Json clientParams, bool clientSupportsStatus, bool usePolling, std::function<void(Json)> onEngineSettled) {
     impl_->clientParams = std::move(clientParams);
     impl_->clientSupportsStatus = clientSupportsStatus;
     impl_->onEngineSettled = std::move(onEngineSettled);
+    impl_->dynamicWatch = !usePolling;
     if (usePolling) impl_->start_watch_polling();
     log::info("lsp-mcpp {} ({}) root {}", base::VERSION, lspmcpp::os::FAMILY_NAME, root_);
     log::info("clangd {} at {}", impl_->payload.clangdVersion.empty() ? "?" : impl_->payload.clangdVersion,
@@ -1207,6 +1365,7 @@ void WorkspaceRoot::start(Json clientParams, bool clientSupportsStatus, bool use
 void WorkspaceRoot::allow_status_notifications() {
     if (impl_->initializeAnswered) return;
     impl_->initializeAnswered = true;
+    impl_->register_model_watch();
     impl_->update_status();
 }
 
@@ -1282,6 +1441,12 @@ void WorkspaceRoot::handle_watched_files(const Json& changes) {
         if (path.empty()) continue;
         const std::string_view name { base::file_name(path) };
         const int type { change.value("type", 2) };
+        // S2 5: an input the producer named changes what it would answer, so the model is loaded again.
+        // A source among them still updates the index at once below; the reload only confirms the model.
+        if (impl_->model && impl_->model->source != project::SourceKind::inferred && name != "compile_commands.json"
+            && matches_watch_entries(impl_->model->watch, impl_->root, path)) {
+            reload = true;
+        }
         if (is_build_file(name)) {
             // mcpp rewrites its own compile_commands.json while the model loads.
             if (name == "compile_commands.json" && impl_->model && impl_->model->source == project::SourceKind::mcpp) continue;

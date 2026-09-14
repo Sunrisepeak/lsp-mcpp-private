@@ -120,6 +120,9 @@ public:
 
     const std::string& root() const { return root_; }
     const std::string& key() const { return key_; }
+    // The folder's URI as the client named it, which cxxModules/status reports as project.root (S3 4);
+    // the root's own canonical path when never set. Set before start().
+    void set_client_uri(std::string uri);
     // Whether `path` names a file this root claims: it or a descendant of it. Session uses the
     // root with the longest such match (usable plan W9.1); ties do not occur since roots are
     // themselves not nested inside one another (workspace/didChangeWorkspaceFolders keeps that true).

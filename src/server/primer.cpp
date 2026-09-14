@@ -19,6 +19,14 @@ void Primer::set_modules(std::vector<PrimeModule> modules) {
     heights_.clear();
 }
 
+bool Primer::same_modules(std::span<const PrimeModule> modules) const {
+    if (modules.size() != modules_.size()) return false;
+    return std::ranges::all_of(modules, [&](const PrimeModule& module) {
+        const auto it = modules_.find(module.name);
+        return it != modules_.end() && it->second.requires_ == module.requires_ && it->second.primeFile == module.primeFile;
+    });
+}
+
 std::size_t Primer::want(std::span<const std::string> names) {
     std::size_t added { 0 };
     std::vector<std::string> pending { names.begin(), names.end() };

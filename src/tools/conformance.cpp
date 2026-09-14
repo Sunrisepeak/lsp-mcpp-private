@@ -11,6 +11,7 @@ import nlohmann.json;
 import mcpplibs.cmdline;
 import lspmcpp.os;
 import lspmcpp.base.error;
+import lspmcpp.base.glob;
 import lspmcpp.base.path;
 import lspmcpp.base.text;
 import lspmcpp.base.uri;
@@ -238,7 +239,11 @@ public:
     // own project.root; `status` alone cannot tell them apart, so every root's latest is kept too.
     std::map<std::string, Json> statusByRoot;    // project.root (a DocumentUri) -> latest status
     std::vector<std::string> statusHistory;
+    std::map<std::string, std::vector<std::string>> statusHistoryByRoot;   // project.root -> its states, in order
     std::optional<Clock::time_point> firstReady;         // the first status in state ready
+    // Watchers the server registered through client/registerCapability, by registration id: the
+    // runner reports its own writes to them the way an editor's file system watcher would.
+    std::map<std::string, Json> watchers;
     std::optional<Clock::time_point> firstDiagnostics;   // the first diagnostics published once the server is ready or degraded
 
     base::Result<void> start(const Options& options, const std::vector<std::string>& serverArguments, const std::string& workspace,
@@ -317,6 +322,29 @@ public:
         return true;
     }
 
+    // Whether a registered watcher covers `path` for a change of `type` (1 created, 2 changed, 3 deleted).
+    bool watches(std::string_view path, int type) const {
+        for (const auto& [id, list] : watchers) {
+            for (const auto& watcher : list) {
+                if (!watcher.is_object() || !watcher.contains("globPattern")) continue;
+                if ((watcher.value("kind", 7) & (1 << (type - 1))) == 0) continue;
+                const Json& pattern = watcher["globPattern"];
+                if (pattern.is_string()) {
+                    if (base::glob_match(pattern.get<std::string>(), path)) return true;
+                    continue;
+                }
+                if (!pattern.is_object() || !pattern.contains("pattern") || !pattern.contains("baseUri")) continue;
+                const Json& baseUri = pattern["baseUri"];   // a URI, or a WorkspaceFolder
+                const std::string uri { baseUri.is_string() ? baseUri.get<std::string>() : baseUri.value("uri", std::string {}) };
+                const auto base = base::uri_to_path(uri);
+                if (!base) continue;
+                const auto relative = base::relative_path(path, *base);
+                if (relative && base::glob_match(pattern.value("pattern", std::string {}), *relative)) return true;
+            }
+        }
+        return false;
+    }
+
     void drain(std::chrono::milliseconds quiet) {
         while (auto message = inbox_->pop_until(Clock::now() + quiet)) dispatch(*message);
     }
@@ -329,6 +357,16 @@ public:
             if (method == "workspace/configuration") {
                 result = Json::array();
                 for (std::size_t i { 0 }; i < message["params"].value("items", Json::array()).size(); ++i) result.push_back(nullptr);
+            } else if (method == "client/registerCapability") {
+                for (const auto& registration : message["params"].value("registrations", Json::array())) {
+                    if (registration.value("method", std::string {}) != "workspace/didChangeWatchedFiles") continue;
+                    watchers[registration.value("id", std::string {})] = registration.value("registerOptions", Json::object()).value("watchers", Json::array());
+                }
+            } else if (method == "client/unregisterCapability") {
+                // The protocol spells the field "unregisterations".
+                for (const auto& registration : message["params"].value("unregisterations", Json::array())) {
+                    watchers.erase(registration.value("id", std::string {}));
+                }
             }
             (void)connection_->send(lsp::make_result(message["id"], std::move(result)));
             break;
@@ -343,8 +381,10 @@ public:
                 if (!firstDiagnostics && (state == "ready" || state == "degraded")) firstDiagnostics = Clock::now();
             } else if (method == "cxxModules/status") {
                 status = message["params"];
-                statusByRoot[status.value("project", Json::object()).value("root", std::string {})] = status;
+                const std::string statusRoot { status.value("project", Json::object()).value("root", std::string {}) };
+                statusByRoot[statusRoot] = status;
                 statusHistory.push_back(status.value("state", std::string {}));
+                statusHistoryByRoot[statusRoot].push_back(statusHistory.back());
                 if (!firstReady && statusHistory.back() == "ready") firstReady = Clock::now();
                 if (verbose_) say("  status: {}", lsp::dump(status));
             } else if (verbose_ && method == "window/logMessage") {
@@ -516,8 +556,10 @@ public:
             }
             if (auto issueCode = check.find("issue-code"); issueCode != check.end()) {
                 const std::string wantedCommand { check.value("issue-command", std::string {}) };
+                const std::string wantedMessage { check.value("issue-message", std::string {}) };   // a part of the message
                 matches = matches && std::ranges::any_of(snapshot.value("issues", Json::array()), [&](const Json& issue) {
                     if (issue.value("code", std::string {}) != issueCode->get<std::string>()) return false;
+                    if (!wantedMessage.empty() && !issue.value("message", std::string {}).contains(wantedMessage)) return false;
                     return wantedCommand.empty() || issue.value("command", Json::object()).value("command", std::string {}) == wantedCommand;
                 });
             }
@@ -581,11 +623,39 @@ public:
             // usable plan W9.3: writes a file directly, the way an editor's own file system watcher
             // (or, without one, this server's own polling fallback) would notice it, without the
             // runner opening it as a document. `content` defaults to a fresh module interface.
-            const std::string content { check.value("content", std::format("export module {};\n", check.value("module", std::string { "probe" }))) };
+            // `content-from` names a workspace file to copy instead, for content too long to spell out.
+            std::string content { check.value("content", std::format("export module {};\n", check.value("module", std::string { "probe" }))) };
+            if (const std::string from { check.value("content-from", std::string {}) }; !from.empty()) {
+                auto copied = fs::read_file(base::join_path(workspace_, from));
+                if (!copied) return { false, std::format("{}: {}", from, copied.error().message) };
+                content = std::move(*copied);
+            }
             const std::string path { base::join_path(workspace_, file) };
             (void)fs::create_directories(base::parent_path(path));
+            // With "folder", the reload must be that root's own (usable plan W9.1): a change routed
+            // to another root would reload that one instead.
+            const std::string folderUri { check.contains("folder") ? uri(check.value("folder", std::string {})) : std::string {} };
+            const auto history = [&]() -> const std::vector<std::string>& {
+                return folderUri.empty() ? client_.statusHistory : client_.statusHistoryByRoot[folderUri];
+            };
+            const std::size_t seen { history().size() };
+            const bool existed { fs::exists(path) };
             const auto written = fs::write_file(path, content);
-            return { written.has_value(), written ? file : written.error().message };
+            if (!written) return { false, written.error().message };
+            // An editor reports the write to the watchers the server registered; with nothing
+            // registered (--no-dynamic-watch) the server's own polling has to notice it.
+            const int type { existed ? 2 : 1 };
+            const std::string canonical { fs::canonical_path(path) };
+            if (client_.watches(path, type) || client_.watches(canonical, type)) {
+                client_.notify("workspace/didChangeWatchedFiles", Json { { "changes", Json::array({ Json { { "uri", base::path_to_uri(path) }, { "type", type } } }) } });
+            }
+            if (!check.value("expect-reload", false)) return { true, file };
+            // S2 5: a change to an input the producer named loads the model again.
+            const bool reloaded { client_.wait_for([&] {
+                const auto& states = history();
+                return states.size() > seen && std::ranges::find(states.begin() + static_cast<std::ptrdiff_t>(seen), states.end(), "loading") != states.end();
+            }, timeout_) };
+            return { reloaded, reloaded ? std::format("{}: the model loaded again", file) : std::format("{}: no reload", file) };
         }
         if (kind == "diagnostics-empty") {
             open(file);
@@ -789,7 +859,8 @@ int run(const Options& options) {
                                  { "publishDiagnostics", Json { { "relatedInformation", true } } } } },
         // usable plan W9.3: --no-dynamic-watch exercises the polling fallback the same way a
         // client with no didChangeWatchedFiles support would.
-        { "workspace", Json { { "didChangeWatchedFiles", Json { { "dynamicRegistration", !options.noDynamicWatch } } }, { "configuration", true } } },
+        { "workspace", Json { { "didChangeWatchedFiles", Json { { "dynamicRegistration", !options.noDynamicWatch }, { "relativePatternSupport", true } } },
+                              { "configuration", true } } },
         { "experimental", Json { { "cxxModules", Json { { "version", 1 }, { "status", true }, { "graph", true }, { "contexts", true } } } } },
     };
     // usable plan W9.1: a fixture with several roots names them, relative to the fixture's own

@@ -1,9 +1,6 @@
 {
  "$comment": "Rule identifiers of specifications S1, S2 and S4 mapped to evidence (usable plan W10.2), checked by specs/tools/validate.py. Evidence: validate (a passing check of validate.py, by label prefix), test (tests/<file>.cpp: <name>), check (<fixture>/<check id>), script (a file and a line that enforces the rule), manual (why no automated evidence can exist).",
- "$pending": {
-  "S2-5-1": "the session watches fixed build-file and source globs; the watch entries a producer returns are not registered yet",
-  "S2-5-9": "a failed reload replaces the model with the fallback instead of keeping the last one that loaded and saying it may be stale"
- },
+ "$pending": {},
  "S1-3-1": [
   {
    "test": "tests/test_spec.cpp: private units are not visible and duplicates are ambiguous"
@@ -935,10 +932,33 @@
    "test": "tests/test_spec.cpp: kit examples load and bad kits are refused"
   }
  ],
+ "S2-5-1": [
+  {
+   "check": "mcpp-emit-watch/W1-named-input"
+  },
+  {
+   "test": "tests/test_glob.cpp: segments, stars and double stars"
+  },
+  {
+   "script": "src/server/workspace.cpp",
+   "contains": "void register_model_watch() {"
+  }
+ ],
  "S2-5-2": [
   {
    "script": "src/server/workspace.cpp",
    "contains": "void schedule_reload() { reloadAt = Clock::now() + std::chrono::milliseconds { 1500 }; }"
+  }
+ ],
+ "S2-5-9": [
+  {
+   "check": "mcpp-emit-watch/S3-stale"
+  },
+  {
+   "check": "mcpp-emit-watch/C2-still"
+  },
+  {
+   "check": "mcpp-emit-watch/S4-fresh"
   }
  ]
 }

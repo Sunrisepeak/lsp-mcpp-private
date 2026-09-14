@@ -28,6 +28,8 @@ checks fail at once with that reason instead of each waiting out its timeout.
 | `mcpp-llvm` | mcpp with LLVM 22: libc++ selected through include paths, BMI arguments removed (P3) |
 | `mcpp-emit` | mcpp's `emit build-database --format json` (mcpp-community/mcpp#636), simulated by `lsp-mcpp-mock-mcpp` from `mcpp-mock.json`: an S1 level 3 model and an unchanged workspace |
 | `mcpp-emit-package-std` | The same with `std` and `std.compat` provided by a dependency package's translation units instead of the toolchain's manifest |
+| `mcpp-emit-broken` | The same mcpp answering with an error: the status carries mcpp's own diagnostic, sources are scanned meanwhile, and nothing is configured in its place (the mock's `build` would leave a `compile_commands.json` that `workspace-unchanged` sees) |
+| `mcpp-emit-watch` | The inputs mcpp names in `watch` (S2 5, S2-5-1): writing one loads the model again, and an unchanged answer is recognized without rebuilding the index; when mcpp then fails the last model is kept, `degraded` with `model-stale` (S2-5-9), until it answers again. CI also runs it as `mcpp-emit-watch@polling`, with `--no-dynamic-watch` |
 | `mingw` | A compile database for `x86_64-windows-gnu`: MinGW-w64 GCC semantics through `--sysroot` (P2) |
 | `cmake-clang` | CMake 3.28+ with `FILE_SET CXX_MODULES`, Clang and Ninja: `@modmap` expansion, partitions |
 | `cmake-clang-bdb` | The same project, but the prepare steps configure with CMake's experimental build database (`CMAKE_EXPERIMENTAL_EXPORT_BUILD_DATABASE`, CMake 4.4+ only) and build its `build_database.json` target: the model is read from that file instead of `compile_commands.json` (usable plan W4) |
@@ -51,7 +53,7 @@ checks fail at once with that reason instead of each waiting out its timeout.
 | `payload-corrupt` | Its `prepare` step copies the payload the runner was given and truncates clangd in the copy (usable plan W9.4); `server-arguments` then points `--payload` at that broken copy, and status must reach `error` with issue `payload-corrupt` |
 | `multi-root` | Two workspace folders (usable plan W9.1): an `inferred` root and an mcpp-built `mcpp-llvm` root, each getting its own project model and clangd, each `cxxModules/status` telling them apart by `project.root` |
 
-On Windows every server runs without a developer environment, as it does when an editor starts it. Fixtures whose own build needs one declare `"prepare-environment": "msvc"`, and the runner is given the environment with `--msvc-env FILE` (`NAME=value` lines, the output of `set` after `vcvars64.bat`); only the prepare steps see it. `--no-dynamic-watch` makes the runner declare no `workspace.didChangeWatchedFiles.dynamicRegistration` support at all, the way an editor without it would, exercising the server's own polling fallback (usable plan W9.3) instead of dynamic registration.
+On Windows every server runs without a developer environment, as it does when an editor starts it. Fixtures whose own build needs one declare `"prepare-environment": "msvc"`, and the runner is given the environment with `--msvc-env FILE` (`NAME=value` lines, the output of `set` after `vcvars64.bat`); only the prepare steps see it. `--no-dynamic-watch` makes the runner declare no `workspace.didChangeWatchedFiles.dynamicRegistration` support at all, the way an editor without it would, exercising the server's own polling fallback (usable plan W9.3) instead of dynamic registration. Without it the runner acts as an editor's file watcher: it keeps the watchers the server registers (glob strings and relative patterns alike) and reports its own `write-file` writes that they cover through `workspace/didChangeWatchedFiles`. In CI's fixture lists, `NAME@polling` runs fixture `NAME` with `--no-dynamic-watch`.
 
 ## Startup timing
 
@@ -107,7 +109,7 @@ always has been.
 
 | Kind | Passes when |
 |---|---|
-| `status` | `cxxModules/status` reaches `ready`, `degraded` or `error` and matches `source`, `profile-kind`, `state`, `level`, `issue-code` (with `issue-command`, that issue's command) when given, and a `profile-compiler` prefix; `"folder"` picks one root's own status in a multi-root fixture (usable plan W9.1), absent picks whichever root's arrived most recently |
+| `status` | `cxxModules/status` reaches `ready`, `degraded` or `error` and matches `source`, `profile-kind`, `state`, `level`, `issue-code` (with `issue-command`, that issue's command; with `issue-message`, a part of its message) when given, and a `profile-compiler` prefix; `"folder"` picks one root's own status in a multi-root fixture (usable plan W9.1), absent picks whichever root's arrived most recently |
 | `workspace-unchanged` | no file under the workspace was added, changed or removed after the prepare steps |
 | `responds` | a request (`method`, default `textDocument/definition`) at `at` is answered, empty answers included, within the check's time |
 | `module-cache-reused` | every file clangd published for `module` (default `std`) before the server started is still there unchanged, and none was added (SC4); passes on a cold start unless `--expect-warm` |
@@ -121,7 +123,7 @@ always has been.
 | `document-symbol-contains` | the outline has a top-level symbol named `expect` |
 | `module-graph-contains` | `cxxModules/graph` lists module `expect`; retries within the check's own timeout, so it doubles as "a change reaches the graph within N seconds" (usable plan W9.3's `watch-polling`) |
 | `set-context` | sends `cxxModules/setContext` with `"context"` (usable plan W9.2), then a hover at `"at"` contains `expect`, retried the same way as `hover-contains` |
-| `write-file` | writes `"content"` (default: a fresh `export module <module>;`) to `"file"` directly, the way a file system watcher — or, without one, the server's own polling fallback — would notice it, without the runner opening it as a document (usable plan W9.3) |
+| `write-file` | writes `"content"` (default: a fresh `export module <module>;`; `"content-from"` copies another workspace file) to `"file"` directly, the way a file system watcher — or, without one, the server's own polling fallback — would notice it, without the runner opening it as a document (usable plan W9.3); with `"expect-reload": true`, also waits for the status to pass through `loading` again (S2-5-1) |
 
 The check identifiers C1–C9 follow experiment E6 in
 `.agents/docs/2026-09-13-cxx-modules-lsp-experiments.md`; M-checks cover the

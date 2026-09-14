@@ -212,7 +212,7 @@ jobs:
         include:
           - platform: linux-x64
             os: ubuntu-24.04
-            fixtures: inferred untrusted mcpp-gcc mcpp-llvm mcpp-emit mcpp-emit-package-std mingw cmake-clang cmake-clang-bdb s1-two-sets watch-polling payload-corrupt multi-root
+            fixtures: inferred untrusted mcpp-gcc mcpp-llvm mcpp-emit mcpp-emit-package-std mcpp-emit-broken mcpp-emit-watch mcpp-emit-watch@polling mingw cmake-clang cmake-clang-bdb s1-two-sets watch-polling payload-corrupt multi-root
           - platform: darwin-arm64
             os: macos-14
             fixtures: inferred untrusted mcpp-llvm multi-root
@@ -307,11 +307,11 @@ jobs:
               cmake-clang-bdb) path_prefix="$RUNNER_TEMP/cmake-4.4.2/bin:" ;;
               cmake-msvc-bdb|cmake-clang-cl) fixture_extra=(--msvc-env "$RUNNER_TEMP/msvc-bdb.env") ;;
               # usable plan W9.3: the fallback runs only when the client never declares
-              # didChangeWatchedFiles.dynamicRegistration.
-              watch-polling) fixture_extra+=(--no-dynamic-watch) ;;
+              # didChangeWatchedFiles.dynamicRegistration. NAME@polling runs fixture NAME that way.
+              watch-polling|*@polling) fixture_extra+=(--no-dynamic-watch) ;;
             esac
             PATH="$path_prefix$PATH" "tools/lsp-mcpp-conformance$exe" run --server "payload/bin/lsp-mcpp$exe" --payload payload \
-                ${fixture_extra[@]+"${fixture_extra[@]}"} --fixture "conformance/fixtures/$fixture" "$@"
+                ${fixture_extra[@]+"${fixture_extra[@]}"} --fixture "conformance/fixtures/${fixture%@*}" "$@"
           }
           failed=''
           for fixture in ${{ matrix.fixtures }}; do

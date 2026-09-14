@@ -151,7 +151,10 @@ int main(int argc, char* argv[]) {
         std::println("mcpp {}", VERSION);
         return 0;
     }
-    // Anything else, notably `build --configure-only`, is what the consumer must not need.
+    // Anything else, notably `build --configure-only`, is what the consumer must not need. A build
+    // leaves the mark a real one would, a compile_commands.json in the project, so that a fixture's
+    // workspace-unchanged check sees it was run.
+    if (!arguments.empty() && arguments[0] == "build") (void)fs::write_file(base::join_path(fs::current_directory(), "compile_commands.json"), "[]\n");
     std::println(std::cerr, "lsp-mcpp-mock-mcpp: '{}' is not simulated", base::join(arguments, " "));
     return arguments.empty() ? 2 : 127;
 }

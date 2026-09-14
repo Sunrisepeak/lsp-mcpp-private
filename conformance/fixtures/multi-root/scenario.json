@@ -1,6 +1,6 @@
 {
   "name": "multi-root",
-  "description": "usable plan W9.1: two workspace folders (inferred's own content and mcpp-llvm's own content, copied verbatim), each getting its own project model and clangd process; a request routes to the root with the longest matching prefix of its document's path, and cxxModules/status is sent once per root, told apart by project.root.",
+  "description": "usable plan W9.1: two workspace folders (inferred's own content and mcpp-llvm's own content, copied verbatim), each getting its own project model and clangd process; a request routes to the root with the longest matching prefix of its document's path, cxxModules/status is sent once per root, told apart by project.root (the URI the client named the folder by, whatever the canonical path); and a watched file changing in the second folder reloads that folder's own model.",
   "folders": ["inferred", "mcpp-llvm"],
   "server-arguments": ["--no-discover"],
   "checks": [
@@ -58,6 +58,23 @@
       "id": "C3-mcpp-diag",
       "kind": "diagnostics-empty",
       "file": "mcpp-llvm/src/main.cpp"
+    },
+    {
+      "id": "W1-mcpp-watched",
+      "kind": "write-file",
+      "folder": "mcpp-llvm",
+      "file": "mcpp-llvm/mcpp.toml",
+      "content-from": "mcpp-llvm/mcpp.toml",
+      "expect-reload": true,
+      "timeout": 60
+    },
+    {
+      "id": "S2-mcpp-reloaded",
+      "kind": "status",
+      "folder": "mcpp-llvm",
+      "source": "mcpp",
+      "state": "ready",
+      "timeout": 120
     }
   ]
 }

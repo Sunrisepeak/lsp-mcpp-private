@@ -260,8 +260,21 @@ int main() {
         primer.finish("app");
         expect(primer.running() == 0u) << "a module finished twice is counted once";
 
+        const std::vector<srv::PrimeModule> smaller { { "std", {}, "/prime/std.cpp" }, { "base", { "std" }, "/prime/base.cpp" } };
+        expect(!primer.same_modules(smaller));
+        const std::vector<srv::PrimeModule> otherImports {
+            { "std", {}, "/prime/std.cpp" },       { "base", { "std" }, "/prime/base.cpp" },          { "util", { "std", "base" }, "/prime/util.cpp" },
+            { "app:part", { "base" }, "" },         { "app", { "app:part", "util" }, "/prime/app.cpp" }, { "tool", { "std" }, "/prime/tool.cpp" },
+        };
+        expect(!primer.same_modules(otherImports)) << "util imports base now";
+        const std::vector<srv::PrimeModule> reordered {
+            { "tool", { "std" }, "/prime/tool.cpp" }, { "app", { "app:part", "util" }, "/prime/app.cpp" }, { "app:part", { "base" }, "" },
+            { "util", { "std" }, "/prime/util.cpp" }, { "base", { "std" }, "/prime/base.cpp" },          { "std", {}, "/prime/std.cpp" },
+        };
+        expect(primer.same_modules(reordered)) << "the order modules are listed in does not matter";
+
         // A new graph keeps what is done; reset forgets it, as after an engine restart.
-        primer.set_modules({ { "std", {}, "/prime/std.cpp" }, { "base", { "std" }, "/prime/base.cpp" } });
+        primer.set_modules(smaller);
         expect(primer.state("std") == State::done && primer.state("base") == State::done);
         expect(primer.find("app") == nullptr && primer.find("base") != nullptr);
         primer.reset();

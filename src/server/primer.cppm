@@ -34,6 +34,8 @@ private:
 public:
     // A new graph; modules already done keep that state when they are still in it.
     void set_modules(std::vector<PrimeModule> modules);
+    // Whether `modules` is the graph already set: same names, imports and units.
+    bool same_modules(std::span<const PrimeModule> modules) const;
     void set_limit(std::size_t limit) { limit_ = std::max<std::size_t>(1, limit); }
     // Wants `names` and everything they import, transitively. Returns how many modules became wanted.
     std::size_t want(std::span<const std::string> names);

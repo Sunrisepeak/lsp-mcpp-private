@@ -27,6 +27,7 @@ struct SemanticProfile {
 struct ProjectModel {
     std::string root;
     SourceKind source { SourceKind::inferred };
+    SourceKind detected { SourceKind::inferred };   // the kind of project found; `source` is inferred when its data was not available
     int level { 2 };
     spec::Database database;
     FactsMap facts;

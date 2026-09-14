@@ -138,6 +138,7 @@ int main() {
         options.cacheDirectory = b::join_path(root, ".cache-dir");
         const auto model = p::load_project(root, options);
         expect(model.source == p::SourceKind::inferred);
+        expect(model.detected == p::SourceKind::mcpp) << "the project is still an mcpp project whose data was not available";
         expect(model.usesKit);
         expect(model.profile.kind == "semantic-kit" && model.profile.stdlib == "libc++ 23.1.0");
         expect(std::ranges::any_of(model.issues, [](const p::ModelIssue& issue) { return issue.code == "mcpp-no-database"; }));
@@ -164,7 +165,7 @@ int main() {
         p::LoadOptions options;
         options.trusted = false;
         const auto model = p::load_project(root, p::LoadOptions { options.trusted, {}, "build/db.json" });
-        expect(model.source == p::SourceKind::build_database);
+        expect(model.source == p::SourceKind::build_database && model.detected == p::SourceKind::build_database);
         expect(fatal(model.database.sets.size() == 1u && model.database.sets[0].units.size() == 3u));
         const auto& units = model.database.sets[0].units;
         expect(units[1].role == std::optional<s::Role> { s::Role::module_interface }) << "scanned";

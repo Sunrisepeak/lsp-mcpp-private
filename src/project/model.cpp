@@ -106,6 +106,7 @@ ProjectModel load_project(std::string_view rootInput, const LoadOptions& options
     ProjectModel model;
     model.root = platform::fs::canonical_path(rootInput);
     const Detection detection { detect_project(model.root, options.configuredDatabase) };
+    model.detected = detection.kind;
     const Scanner scanner { options.scanner ? options.scanner : file_scanner() };
     const Prober prober = [&](std::string_view driver, std::span<const std::string> relevant) -> std::optional<toolchain::ToolchainFacts> {
         if (!options.trusted || !options.runner) return std::nullopt;

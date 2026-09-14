@@ -238,33 +238,52 @@ private:
         if (roots_.empty()) answer_initialize_(Json::object());   // workspace_roots_ always names at least one; belt and braces
     }
 
+    // A workspace folder: the path it names, and the URI the client named it by.
+    struct Folder {
+        std::string path;
+        std::string uri;
+    };
+
+    static std::optional<Folder> folder_of_uri_(const std::string& uri) {
+        auto path = base::uri_to_path(uri);
+        if (!path) return std::nullopt;
+        return Folder { *path, uri };
+    }
+
     // Every folder `initialize` names, or the single root a pre-3.6 client implies (design 13.1
     // predates multi-root; usable plan W9.1 is additive over it).
-    std::vector<std::string> workspace_roots_(const Json& params) const {
-        std::vector<std::string> found;
+    std::vector<Folder> workspace_roots_(const Json& params) const {
+        std::vector<Folder> found;
         if (const Json* folders = lsp::find(params, "workspaceFolders"); folders != nullptr && folders->is_array()) {
             for (const auto& folder : *folders) {
                 if (auto uri = lsp::string_at(folder, "uri")) {
-                    if (auto path = base::uri_to_path(*uri)) found.push_back(*path);
+                    if (auto named = folder_of_uri_(*uri)) found.push_back(std::move(*named));
                 }
             }
             if (!found.empty()) return found;
         }
         if (auto uri = lsp::string_at(params, "rootUri")) {
-            if (auto path = base::uri_to_path(*uri)) return { *path };
+            if (auto named = folder_of_uri_(*uri)) return { std::move(*named) };
         }
-        if (auto path = lsp::string_at(params, "rootPath"); path && !path->empty()) return { base::normalize_path(*path) };
-        return { platform::fs::current_directory() };
+        if (auto path = lsp::string_at(params, "rootPath"); path && !path->empty()) {
+            const std::string normalized { base::normalize_path(*path) };
+            return { Folder { normalized, base::path_to_uri(normalized) } };
+        }
+        const std::string current { platform::fs::current_directory() };
+        return { Folder { current, base::path_to_uri(current) } };
     }
 
     // `isFirst` wires the session's own `initialize` response to this root's engine settling
     // (design 13.1's timing, kept for the first root when there are several).
-    void create_root_(std::string_view folder, bool isFirst) {
-        const std::string root { platform::fs::canonical_path(folder) };
+    void create_root_(const Folder& folder, bool isFirst) {
+        const std::string root { platform::fs::canonical_path(folder.path) };
         if (std::ranges::any_of(roots_, [&](const auto& existing) { return existing->root() == root; })) return;
         auto created = std::make_unique<WorkspaceRoot>(root, root /* key: a root's own path is already unique */, options_, payload_,
                                                        payloadCorrupt_, kitEnabled_, compilerOverride_, events_);
         WorkspaceRoot* handle { created.get() };
+        // S3 4: status names the root by the client's own URI, which a symbolic link, an 8.3 short
+        // name or a different spelling would otherwise make differ from the canonical path used inside.
+        handle->set_client_uri(folder.uri);
         roots_.push_back(std::move(created));
         std::function<void(Json)> onEngineSettled;
         if (isFirst) onEngineSettled = [this](Json capabilities) { answer_initialize_(capabilities); };
@@ -394,8 +413,10 @@ private:
     void dispatch_watched_files_(const Json& params) {
         std::map<WorkspaceRoot*, Json> perRoot;
         for (const auto& change : params.value("changes", Json::array())) {
-            const Json uriValue { change.value("uri", Json { "" }) };
-            const std::string uri { uriValue.is_string() ? uriValue.get<std::string>() : std::string {} };
+            // Not `Json uriValue { change.value(...) }`: brace-initializing a Json from a Json makes a
+            // one-element array, which left every change without a path and so sent it to the first root.
+            const auto uriValue = change.find("uri");
+            const std::string uri { uriValue != change.end() && uriValue->is_string() ? uriValue->get<std::string>() : std::string {} };
             const std::string path { uri.empty() ? std::string {} : canonical_path_of_uri_(uri) };
             WorkspaceRoot* root { root_for_path_(path) };
             if (root == nullptr) continue;
@@ -423,9 +444,7 @@ private:
         for (const auto& added : event->value("added", Json::array())) {
             auto uri = lsp::string_at(added, "uri");
             if (!uri) continue;
-            auto path = base::uri_to_path(*uri);
-            if (!path) continue;
-            create_root_(*path, false);
+            if (auto folder = folder_of_uri_(*uri)) create_root_(*folder, false);
         }
     }
 

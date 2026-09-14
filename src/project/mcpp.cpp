@@ -113,7 +113,9 @@ namespace {
 
 // S2 0.2 single-document mode against mcpp's machine-output protocol (mcpp-community/mcpp#636):
 // `mcpp --protocol-version` advertises the kind, `mcpp emit build-database --format json` answers it.
-std::optional<InferredDatabase> emit_build_database(const std::string& mcpp, const Detection& detection, const ProviderContext& context) {
+// nullopt when this mcpp cannot be asked; an mcpp that can be asked and fails says why, and nothing
+// else is tried: configuring instead would write into the project and hide what mcpp reported.
+std::optional<base::Result<InferredDatabase>> emit_build_database(const std::string& mcpp, const Detection& detection, const ProviderContext& context) {
     platform::SpawnOptions query;
     query.program = mcpp;
     query.arguments = { "--protocol-version" };
@@ -134,7 +136,7 @@ std::optional<InferredDatabase> emit_build_database(const std::string& mcpp, con
     auto document = spec::run_database_command(command, detection.root, context.configureTimeout);
     if (!document) {
         base::log::warning("mcpp emit build-database failed: {}", document.error().message);
-        return std::nullopt;
+        return base::fail(document.error().code, std::format("mcpp emit build-database failed: {}", document.error().message));
     }
     if (std::ranges::find(document->effects, std::string_view { "write-project" }) != document->effects.end()) {
         base::log::warning("mcpp emit build-database reports that it wrote into the project");
@@ -142,11 +144,11 @@ std::optional<InferredDatabase> emit_build_database(const std::string& mcpp, con
     auto database = spec::from_json(document->database, detection.root);
     if (!database) {
         base::log::warning("mcpp's build database cannot be read: {}", database.error().message);
-        return std::nullopt;
+        return base::fail(database.error().code, std::format("mcpp's build database cannot be read: {}", database.error().message));
     }
     auto enriched = enrich_database(std::move(*database), context.scanner, context.prober);
     enriched.watch = std::move(document->watch);
-    return enriched;
+    return base::Result<InferredDatabase> { std::move(enriched) };
 }
 
 } // namespace
