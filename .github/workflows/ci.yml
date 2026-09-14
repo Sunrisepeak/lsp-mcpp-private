@@ -437,7 +437,8 @@ jobs:
           tools/lsp-mcpp-conformance.exe run --server payload/bin/lsp-mcpp.exe --payload payload \
               --fixture conformance/fixtures/inferred-discover --timeout 180
           # The packaged extension with the same machine view; node stays reachable for the test runner.
-          export PATH="$PATH:$(dirname "$NODE_PATH_FOR_E2E")"
+          # Git's /usr/bin goes first: npm starts through `env bash`, and System32's bash.exe is WSL's.
+          export PATH="/usr/bin:$(dirname "$NODE_PATH_FOR_E2E"):/c/Windows/system32:/c/Windows:/c/Windows/System32/Wbem"
           cd editors/vscode && LSP_MCPP_E2E_VSIX="$RUNNER_TEMP/lsp-mcpp.vsix" npm test
 
   # ---------------------------------------------------------------------------
