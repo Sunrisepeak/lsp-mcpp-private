@@ -3,6 +3,7 @@ import std;
 import lspmcpp.testing;
 import nlohmann.json;
 import lspmcpp.base.path;
+import lspmcpp.base.text;
 import lspmcpp.platform.fs;
 import lspmcpp.platform.dirs;
 import lspmcpp.spec.database;
@@ -174,6 +175,47 @@ int main() {
     "mcpp manifests"_test = [] {
         expect(p::mcpp_package_name("# c\n[package]\nname        = \"lsp-mcpp\"\nversion = \"0.1.0\"\n[dependencies]\nname = \"x\"\n") == "lsp-mcpp");
         expect(p::mcpp_package_name("[dependencies]\nname = \"x\"\n").empty());
+    };
+
+    "a package's std comes from mcpp's std build record"_test = [] {
+        const std::string root { make_root("mcpp-std") };
+        const std::string build { b::join_path(root, "target/x86_64-linux-gnu/3ea09e2fa2b8f653") };
+        const std::string cache { b::join_path(root, "build-cache/v1/std/32dc1b80167fa105") };
+        const std::string runtime { b::join_path(root, "xpkgs/openkal-llvm-runtime-0.9.6") };
+        write(build, "build.ninja", std::format("cxxflags = -std=c++23\nbuild pcm.cache/std.pcm : stage_file {0}/pcm.cache/std.pcm\n"
+                                                "build pcm.cache/std.compat.pcm : stage_file {0}/pcm.cache/std.compat.pcm | pcm.cache/std.pcm\n", cache));
+        nlohmann::json record {
+            { "schema", 1 },
+            { "std_module_source", runtime + "/llvm-generated/std.cppm" },
+            { "std_compat_source", runtime + "/llvm-generated/std.compat.cppm" },
+            { "std_build_commands", nlohmann::json::array({
+                std::format("cd '{0}' && env LD_LIBRARY_PATH='/llvm/lib' '/llvm/bin/clang++' -std=c++23 -Wno-reserved-module-identifier '-nostdinc++' "
+                            "-isystem '{1}/llvm/libcxx/include' '-D_XOPEN_SOURCE=700' --precompile '{1}/llvm-generated/std.cppm' -o 'pcm.cache/std.pcm' 2>&1", cache, runtime),
+                std::format("cd '{0}' && env LD_LIBRARY_PATH='/llvm/lib' '/llvm/bin/clang++' -std=c++23 'pcm.cache/std.pcm' -c -o std.o 2>&1", cache) }) },
+            { "std_compat_build_commands", nlohmann::json::array({
+                std::format("env LD_LIBRARY_PATH='/llvm/lib' '/llvm/bin/clang++' -std=c++23 -fmodule-file=std={0}/pcm.cache/std.pcm "
+                            "--precompile '{1}/llvm-generated/std.compat.cppm' -o '{0}/pcm.cache/std.compat.pcm' 2>&1", cache, runtime) }) },
+        };
+        write(cache, "std-module.json", record.dump(2));
+        p::CompileCommand user;
+        user.directory = root;
+        user.file = b::join_path(root, "src/main.cpp");
+        user.arguments = { "/llvm/bin/clang++", "-std=c++23", std::format("-fmodule-file=std={}/pcm.cache/std.pcm", build), "-c", user.file };
+        const std::vector<p::CompileCommand> commands { user };
+        const auto units = p::mcpp_standard_units(commands);
+        expect(fatal(units.size() == 2u));
+        expect(units[0].file == runtime + "/llvm-generated/std.cppm");
+        expect(units[0].directory == cache);
+        expect(units[0].arguments == std::vector<std::string> { "/llvm/bin/clang++", "-std=c++23", "-Wno-reserved-module-identifier", "-nostdinc++", "-isystem",
+                                                                runtime + "/llvm/libcxx/include", "-D_XOPEN_SOURCE=700", runtime + "/llvm-generated/std.cppm" })
+            << b::join(units[0].arguments, " ");
+        expect(units[1].file == runtime + "/llvm-generated/std.compat.cppm");
+        expect(units[1].directory == cache) << "a command without cd runs where the record is";
+        expect(std::ranges::none_of(units[1].arguments, [](const std::string& word) { return word.starts_with("-fmodule-file=") || word == "-o"; }));
+
+        user.arguments = { "/llvm/bin/clang++", "-std=c++23", "-c", user.file };
+        expect(p::mcpp_standard_units(std::vector<p::CompileCommand> { user }).empty()) << "no staged std BMI, nothing to find";
+        fs::remove_all(root);
     };
 
     "workspace keys are stable and distinct"_test = [] {

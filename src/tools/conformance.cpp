@@ -222,7 +222,7 @@ public:
     Json status;
     std::vector<std::string> statusHistory;
     std::optional<Clock::time_point> firstReady;         // the first status in state ready
-    std::optional<Clock::time_point> firstDiagnostics;   // the first diagnostics published for any file
+    std::optional<Clock::time_point> firstDiagnostics;   // the first diagnostics published once the server is ready or degraded
 
     base::Result<void> start(const Options& options, const std::vector<std::string>& serverArguments, const std::string& workspace,
                              const std::string& cacheDirectory) {
@@ -322,7 +322,8 @@ public:
                 const std::string uri { message["params"].value("uri", std::string {}) };
                 diagnostics[uri] = message["params"].value("diagnostics", Json::array());
                 ++diagnosticsCount[uri];
-                if (!firstDiagnostics) firstDiagnostics = Clock::now();
+                const std::string state { status.is_object() ? status.value("state", std::string {}) : std::string {} };
+                if (!firstDiagnostics && (state == "ready" || state == "degraded")) firstDiagnostics = Clock::now();
             } else if (method == "cxxModules/status") {
                 status = message["params"];
                 statusHistory.push_back(status.value("state", std::string {}));
@@ -449,6 +450,17 @@ public:
     }
 
     std::pair<bool, std::string> run(const Json& check) {
+        // A check may bound its own wait below the run's --timeout.
+        const std::chrono::seconds runTimeout { timeout_ };
+        if (auto own = check.find("timeout"); own != check.end() && own->is_number()) {
+            timeout_ = std::min(runTimeout, std::chrono::seconds { own->get<std::int64_t>() });
+        }
+        auto result = run_(check);
+        timeout_ = runTimeout;
+        return result;
+    }
+
+    std::pair<bool, std::string> run_(const Json& check) {
         const std::string kind { check.value("kind", std::string {}) };
         const std::string file { check.value("file", std::string { "src/main.cpp" }) };
         // A check may bring its own unsaved buffer.

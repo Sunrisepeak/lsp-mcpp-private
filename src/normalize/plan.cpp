@@ -328,8 +328,10 @@ EnginePlan plan_engine(const PlanInput& input) {
             add_module(module.logicalName, std::move(requires_), templateIndex, representative.unit->workDirectory);
         }
     } else if (anyStd && stdEntries.empty()) {
+        // Units of the context may provide std themselves (a package's std.cppm).
+        auto unprovided_std = [&](const std::string& name) { return is_std_module(name) && !providers.contains(name); };
         for (const auto& candidate : candidates) {
-            if (std::ranges::any_of(candidate.required, is_std_module)) {
+            if (std::ranges::any_of(candidate.required, unprovided_std)) {
                 plan.issues.push_back(PlanIssue { "unresolved-module", "the standard library module manifest was not found", candidate.source, "std" });
                 break;
             }

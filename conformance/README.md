@@ -79,7 +79,8 @@ In `prepare` and `server-arguments`, `{exe}` expands to the platform executable 
 `{env:NAME|fallback}` to an environment variable, `{workspace}` to the fixture's scratch copy and
 `{runner-dir}` to the directory of the runner executable. Positions are `[line, character]`,
 zero-based, UTF-16. A check with `"text"` opens its file with that unsaved content;
-a check with `"optional": true` reports `SKIP` instead of failing.
+a check with `"optional": true` reports `SKIP` instead of failing, and `"timeout": SECONDS`
+waits less than the run's `--timeout`.
 
 | Kind | Passes when |
 |---|---|

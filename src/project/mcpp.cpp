@@ -1,6 +1,7 @@
 module lspmcpp.project.mcpp;
 
 import std;
+import nlohmann.json;
 import lspmcpp.base.error;
 import lspmcpp.base.path;
 import lspmcpp.base.text;
@@ -35,6 +36,77 @@ std::string mcpp_package_name(std::string_view manifestText) {
         }
     }
     return {};
+}
+
+std::vector<CompileCommand> mcpp_standard_units(std::span<const CompileCommand> commands) {
+    static constexpr std::string_view STAGED { "-fmodule-file=std=" };
+    std::string stagedBmi;
+    for (const auto& command : commands) {
+        const auto argument = std::ranges::find_if(command.arguments, [](const std::string& word) { return word.starts_with(STAGED); });
+        if (argument == command.arguments.end()) continue;
+        stagedBmi = argument->substr(STAGED.size());
+        if (!base::is_absolute_path(stagedBmi)) stagedBmi = base::join_path(command.directory, stagedBmi);
+        break;
+    }
+    if (stagedBmi.empty()) return {};
+    // <build directory>/pcm.cache/std.pcm, staged by `build pcm.cache/std.pcm : stage_file <cache>/pcm.cache/std.pcm`.
+    const std::string buildDirectory { base::parent_path(base::parent_path(stagedBmi)) };
+    const auto ninja = platform::fs::read_file(base::join_path(buildDirectory, "build.ninja"));
+    if (!ninja) return {};
+    static constexpr std::string_view RULE { "build pcm.cache/std.pcm : stage_file " };
+    std::string cachedBmi;
+    for (const auto line : base::split_lines(*ninja)) {
+        if (!line.starts_with(RULE)) continue;
+        const std::string_view rest { line.substr(RULE.size()) };
+        cachedBmi = std::string { base::trim(rest.substr(0, rest.find_first_of(" |"))) };
+        break;
+    }
+    if (cachedBmi.empty()) return {};
+    const std::string recordPath { base::join_path(base::parent_path(base::parent_path(cachedBmi)), "std-module.json") };
+    const auto recordText = platform::fs::read_file(recordPath);
+    if (!recordText) return {};
+    const nlohmann::json record = nlohmann::json::parse(*recordText, nullptr, false);
+    if (!record.is_object() || record.value("schema", 0) != 1) return {};
+
+    std::vector<CompileCommand> units;
+    auto add = [&](const char* sourceKey, const char* commandsKey) {
+        const std::string source { record.value(sourceKey, std::string {}) };
+        if (source.empty() || !record.contains(commandsKey) || !record[commandsKey].is_array()) return;
+        for (const auto& text : record[commandsKey]) {
+            if (!text.is_string()) continue;
+            // `cd '<dir>' && env NAME=value... '<compiler>' <arguments> --precompile '<source>' -o '<bmi>' 2>&1`
+            const auto words = split_command(text.get<std::string>(), CommandSyntax::posix);
+            if (std::ranges::find(words, std::string_view { "--precompile" }) == words.end()) continue;
+            CompileCommand unit;
+            unit.directory = base::parent_path(recordPath);
+            unit.file = source;
+            std::size_t i { 0 };
+            if (words.size() > 3 && words[0] == "cd" && words[2] == "&&") {
+                unit.directory = words[1];
+                i = 3;
+            }
+            if (i < words.size() && words[i] == "env") {
+                for (++i; i < words.size() && words[i].find('=') != std::string::npos && !words[i].starts_with('-'); ++i) {}
+            }
+            for (; i < words.size(); ++i) {
+                const std::string& word { words[i] };
+                if (word == "2>&1" || word == "--precompile") continue;
+                if (word == "-o") {
+                    ++i;
+                    continue;
+                }
+                if (word.starts_with("-fmodule-file=")) continue;
+                unit.arguments.push_back(word);
+            }
+            if (unit.arguments.empty()) return;
+            if (std::ranges::find(unit.arguments, source) == unit.arguments.end()) unit.arguments.push_back(source);
+            units.push_back(std::move(unit));
+            return;
+        }
+    };
+    add("std_module_source", "std_build_commands");
+    add("std_compat_source", "std_compat_build_commands");
+    return units;
 }
 
 namespace {
@@ -106,6 +178,14 @@ base::Result<InferredDatabase> load_mcpp(const Detection& detection, const Provi
     }
     auto commands = read_compile_commands(commandsPath);
     if (!commands) return std::unexpected { commands.error() };
+    // A package's std, which mcpp builds outside the compile database (W8).
+    for (auto& unit : mcpp_standard_units(*commands)) {
+        const bool listed { std::ranges::any_of(*commands, [&](const CompileCommand& command) { return base::same_path(command.file, unit.file); }) };
+        if (!listed) {
+            base::log::info("the standard library module {} comes from mcpp's std build record", unit.file);
+            commands->push_back(std::move(unit));
+        }
+    }
     std::string name { std::string { base::file_name(detection.root) } };
     if (auto manifest = platform::fs::read_file(detection.manifest)) {
         if (std::string package { mcpp_package_name(*manifest) }; !package.empty()) name = package;

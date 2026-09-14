@@ -1,0 +1,112 @@
+name: nightly
+
+# What is too slow or too variable for every commit (usable plan W7, W8): the whole CI,
+# then three cold and warm starts per host with their medians, and the self-hosting
+# fixtures with their timings. The measure files are uploaded.
+on:
+  schedule:
+    - cron: '30 18 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  MCPP_VERSION: 2026.9.14.1
+  LLVM_VERSION: 22.1.8
+  XLINGS_VERSION: v2026.8.17.2
+  XLINGS_NON_INTERACTIVE: '1'
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  timing:
+    name: startup timing (${{ matrix.platform }})
+    needs: ci
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x64,    os: ubuntu-24.04 }
+          - { platform: darwin-arm64, os: macos-14 }
+          - { platform: win32-x64,    os: windows-2022 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: payload-${{ matrix.platform }}
+      - name: Unpack the payload
+        run: tar -xzf payload-${{ matrix.platform }}.tar.gz
+      - name: Three cold and warm starts
+        run: |
+          set -euo pipefail
+          exe=''; [ "$RUNNER_OS" = Windows ] && exe='.exe'
+          python=python3; command -v python3 > /dev/null || python=python
+          results="$RUNNER_TEMP/timing-results"
+          mkdir -p "$results"
+          for round in 1 2 3; do
+            for start in cold warm; do
+              warm=(); [ "$start" = warm ] && warm=(--expect-warm)
+              "tools/lsp-mcpp-conformance$exe" run --server "payload/bin/lsp-mcpp$exe" --payload payload --fixture conformance/fixtures/timing \
+                  --workspace-dir "$RUNNER_TEMP/timing-$round/workspace" --cache-dir "$RUNNER_TEMP/timing-$round/cache" --timeout 120 \
+                  --measure "$results/$start-$round.json" ${warm[@]+"${warm[@]}"}
+            done
+          done
+          "$python" .github/scripts/timing_summary.py "$results" | tee "$results/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nightly-timing-${{ matrix.platform }}
+          path: ${{ runner.temp }}/timing-results
+
+  # The two repositories of usable plan W8 at fixed commits. lsp-mcpp is not self-hosted
+  # on Windows: its build there needs --target x86_64-windows-gnu, which no editor setting
+  # passes to mcpp yet (mcpp-community/mcpp#636).
+  self-hosting:
+    name: self-hosting (${{ matrix.fixture }}, ${{ matrix.platform }})
+    needs: ci
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { fixture: self-mcpp,     platform: linux-x64,    os: ubuntu-24.04 }
+          - { fixture: self-lsp-mcpp, platform: linux-x64,    os: ubuntu-24.04 }
+          - { fixture: self-lsp-mcpp, platform: darwin-arm64, os: macos-14 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-mcpp
+      - name: GCC 16, which the mcpp repository builds with
+        if: matrix.fixture == 'self-mcpp'
+        run: mcpp toolchain install gcc 16.1.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: payload-${{ matrix.platform }}
+      - name: Unpack the payload
+        run: tar -xzf payload-${{ matrix.platform }}.tar.gz
+      - name: The fixture, timed
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/self"
+          if ! tools/lsp-mcpp-conformance run --server payload/bin/lsp-mcpp --payload payload --fixture conformance/fixtures/${{ matrix.fixture }} \
+                --timeout 900 --measure "$RUNNER_TEMP/self/${{ matrix.fixture }}.json"; then
+            tools/lsp-mcpp-conformance run --server payload/bin/lsp-mcpp --payload payload --fixture conformance/fixtures/${{ matrix.fixture }} \
+                --timeout 300 --verbose 2>&1 | tail -300 || true
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/self/${{ matrix.fixture }}.json" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nightly-${{ matrix.fixture }}-${{ matrix.platform }}
+          path: ${{ runner.temp }}/self
