@@ -137,6 +137,9 @@ lsp-mcpp 采用的做法：
 | D23 | 服务端核心代码不使用头文件与宏：全部是 `.cppm` 接口 + `.cpp` 实现单元，平台差异用 `if constexpr` 判断，平台常量由按目标选择的 `lspmcpp.os` 模块提供 | 2026-09-14 |
 | D24 | 通用库优先复用 mcpp 生态（mcpp-index）中的模块化库，不使用 compat 形态的包：JSON 用 `nlohmann.json`，命令行用 `mcpplibs.cmdline`；`boost.ut` 因 Windows 主机编译崩溃暂不采用（见 12.8、12.9） | 2026-09-14 |
 | D25 | openkal 体系的问题分两类处理：缺陷级别直接向对应仓库提 PR 修复；需求级别只记录，不改动 openkal 规范（见 12.9） | 2026-09-14 |
+| D26 | clang++ 构建 MSVC ABI（P5）、clang-cl（P6）与 MSVC STL 的 `import std` 是第一版必须项，各有 Windows 主机上的一致性夹具（见[第一版真实可用方案](2026-09-14-lsp-mcpp-v1-usable-plan.md)） | 2026-09-14 |
+| D27 | 保留 9.3 节第 5 条：没有构建系统、检测到 Visual Studio 时自动改用 MSVC 语义 | 2026-09-14 |
+| D28 | 暂不发布预发布版本，可用性以本地与 CI 验证为准 | 2026-09-14 |
 
 ## 4. 问题、范围与平台矩阵
 
