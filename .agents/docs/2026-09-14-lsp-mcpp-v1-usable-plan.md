@@ -1,7 +1,7 @@
 # lsp-mcpp 第一版真实可用方案
 
 日期：2026-09-14
-状态：**方案草案，待 review**
+状态：**已实施**，执行记录见第 10 节
 范围：PR #1 已交付的实现之上，第一版达到真实可用还缺的能力、验证与证据
 关联：
 - 设计：[2026-09-13-cxx-modules-unified-lsp-design.md](2026-09-13-cxx-modules-unified-lsp-design.md)（v0.4）
@@ -12,7 +12,7 @@
 
 ## 目录
 
-0 概述 · 1 本轮决定 · 2 可用的判定场景 · 3 实测基线与差距 · 4 工作项 · 5 验证体系 · 6 顺序与依赖 · 7 风险 · 8 不在本方案内的事项 · 9 需要 review 的要点
+0 概述 · 1 本轮决定 · 2 可用的判定场景 · 3 实测基线与差距 · 4 工作项 · 5 验证体系 · 6 顺序与依赖 · 7 风险 · 8 不在本方案内的事项 · 9 需要 review 的要点 · 10 执行记录
 
 ## 0. 概述
 
@@ -498,3 +498,84 @@
 8. **干净机器用模拟（W5）。** Windows 隐藏 Visual Studio，macOS 移走 Command Line Tools 与 Xcode，不使用真正干净的虚拟机。
 9. **clangd 回归的上报时机。** D14 把上游贡献放到最后；这个回归直接影响 D26，最小复现已经具备。建议 W1 完成后立即向 LLVM 报告，作为 D14 的例外。
 10. **交付方式。** 继续在 PR #1 上按阶段 A→E 提交，每个阶段结束时 CI 全部通过；不做预发布（D28）。
+
+## 10. 执行记录
+
+交付于 Sunrisepeak/lsp-mcpp-private#1（分支 `feat/lsp-mcpp-v1`），2026-09-14。按目标“先用模拟数据保证全部实现”，mcpp 一侧的 `emit build-database` 由 `lsp-mcpp-mock-mcpp` 按 mcpp-community/mcpp#636 的契约模拟；其余工作项都在 lsp-mcpp 中实现，由 CI 在三个主机上验证。
+
+### 10.1 工作项结果
+
+| 工作项 | 结果 | 证据 |
+|---|---|---|
+| W1 | 完成：两种标准库清单形状；显式传入 Visual Studio 工具集与 Windows SDK；cl 模式的 `.cppm` 副本；MSVC STL 上下文关闭对齐分配；模块构建失败时降级（`module-build-failed`）；交互请求 10 秒应答 | windows-2022 上服务端不带开发者环境运行：`cmake-msvc`、`cmake-msvc-std`、`cmake-clangxx-msvc`、`cmake-clang-cl`、`compdb-clangxx-msvc-std`、`compdb-clang-cl-std`、`mcpp-msvc`、`mcpp-llvm-msvc` |
+| W2 | 完成；工具集没有 `std` 模块时状态带提示 `msvc-without-std-module`，不降级 | `inferred-msvc`；单元测试 |
+| W3 | 消费端与 S2 0.2 单文档模式完成，生产方由模拟数据验证 | `mcpp-emit`、`mcpp-emit-package-std`（等级 3，工作区不变）、`mcpp-emit-broken`、`mcpp-emit-watch` |
+| W4 | 完成：CMake 4.4.2 的开关 UUID 表，私有配置构建 `build_database.json` | `cmake-clang-bdb`（Linux）、`cmake-msvc-bdb`（Windows） |
+| W5 | 完成，三个干净机器任务每次提交运行 | Linux：`ubuntu:24.04` 容器中的 `inferred-discover` 与容器中的端到端测试；Windows：隐藏 Visual Studio 后同样两项；macOS：移走 Command Line Tools 与 Xcode 后的 `inferred-no-sdk` 与“只询问一次”的端到端测试 |
+| W6 | 完成：VSIX 形态、界面计数、工作区不变、冲突处理 | 三个主机的 VS Code 端到端任务 |
+| W7 | 完成：模块准备、模块提示、冷温启动计时与 SC4；门槛与测量见第 10.4 节 | `timing` 夹具（每次提交），nightly 三次中位数 |
+| W8 | 完成过渡方案：`std` 取自 mcpp 的 std 构建记录 | `self-lsp-mcpp`、`self-mcpp`（nightly） |
+| W9 | W9.1–W9.5 完成 | `multi-root`（三个主机）、`s1-two-sets`、`watch-polling`、`payload-corrupt`；假引擎单元测试 |
+| W10 | 完成：示例校验，S1–S4 共 144 条规则编号并有证据 | `specifications` 任务 |
+| W11 | 完成：Windows 与 macOS 负载使用 Linux 交叉构建的服务端，组装时比对 sha256 | `payload` 任务及其下游任务 |
+
+### 10.2 与方案不同的做法
+
+| 方案 | 实际 | 原因 |
+|---|---|---|
+| W1.3：cl.exe 与 clang-cl 的命令以 clangd 的 cl 驱动模式交给引擎 | MSVC 家族的命令统一翻译为 GNU 模式的 clang++ 命令，显式传入工具集、SDK 与 `-fms-compatibility-version` | cl 模式下 `/clang:` 参数排在输入之后，`.ixx` 无法标为模块单元；clangd 的 CommandMangler 还会丢掉未知的 `-x`（E7） |
+| W3 退出标准：使用 mcpp 正式发布的版本 | 生产方由 `lsp-mcpp-mock-mcpp` 模拟；`mcpp-gcc`、`mcpp-llvm`、`mcpp-msvc`、`mcpp-llvm-msvc` 仍经真实 mcpp 的 `--configure-only` 得到等级 2，状态带提示 `producer-writes-project` | 本轮目标要求先用模拟数据；mcpp#636 尚未实现 |
+| W5.1：Linux 干净机器全部在 `ubuntu:24.04` 容器中运行 | 一致性夹具在 `ubuntu:24.04`；端到端测试在 `node:22-bookworm-slim`，同样不带编译器（任务中断言） | 端到端测试需要 Node；apt 安装图形库时 shared-mime-info 的 `update-mime-database` 逐个文件同步写盘，容器内曾卡满整个任务时限，关闭同步后 15 秒装完 |
+| W7：后台预构建 `std`，按拓扑顺序预构建被导入最多的模块 | 每个模块一个 `import M;` 准备单元，导入就绪即打开，等待链最长的先开，准备好的单元保持打开到空闲；引擎数据库写出模块提示，跳过 clangd 对整个数据库的串行扫描；clangd 缓存中已有的模块不再准备；准备单元为每个等待模块的文件保留一个核心，另外总为请求保留一个 | 读 clangd 23.1 源码并实测：全局扫描每个工作线程数秒；已构建的模块只在有打开文件持有时保留；准备单元与打开的文件、编辑与补全共用 clangd 的工作线程，温启动时只会争抢（第 10.4 节） |
+| W7：同一语义配置跨工作区共享 `std` 的 BMI | 暂缓，记入 issue #2 | clangd 的持久化缓存以模块源路径与“工作目录 + 完整命令”的哈希为键，`std` 条目继承工程参数，只有参数完全相同的工程才能命中 |
+| W7.3：CI 温启动门槛 2 秒 | 5 秒，三个主机相同；冷启动仍为 15 秒 | CI 机器（3–4 个虚拟核心）nightly 三次温启动中位数 Linux 1.96 秒、macOS 1.85 秒、Windows 2.88 秒；重建 `std` 这一严重退化由 SC4 断言拦截 |
+| W8：`std` 由 mcpp 以翻译单元输出（W3 之后） | 过渡方案：服务端沿编译数据库中的 `std.pcm` 找到 `build.ninja` 与 mcpp std 构建缓存中的 `std-module.json`（schema 1），把记录的 `std`、`std.compat` 源文件与命令作为单元加入 | 方案要求实施前确认可行性；本地确认 mcpp 2026.9.14.1 写出该记录 |
+| 5.2：nightly 以 mcpp 最新发布版运行 mcpp 夹具 | 未做，nightly 使用固定版本，记入 issue #2 | 固定版本之外的一行需要单独维护 mcpp 安装步骤，本轮未排入 |
+| 第 7 节：夹具默认检查超时从 180 秒降到 60 秒 | CI 仍传 `--timeout 180`，需要更短时限的检查在场景中写 `"timeout"` | 超时只影响失败时的等待；Windows 上构建 `std` 的夹具首个检查接近 20 秒 |
+| 第 9 节第 9 条：W1 完成后向 LLVM 报告 `align_val_t` 回归 | 未提交，记入 issue #2 | 属于对外提交，需先确认作为 D14 的例外 |
+
+### 10.3 方案之外补充的内容
+
+| 内容 | 说明 | 证据 |
+|---|---|---|
+| S2-5-1 生产方列出的监视输入 | 模型的 `watch` 条目向编辑器动态注册（支持相对模式时用相对模式），轮询回退读取同样的条目；条目变化时重新加载模型；结果与当前模型相同时只替换模型，不重建索引与计划 | `mcpp-emit-watch`，并以 `@polling` 在不支持动态注册的客户端模式下再运行一次 |
+| S2-5-9 保留上次成功的模型 | 生产方这次失败时不回退到扫描源码，状态降为 degraded 并带 `model-stale`，说明 mcpp 自己的诊断；再次成功后恢复 ready。能生成数据库的 mcpp 报错时直接报告该错误，不再改用会写工程目录的 `--configure-only` | `mcpp-emit-watch`、`mcpp-emit-broken`（模拟生产方的 `build` 会留下 `compile_commands.json`，工作区检查因此能发现误用） |
+| S3 规则编号与两条实现 | S3 的 7 条规则编号；状态中状态不变的更改每 250 毫秒合并发送一次（S3-4-2）；扩展只向声明了 `experimental.cxxModules` 的服务端发 `cxxModules/` 请求（S3-3-2） | `conformance/traceability.json` |
+| 多根工作区的两处缺陷 | `cxxModules/status` 的 `project.root` 改为客户端发来的文件夹 URI（macOS 的 `/private/var` 与 Windows 的短文件名使规范化路径与之不同）；`workspace/didChangeWatchedFiles` 的各项按路径分给所属的根（此前 nlohmann 花括号初始化把 URI 变成数组，所有变化都交给了第一个根） | `multi-root` 在三个主机通过，新增的检查在第二个根中写文件并断言该根重新加载 |
+| 交互请求等待模块准备 | 文件的模块仍在准备、且最近 10 秒内有模块完成时，跳转、悬停、补全继续等待，每次 5 秒，至多到 60 秒 | 单元测试；mcpp 仓库首次跳转只应答一次（第 10.4 节） |
+| 扩展显示提示项 | 语言状态项的悬停在没有问题项时显示第一条提示（`notices`），此前提示不显示 | 代码 `editors/vscode/src/status.ts` |
+| 一致性运行器的补全检查 | 带 `insert` 的补全检查用 `split_lines` 切分一个临时字符串，切出的视图悬空，插入后的文本偶尔含 NUL 并被截断；clangd 对错乱的缓冲区作答，检查一直重试到超时。self-lsp-mcpp 的 C6 因此时而耗时数分钟，先前记录的“冷启动约 5 分钟”包含这一部分 | self-lsp-mcpp 连续四次冷启动 C6 在 0.1–0.2 秒内通过 |
+| mcpp#636 契约补充 | 失败时的信封、`watch` 的语义与“不写监视中的文件”、重复运行的耗时、路径写法一致、`requires` 的准确性、依赖包 `std` 的临时读取方式，以及用 `mcpp-emit` 夹具验收真实 mcpp 的做法 | mcpp-community/mcpp#636 的评论 |
+| macOS 开发者工具占位程序 | 没有 Command Line Tools 时，`/usr/bin` 下的 clang++、c++、xcrun 会弹出安装对话框；发现流程与 SDK 检查改为只看文件系统 | macOS 干净机器任务 |
+
+### 10.4 测量
+
+小工程为 `timing` 夹具（`inferred` 工程，打开即跳转）；“冷”为新缓存目录，“温”为同一工作区与缓存的再次启动；数值为从 `initialize` 到首次跳转应答。自举夹具的首次跳转排在状态进入 ready、两个文件发布诊断之后，包含 mcpp 配置工程的时间。
+
+| 场景 | 机器 | 冷启动 | 温启动 |
+|---|---|---|---|
+| 小工程 | 开发机 i9-13900K（24 核 32 线程），dev 构建，限定 2 个物理核心 | 2.35–2.49 秒（调整前 2.51） | 0.80 秒（调整前 1.07） |
+| 小工程 | 同上，限定 4 个物理核心或不限定 | 2.12–2.14 秒 | 0.81 秒 |
+| 小工程 | 同上，限定 1 个物理核心的 2 个线程（clangd `-j=1`） | 4.09 秒（调整前 4.43） | 1.00 秒（调整前 1.81） |
+| 小工程 | CI nightly，ubuntu-24.04（4 线程）、macos-14（3 核）、windows-2022（4 线程），三次中位数 | 5.52 / 4.40 / 8.50 秒 | 1.96 / 1.85 / 2.88 秒 |
+| 小工程 | 同上机器，调整前（提交 072c5a8）单次 | 5.4 / 3.4 / 9.1 秒 | 2.1 / 1.6 / 4.3 秒 |
+| mcpp 仓库（171 个模块，gcc 16） | 开发机，32 线程 | 24.9–26.3 秒；不做模块准备 38.0 秒；调整前 25.6–26.2 秒；E17 为 95.4 秒 | 4.9–5.0 秒（调整前 5.5–5.6） |
+| mcpp 仓库 | CI nightly，ubuntu-24.04（4 线程） | 首次跳转 125 秒（其中声明跳转等待 110 秒） | 未测 |
+| lsp-mcpp 仓库（依赖 openkal-llvm-runtime） | 开发机，32 线程 | 整个场景 14.5–14.9 秒（不含引用检查），其中 mcpp 配置约 6 秒 | 未测 |
+| lsp-mcpp 仓库 | CI nightly，ubuntu-24.04 / macos-14 | 首次跳转 31.6 / 50.0 秒，其中 mcpp 配置与状态进入 ready 25.5 / 29.8 秒 | 未测 |
+
+“调整”指提交 473f082 与 56c1b31：clangd 缓存中已有的模块不再准备；准备单元为每个等待模块的文件保留一个核心，另外总为请求保留一个。在 CI 的三个主机上以 `--log-level debug` 记录的时间线显示，温启动的主要耗时在 clangd 为每个翻译单元扫描所导入模块的源文件（`std.cppm` 包含全部标准库头文件）并校验缓存的 BMI；这部分在 clangd 内部串行进行，服务端只能避免重复（issue #2）。
+
+设计指标（冷启动 5 秒、温启动 1 秒）在开发机上的小工程达到；CI 机器与大工程的实测值写入设计文档第 1.3 节。
+
+### 10.5 上游改动
+
+| 仓库 | 改动 | 版本 |
+|---|---|---|
+| openkal-musl | #34：Windows 上 mmap 模拟按整页分配（K14：musl mallocng 使用单独映射的大块内存直到页尾，按字节分配时越界写入） | 0.13.5 |
+| openkal-llvm-runtime | #21：带上 openkal-musl 0.13.5 | 0.9.6 |
+| mcpp-index | #424、#425：收录上述两个版本 | — |
+| mcpp | #636：`emit build-database` 功能需求，尚未实现 | — |
+
+此前各轮的上游改动（K1–K13）见设计文档第 12.9 节；只记录、未修复的事项与暂缓工作集中在 issue #2。
+
