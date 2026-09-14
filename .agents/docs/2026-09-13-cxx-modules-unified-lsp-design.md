@@ -664,6 +664,7 @@ starting ──> loading ──> preparing ──> ready
 | K11 | 缺陷 | Windows 上启动的程序收到被改写的参数：`C:\dir\file.txt` 变成 `C:dirfile.txt`，末尾的反斜杠把后面的参数并成一个；`cmd.exe` 和经它运行的批处理文件无法正常启动（windows-2022 上一致性夹具启动 `mcpp` 时经过了 `cmd.exe`），报 `UNC paths are not supported` 与 `The syntax of the command is incorrect` | openkal-windows 生成命令行时计数的反斜杠从未写出，参数就地转换在命令行缓冲区之后、转义会覆盖尚未读取的内容；每个参数都加引号，而 `cmd.exe` 不认带引号的开关；子进程按“名字”读取参数，把 `\` 改成 `/`；程序路径与工作目录带 `\\?\` 前缀，`cmd.exe` 拒绝这样的当前目录 | 已合入并发布：mcpplibs/openkal-windows#22（0.7.3），mcpp-index#418：按 `CommandLineToArgvW` 的逆规则只在需要时加引号，参数原样读取，名字不带前缀也成立时去掉 `\\?\`。lsp-mcpp 这边新增参数往返与命令解释器单元测试，并把传给 Windows 子进程的 argv[0] 改为反斜杠形式（`C:/Windows/System32/cmd.exe` 会被 `cmd.exe` 读成 `/c md.exe`） |
 | K12 | 缺陷 | Windows 上带着修改过的环境启动的程序无法经 `cmd.exe` 执行任何命令：一致性运行器启动 `mcpp`（xlings 启动器）、CMake 配置 MSVC 时 Ninja 调用 `%ComSpec% /C`，都报 `The syntax of the command is incorrect` | openkal-windows 报告环境变量值时按“名字”窄化，`\` 被改成 `/`；给子进程传环境只能复制本进程的环境，子进程于是得到 `ComSpec=C:/Windows/system32/cmd.exe`，`cmd.exe` 把 `/cmd.exe` 读成 `/c md.exe` | 已合入并发布：mcpplibs/openkal-windows#23（0.7.4），mcpp-index#421：环境变量值原样报告；lsp-mcpp 单元测试新增环境变量往返与 `ComSpec` 用例 |
 | K13 | 缺陷 | macOS 上所有 release 构建的程序在 `main` 之前段错误：lsp-mcpp 服务端与只有 `import std; std::println` 的最小程序都停在 `kal_fs_preopen`，调用方是 openkal-musl 的初始化函数 | XNU 每次系统调用都在 x1（x86_64 为 rdx）返回第二个值，openkal-macos 的系统调用包装却把 x1 声明为仅输入；优化器因此认为 x1 跨调用不变，`openat` 之后把已被清零的 x1 当作 `"/"` 的地址存进 preopen 表。同一 release 构建还把计数循环换成了 `strlen` | 已合入并发布：mcpplibs/openkal-macos#20（0.9.1：x1/rdx 声明为输出，`-fno-builtin`，CI 在 dev 与 release 两种配置下运行自身测试与独立性检查），mcpp-index#421；由 openkal-musl 0.13.4（#33，mcpp-index#422）与 openkal-llvm-runtime 0.9.5 携带，运行时包的主机任务增加 release 构建运行检查 |
+| K14 | 缺陷 | Windows 上分配 131,052 字节以上内存的程序越界写入：windows-2022 上一致性运行器读取构建目录（含约 200 KB 的文件）时访问违例，另一些夹具无输出退出；Wine 下以 `push_back` 把 `std::string` 增长到 196,607 字节以上时程序无声结束 | musl 的分配器把这类分配作为单独的映射取得（`mmap(n + IB + UNIT)`），并使用到最后一页的末尾：槽长为 `页数 × 4096 - UNIT`，块起点可偏移近一页，槽尾标记写在页末之前。openkal-musl 移植层的 `mmap` 只向 `kal_alloc` 要所请求的长度，Windows 上这段内存来自进程堆，页内余下部分属于下一个堆块的头部 | 已合入并发布：mcpplibs/openkal-musl#34（0.13.5：`SYS_mmap` 与 `SYS_munmap` 把长度取整到整页；新增 `examples/malloc-large`，每个 CI 行运行），mcpp-index#424；由 openkal-llvm-runtime 0.9.6 携带（#21，`examples/cxx` 增长 4 MB 字符串，dev 与 release 都运行），mcpp-index#425。lsp-mcpp 的一致性运行器同时改为按块计算文件摘要，不再把构建目录整个读入内存 |
 | K4 | 需求 | `kal_process_spawn` 的 `envp` 为空时子进程得到空环境，而不是继承父进程环境 | 规范语义 | 只记录；平台层显式传入从 `kal_env_var_at` 读到的完整环境 |
 
 ## 13. 关键流程
@@ -679,7 +680,7 @@ starting ──> loading ──> preparing ──> ready
 ### 13.2 打开文件
 
 1. `didOpen` 到达后，路由先更新语法索引，并立即发布模块级诊断，例如无法解析的模块名。
-2. 若该文件所有导入都可解析，转发给 clangd；clangd 准备前置模块，状态进入 preparing。
+2. 若该文件所有导入都可解析，转发给 clangd；clangd 准备前置模块，服务端同时按模块图并行准备（15.1 节“模块准备”），状态进入 preparing 并带进度。
 3. 准备完成后状态回到 ready，后续请求按第 12.6 节路由。
 
 ### 13.3 编辑与保存
@@ -795,6 +796,8 @@ mcpp emit build-database [--toolchain SPEC] [--target TRIPLE] [--format json|jso
 | 启动参数 | `--experimental-modules-support --use-dirty-headers --compile-commands-dir=<上下文目录>/cdb --background-index` |
 | 看门狗 | 每个转发请求有截止时间；超时返回降级结果并记录问题；同一文件连续超时重启引擎 |
 | 能力表 | 按 clangd 版本记录可依赖的行为，例如 23.x 的持久化模块缓存 |
+| 模块准备 | clangd 23.1 在打开文件的工作线程里逐个构建该文件导入的模块。服务端为每个模块写一个只有 `import M;` 的准备单元，M 的导入全部构建完成就打开它，同时打开的数量不超过处理器核数，其上等待的模块链最长的先开。准备好的单元保持打开，直到没有模块在准备、也没有文件在等诊断：clangd 只在有打开文件持有时才保留构建好的模块，否则后开的单元要重新校验并复制它能到达的每个模块。mcpp 仓库（171 个模块，32 核）首次跨模块跳转实测 26–35 秒，未并行时约 53 秒，E17 为 95.4 秒 |
+| 模块提示 | 为找到提供某个模块的单元，clangd 23.1 会逐个扫描数据库中的全部文件，每个工作线程第一次查找某个模块名时都可能触发，几百个文件需要数秒。引擎数据库的每个条目写出它能到达的每个模块 `-fmodule-file=<名>=<路径>`，提供模块的条目再写 `-fmodule-output=<路径>`，路径指向从不写入的位置；clangd 据此直接找到单元，只扫描这一个文件确认（其 `CompileCommandsProjectModules`）。提示不属于数据库的结构：只有提示变化时重写数据库而不重启 clangd，clangd 在 5 秒内自行重读 |
 | 可插拔 | 引擎接口只有启动、推送数据库、转发 LSP、能力查询四项，预留 clice 实现 |
 
 ### 15.2 负载组成与体积
