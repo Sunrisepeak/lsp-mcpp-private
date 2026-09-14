@@ -1,14 +1,16 @@
 // lsp-mcpp-mock-mcpp: stands in for mcpp in conformance fixtures. It answers the
-// machine-output contract proposed in mcpp-community/mcpp#636 from data a fixture
-// recorded in mcpp-mock.json, so the consumer side is exercised before mcpp
-// ships the command.
+// machine-output contract of mcpp-community/mcpp#636 from data a fixture recorded in
+// mcpp-mock.json, for what a real mcpp cannot be made to do on demand: fail, change
+// its answer, or take std from a package at a path of the fixture's choosing. mcpp
+// 2026.9.15.1 ships the command; the recorded data is its output.
 //
 //   lsp-mcpp-mock-mcpp --protocol-version
 //   lsp-mcpp-mock-mcpp emit build-database --format json
 //
 // In mcpp-mock.json every string may use ${root} (the directory the command runs
 // in) and ${env:NAME} or ${env:NAME|fallback}. {"database": <S1>, "watch": [...]}
-// is answered as an envelope; {"diagnostics": [...]} as a failure with exit 1.
+// is answered as an envelope; {"diagnostics": [...]} as a failure with exit 1; {"unavailable": "..."}
+// as xlings answers for an mcpp a project pins but that is not installed.
 import std;
 import nlohmann.json;
 import lspmcpp.base.path;
@@ -97,7 +99,9 @@ int protocol_version() {
     document["kind"] = "mcpp.protocol";
     document["envelope"] = Json { { "min", 1 }, { "max", 1 } };
     document["kinds"] = Json { { "mcpp.build-database", 1 } };
-    document["commands"] = Json { { "emit build-database", Json { { "effects", Json::array({ "read-project", "network", "write-global-cache", "exec-build-script" }) } } } };
+    // As mcpp 2026.9.15.1 declares it.
+    document["commands"] = Json { { "emit build-database", Json { { "effects", Json::array({ "init-mcpp-home", "read-project", "network", "write-global-cache",
+                                                                                              "exec-build-script" }) } } } };
     document["mcpp"] = Json { { "version", VERSION } };
     std::println("{}", document.dump(2));
     return 0;
@@ -143,6 +147,15 @@ int emit_build_database(std::span<const std::string> arguments) {
 
 int main(int argc, char* argv[]) {
     const std::vector<std::string> arguments { argv + 1, argv + argc };
+    // {"unavailable": "<text>"}: a project whose .xlings.json asks for an mcpp that is not installed.
+    // xlings then answers every command in mcpp's place, with <text> on standard error, and runs nothing.
+    if (auto text = fs::read_file(base::join_path(fs::current_directory(), "mcpp-mock.json"))) {
+        const Json recorded = Json::parse(*text, nullptr, false);
+        if (recorded.is_object() && recorded.contains("unavailable") && recorded["unavailable"].is_string()) {
+            std::print(std::cerr, "{}", recorded["unavailable"].get<std::string>());
+            return 1;
+        }
+    }
     if (arguments.size() == 1 && arguments[0] == "--protocol-version") return protocol_version();
     if (arguments.size() >= 2 && arguments[0] == "emit" && arguments[1] == "build-database") {
         return emit_build_database(std::span<const std::string> { arguments }.subspan(2));

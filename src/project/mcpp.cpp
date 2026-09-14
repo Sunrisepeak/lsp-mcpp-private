@@ -111,17 +111,49 @@ std::vector<CompileCommand> mcpp_standard_units(std::span<const CompileCommand> 
 
 namespace {
 
+// What a failed command said, on one line: its standard error, or its output when that is empty.
+// An mcpp that a project's .xlings.json selects but that is not installed fails before it starts,
+// and xlings says so there.
+std::string explanation(const platform::RunResult& result) {
+    std::string text;
+    const std::string& said { base::trim(result.error).empty() ? result.output : result.error };
+    for (const std::string_view line : base::split_lines(said)) {
+        const std::string_view trimmed { base::trim(line) };
+        if (trimmed.empty()) continue;
+        if (!text.empty()) text += "; ";
+        for (std::size_t i { 0 }; i < trimmed.size(); ++i) {
+            if (trimmed[i] == ' ' && i > 0 && trimmed[i - 1] == ' ') continue;   // alignment
+            text += trimmed[i];
+        }
+    }
+    if (text.size() > 400) text = text.substr(0, 400) + "...";
+    return text;
+}
+
 // S2 0.2 single-document mode against mcpp's machine-output protocol (mcpp-community/mcpp#636):
 // `mcpp --protocol-version` advertises the kind, `mcpp emit build-database --format json` answers it.
-// nullopt when this mcpp cannot be asked; an mcpp that can be asked and fails says why, and nothing
-// else is tried: configuring instead would write into the project and hide what mcpp reported.
-std::optional<base::Result<InferredDatabase>> emit_build_database(const std::string& mcpp, const Detection& detection, const ProviderContext& context) {
+// nullopt when this mcpp cannot be asked, with `version` set when it said which it is; an mcpp that
+// can be asked and fails says why, and nothing else is tried: configuring instead would write into
+// the project and hide what mcpp reported. The query runs in the project, whose .xlings.json may
+// select another mcpp than the one on PATH.
+std::optional<base::Result<InferredDatabase>> emit_build_database(const std::string& mcpp, const Detection& detection, const ProviderContext& context,
+                                                                  std::string& version) {
     platform::SpawnOptions query;
     query.program = mcpp;
     query.arguments = { "--protocol-version" };
     query.workDirectory = detection.root;
     auto answered = platform::run(std::move(query), std::chrono::seconds { 20 });
     if (!answered || answered->timedOut) return std::nullopt;
+    if (answered->exitCode != 0) {
+        base::log::info("mcpp --protocol-version failed ({}): {}", answered->exitCode, explanation(*answered));
+        return std::nullopt;
+    }
+    const nlohmann::json described = nlohmann::json::parse(answered->output, nullptr, false);
+    if (described.is_object()) {
+        if (const auto producer = described.find("mcpp"); producer != described.end() && producer->is_object()) {
+            version = producer->value("version", std::string {});
+        }
+    }
     auto protocol = spec::parse_producer_protocol(answered->output);
     if (!protocol || !protocol->kinds.contains("mcpp.build-database")) {
         base::log::info("mcpp does not produce build databases (no mcpp.build-database kind); using its compile database");
@@ -156,15 +188,15 @@ std::optional<base::Result<InferredDatabase>> emit_build_database(const std::str
 base::Result<InferredDatabase> load_mcpp(const Detection& detection, const ProviderContext& context) {
     const std::string commandsPath { base::join_path(detection.root, "compile_commands.json") };
     std::vector<std::pair<std::string, std::string>> notices;
+    std::string failure;   // why mcpp produced no compile database, in its own words
     if (context.trusted) {
         const std::string home { platform::dirs::home_directory() };
         const std::vector<std::string> fallbacks { base::join_path(home, ".mcpp/bin/mcpp"), base::join_path(home, ".xlings/subos/current/bin/mcpp") };
         const std::optional<std::string> mcpp { context.mcppExecutable.empty() ? find_tool("mcpp", fallbacks) : std::optional<std::string> { context.mcppExecutable } };
         if (mcpp) {
-            if (auto emitted = emit_build_database(*mcpp, detection, context)) return std::move(*emitted);
+            std::string version;
+            if (auto emitted = emit_build_database(*mcpp, detection, context, version)) return std::move(*emitted);
             // This mcpp cannot describe the build without configuring it, which writes into the project.
-            notices.emplace_back("producer-writes-project",
-                                 "this mcpp has no emit build-database; mcpp build --configure-only writes compile_commands.json and target/ into the project");
             platform::SpawnOptions options;
             options.program = *mcpp;
             options.arguments = { "build", "--configure-only" };
@@ -172,20 +204,28 @@ base::Result<InferredDatabase> load_mcpp(const Detection& detection, const Provi
             auto result = platform::run(std::move(options), context.configureTimeout);
             if (!result) {
                 base::log::warning("mcpp configure could not start: {}", result.error().message);
+                failure = result.error().message;
             } else if (result->timedOut || result->exitCode != 0) {
                 base::log::warning("mcpp build --configure-only failed ({}): {}", result->exitCode, base::trim(result->error));
+                failure = result->timedOut ? std::string { "mcpp build --configure-only timed out" } : explanation(*result);
+            } else {
+                notices.emplace_back("producer-writes-project",
+                                     std::format("{} has no emit build-database, which mcpp 2026.9.15.1 added; mcpp build --configure-only "
+                                                 "wrote compile_commands.json and target/ into the project",
+                                                 version.empty() ? std::string { "this mcpp" } : std::format("mcpp {}", version)));
             }
         } else {
             base::log::info("mcpp was not found; using an existing compile_commands.json if there is one");
         }
     }
     if (!platform::fs::is_regular_file(commandsPath)) {
-        return base::fail("mcpp-no-database", context.trusted ? "mcpp did not produce compile_commands.json"
-                                                              : "the workspace is not trusted, so mcpp was not run");
+        if (!context.trusted) return base::fail("mcpp-no-database", "the workspace is not trusted, so mcpp was not run");
+        return base::fail("mcpp-no-database", failure.empty() ? std::string { "mcpp did not produce compile_commands.json" }
+                                                              : std::format("mcpp could not describe the project: {}", failure));
     }
     auto commands = read_compile_commands(commandsPath);
     if (!commands) return std::unexpected { commands.error() };
-    // A package's std, which mcpp builds outside the compile database (W8).
+    // A package's std, which an mcpp before 2026.9.15.1 builds outside the compile database (W8).
     for (auto& unit : mcpp_standard_units(*commands)) {
         const bool listed { std::ranges::any_of(*commands, [&](const CompileCommand& command) { return base::same_path(command.file, unit.file); }) };
         if (!listed) {
