@@ -38,8 +38,30 @@ checks fail at once with that reason instead of each waiting out its timeout.
 | `mcpp-msvc` | mcpp with `msvc@system` and `import std` |
 | `mcpp-llvm-msvc` | mcpp's default Windows toolchain, LLVM for `x86_64-windows-msvc`, with the MSVC STL (P5) |
 | `inferred-msvc` | Loose module sources on a machine with Visual Studio: MSVC STL semantics without a build system (design 9.3, D27) |
+| `timing` | Startup timing (usable plan W7): the `inferred` project opened and navigated at once; run cold, then warm with the same workspace and cache |
 
 On Windows every server runs without a developer environment, as it does when an editor starts it. Fixtures whose own build needs one declare `"prepare-environment": "msvc"`, and the runner is given the environment with `--msvc-env FILE` (`NAME=value` lines, the output of `set` after `vcvars64.bat`); only the prepare steps see it.
+
+## Startup timing
+
+A run can reuse its workspace and the server's cache, so a second run measures a warm start:
+
+```bash
+$bin/lsp-mcpp-conformance run --server $bin/lsp-mcpp --payload payload --fixture conformance/fixtures/timing \
+    --workspace-dir /tmp/timing/workspace --cache-dir /tmp/timing/cache --measure cold.json --navigation-budget 15
+$bin/lsp-mcpp-conformance run --server $bin/lsp-mcpp --payload payload --fixture conformance/fixtures/timing \
+    --workspace-dir /tmp/timing/workspace --cache-dir /tmp/timing/cache --measure warm.json --navigation-budget 2 --expect-warm
+```
+
+| Option | Effect |
+|---|---|
+| `--workspace-dir DIR` | The fixture is copied to `DIR/<name>` and prepared once; later runs use it as it is |
+| `--cache-dir DIR` | The server's cache directory, instead of a fresh one per run |
+| `--measure FILE` | JSON with seconds from `initialize` to the first `ready` state, the first diagnostics and the first navigation that answered, and each check's duration |
+| `--navigation-budget SECONDS` | The run fails when the first navigation took longer |
+| `--expect-warm` | A `module-cache-reused` check fails unless an earlier run left the module's files in the cache |
+
+CI runs the pair on every host with budgets of 15 and 2 seconds and uploads the measure files; nightly records three runs per host.
 
 ## Scenario format
 
@@ -63,6 +85,7 @@ a check with `"optional": true` reports `SKIP` instead of failing.
 |---|---|
 | `status` | `cxxModules/status` reaches `ready` or `degraded` and matches `source`, `profile-kind`, `state`, `level` when given, and a `profile-compiler` prefix |
 | `workspace-unchanged` | no file under the workspace was added, changed or removed after the prepare steps |
+| `module-cache-reused` | every file clangd published for `module` (default `std`) before the server started is still there unchanged, and none was added (SC4); passes on a cold start unless `--expect-warm` |
 | `diagnostics-empty` | the file's diagnostics, after the engine has published them, contain no errors |
 | `diagnostic-code` | a diagnostic with code `expect` is published for the file |
 | `definition` / `declaration` | a location ends with `expect` |

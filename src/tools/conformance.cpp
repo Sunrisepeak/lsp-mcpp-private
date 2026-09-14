@@ -3,6 +3,8 @@
 //
 //   lsp-mcpp-conformance run --server <lsp-mcpp> --fixture <dir> [--payload DIR] [--clangd PATH] [--kit DIR]
 //                            [--msvc-env FILE] [--timeout SECONDS] [--keep] [--verbose]
+//                            [--workspace-dir DIR] [--cache-dir DIR] [--measure FILE] [--expect-warm]
+//                            [--navigation-budget SECONDS]
 //   lsp-mcpp-conformance version
 import std;
 import nlohmann.json;
@@ -45,6 +47,11 @@ struct Options {
     std::chrono::seconds timeout { 180 };
     bool keep { false };
     bool verbose { false };
+    std::string workspaceDirectory;   // reused across runs: the fixture is copied and prepared there once
+    bool expectWarm { false };        // module-cache-reused checks require module files from an earlier run
+    std::optional<double> navigationBudget;   // seconds from initialize to the first navigation that answers; more fails the run
+    std::string cacheDirectory;       // the server's cache; empty: a fresh one beside the workspace
+    std::string measureFile;          // where the checks' timings are written as JSON
 };
 
 std::string absolute(std::string_view path) {
@@ -140,7 +147,25 @@ bool run_prepare(const Json& command, const std::string& workspace, bool verbose
     return true;
 }
 
-// Every file under a directory with its content, dot directories included: the server must not write any of them.
+// A file's size and FNV-1a digest, read a block at a time: a build tree holds files far larger than a check needs to keep.
+std::optional<std::string> digest(const std::string& path) {
+    std::ifstream stream { std::filesystem::path { path }, std::ios::binary };
+    if (!stream) return std::nullopt;
+    std::uint64_t hash { 1469598103934665603ull };
+    std::uint64_t size { 0 };
+    std::vector<char> block(std::size_t { 1 } << 16);
+    while (stream.read(block.data(), static_cast<std::streamsize>(block.size())) || stream.gcount() > 0) {
+        const auto count = static_cast<std::size_t>(stream.gcount());
+        for (std::size_t i { 0 }; i < count; ++i) {
+            hash ^= static_cast<unsigned char>(block[i]);
+            hash *= 1099511628211ull;
+        }
+        size += count;
+    }
+    return std::format("{}:{:016x}", size, hash);
+}
+
+// Every file under a directory with its digest, dot directories included: the server must not write any of them.
 std::map<std::string, std::string> snapshot(const std::string& root) {
     std::map<std::string, std::string> files;
     std::vector<std::string> pending { root };
@@ -150,8 +175,33 @@ std::map<std::string, std::string> snapshot(const std::string& root) {
         for (const auto& entry : fs::list_directory(directory)) {
             if (fs::is_directory(entry)) {
                 pending.push_back(entry);
-            } else if (auto content = fs::read_file(entry)) {
-                files[*base::relative_path(entry, root)] = std::move(*content);
+            } else if (auto relative = base::relative_path(entry, root)) {
+                if (auto content = digest(entry)) files[*relative] = std::move(*content);
+            }
+        }
+    }
+    return files;
+}
+
+// The engine's published module files for a module under a cache directory, with their stamps. clangd
+// publishes <module>.pcm (a partition as <module>-<partition>.pcm) under a directory per source and
+// command; the copies it hands to readers carry a timestamp in their names and are not included.
+std::map<std::string, std::string> module_files(const std::string& cacheDirectory, std::string_view module) {
+    std::string published { module };
+    std::ranges::replace(published, ':', '-');
+    published += ".pcm";
+    std::map<std::string, std::string> files;
+    if (cacheDirectory.empty()) return files;
+    std::vector<std::string> pending { cacheDirectory };
+    while (!pending.empty()) {
+        const std::string directory { pending.back() };
+        pending.pop_back();
+        for (const auto& entry : fs::list_directory(directory)) {
+            if (fs::is_directory(entry)) {
+                pending.push_back(entry);
+            } else if (base::file_name(entry) == published) {
+                const auto stamp = fs::stamp(entry);
+                files[entry] = stamp ? std::format("{}:{}", stamp->size, stamp->modified) : std::string {};
             }
         }
     }
@@ -171,6 +221,8 @@ public:
     std::map<std::string, int> diagnosticsCount; // uri -> publishes received
     Json status;
     std::vector<std::string> statusHistory;
+    std::optional<Clock::time_point> firstReady;         // the first status in state ready
+    std::optional<Clock::time_point> firstDiagnostics;   // the first diagnostics published for any file
 
     base::Result<void> start(const Options& options, const std::vector<std::string>& serverArguments, const std::string& workspace,
                              const std::string& cacheDirectory) {
@@ -270,9 +322,11 @@ public:
                 const std::string uri { message["params"].value("uri", std::string {}) };
                 diagnostics[uri] = message["params"].value("diagnostics", Json::array());
                 ++diagnosticsCount[uri];
+                if (!firstDiagnostics) firstDiagnostics = Clock::now();
             } else if (method == "cxxModules/status") {
                 status = message["params"];
                 statusHistory.push_back(status.value("state", std::string {}));
+                if (!firstReady && statusHistory.back() == "ready") firstReady = Clock::now();
                 if (verbose_) say("  status: {}", lsp::dump(status));
             } else if (verbose_ && method == "window/logMessage") {
                 say("  log: {}", message["params"].value("message", std::string {}));
@@ -343,10 +397,15 @@ private:
     std::map<std::string, std::pair<std::string, int>> open_;   // relative path -> (text, version)
     std::chrono::seconds timeout_;
     std::map<std::string, std::string> prepared_;               // the workspace as the prepare steps left it
+    std::string cacheDirectory_;                                // the server's cache
+    bool expectWarm_ { false };
+    std::map<std::string, std::map<std::string, std::string>> moduleFilesBefore_;   // module -> its published files before the server started
 
 public:
-    Scenario(Client& client, std::string workspace, std::chrono::seconds timeout, std::map<std::string, std::string> prepared)
-        : client_ { client }, workspace_ { std::move(workspace) }, timeout_ { timeout }, prepared_ { std::move(prepared) } {}
+    Scenario(Client& client, std::string workspace, std::chrono::seconds timeout, std::map<std::string, std::string> prepared,
+             std::string cacheDirectory, bool expectWarm, std::map<std::string, std::map<std::string, std::string>> moduleFilesBefore)
+        : client_ { client }, workspace_ { std::move(workspace) }, timeout_ { timeout }, prepared_ { std::move(prepared) },
+          cacheDirectory_ { std::move(cacheDirectory) }, expectWarm_ { expectWarm }, moduleFilesBefore_ { std::move(moduleFilesBefore) } {}
 
     std::string uri(std::string_view relative) const { return base::path_to_uri(base::join_path(workspace_, relative)); }
 
@@ -409,6 +468,26 @@ public:
                 matches = matches && client_.status["profile"].value("compiler", std::string {}).starts_with(compiler->get<std::string>());
             }
             return { matches, detail };
+        }
+        if (kind == "module-cache-reused") {
+            // SC4: a warm start builds no module the previous run left in the cache. Every published
+            // file of the module is still there unchanged, and none was added under another command.
+            const std::string module { check.value("module", std::string { "std" }) };
+            const auto before = moduleFilesBefore_.find(module);
+            if (before == moduleFilesBefore_.end() || before->second.empty()) {
+                return { !expectWarm_, std::format("no module file of {} before the server started: a cold start", module) };
+            }
+            const auto now = module_files(cacheDirectory_, module);
+            std::vector<std::string> differences;
+            for (const auto& [path, stamp] : before->second) {
+                const auto it = now.find(path);
+                if (it == now.end()) differences.push_back("removed " + path);
+                else if (it->second != stamp) differences.push_back("rebuilt " + path);
+            }
+            for (const auto& [path, stamp] : now) {
+                if (!before->second.contains(path)) differences.push_back("added " + path);
+            }
+            return { differences.empty(), differences.empty() ? std::format("{} file(s) of {} reused", now.size(), module) : lsp::dump(differences) };
         }
         if (kind == "workspace-unchanged") {
             // Give the server time to do what it does after opening the workspace.
@@ -560,12 +639,20 @@ int run(const Options& options) {
         return 2;
     }
     const std::string name { scenario.value("name", std::string { base::file_name(options.fixture) }) };
-    const std::string scratch { base::join_path(lspmcpp::platform::dirs::temp_directory(),
-        std::format("lsp-mcpp-conformance-{}-{}", name, Clock::now().time_since_epoch().count())) };
+    const bool reused { !options.workspaceDirectory.empty() };
+    const std::string scratch { reused ? options.workspaceDirectory
+                                       : base::join_path(lspmcpp::platform::dirs::temp_directory(),
+                                             std::format("lsp-mcpp-conformance-{}-{}", name, Clock::now().time_since_epoch().count())) };
     const std::string workspace { base::join_path(scratch, name) };
-    copy_tree(options.fixture, workspace);
-    fs::remove_all(base::join_path(workspace, "scenario.json"));
-    say("fixture {} in {}", name, workspace);
+    // A reused workspace is prepared once; the marker sits beside it, outside what the server sees.
+    const std::string preparedMarker { base::join_path(scratch, name + ".prepared") };
+    const bool alreadyPrepared { reused && fs::exists(preparedMarker) };
+    if (!alreadyPrepared) {
+        fs::remove_all(workspace);
+        copy_tree(options.fixture, workspace);
+        fs::remove_all(base::join_path(workspace, "scenario.json"));
+    }
+    say("fixture {} in {}{}", name, workspace, alreadyPrepared ? " (prepared before)" : "");
 
     Expansion expansion { workspace, base::parent_path(absolute(lspmcpp::platform::env::arguments().front())) };
     std::optional<std::vector<std::string>> prepareEnvironment;
@@ -576,16 +663,26 @@ int run(const Options& options) {
         }
         prepareEnvironment = prepare_environment(options.msvcEnvironment);
     }
-    for (const auto& command : scenario.value("prepare", Json::array())) {
-        if (!run_prepare(command, workspace, options.verbose, expansion, prepareEnvironment)) return 1;
+    if (!alreadyPrepared) {
+        for (const auto& command : scenario.value("prepare", Json::array())) {
+            if (!run_prepare(command, workspace, options.verbose, expansion, prepareEnvironment)) return 1;
+        }
+        for (const auto& removed : scenario.value("remove", Json::array())) fs::remove_all(base::join_path(workspace, removed.get<std::string>()));
+        if (reused) (void)fs::write_file(preparedMarker, "");
     }
-    for (const auto& removed : scenario.value("remove", Json::array())) fs::remove_all(base::join_path(workspace, removed.get<std::string>()));
 
     std::vector<std::string> serverArguments;
     for (const auto& argument : scenario.value("server-arguments", Json::array())) serverArguments.push_back(expand(argument.get<std::string>(), expansion));
     auto prepared = snapshot(workspace);
     Client client;
-    if (auto started = client.start(options, serverArguments, workspace, base::join_path(scratch, "cache")); !started) {
+    const std::string cacheDirectory { options.cacheDirectory.empty() ? base::join_path(scratch, "cache") : options.cacheDirectory };
+    std::map<std::string, std::map<std::string, std::string>> moduleFilesBefore;
+    for (const auto& check : scenario.value("checks", Json::array())) {
+        if (check.value("kind", std::string {}) != "module-cache-reused") continue;
+        const std::string module { check.value("module", std::string { "std" }) };
+        moduleFilesBefore[module] = module_files(cacheDirectory, module);
+    }
+    if (auto started = client.start(options, serverArguments, workspace, cacheDirectory); !started) {
         say("conformance: cannot start the server: {}", started.error().message);
         return 2;
     }
@@ -607,12 +704,13 @@ int run(const Options& options) {
     }
     const bool advertised { initialized->contains("capabilities") && (*initialized)["capabilities"].contains("experimental")
                             && (*initialized)["capabilities"]["experimental"].contains("cxxModules") };
-    say("{} initialize ({:.1f}s) experimental.cxxModules={}", advertised ? "PASS" : "FAIL",
-                 std::chrono::duration<double>(Clock::now() - begin).count(), advertised);
+    const double initializeSeconds { std::chrono::duration<double>(Clock::now() - begin).count() };
+    say("{} initialize ({:.1f}s) experimental.cxxModules={}", advertised ? "PASS" : "FAIL", initializeSeconds, advertised);
     client.notify("initialized", Json::object());
 
-    Scenario runner { client, workspace, options.timeout, std::move(prepared) };
+    Scenario runner { client, workspace, options.timeout, std::move(prepared), cacheDirectory, options.expectWarm, std::move(moduleFilesBefore) };
     int failures { advertised ? 0 : 1 };
+    Json measured = Json::array();
     for (const auto& check : scenario.value("checks", Json::array())) {
         const std::string id { check.value("id", std::string { "-" }) };
         const bool optional { check.value("optional", false) };
@@ -624,12 +722,42 @@ int run(const Options& options) {
         const auto started = Clock::now();
         auto [ok, detail] = runner.run(check);
         if (!ok && !optional) ++failures;
-        say("{} {} {} ({:.1f}s) {}", ok ? "PASS" : (optional ? "SKIP" : "FAIL"), id, check.value("kind", std::string {}),
-                     std::chrono::duration<double>(Clock::now() - started).count(), detail);
+        const double seconds { std::chrono::duration<double>(Clock::now() - started).count() };
+        say("{} {} {} ({:.1f}s) {}", ok ? "PASS" : (optional ? "SKIP" : "FAIL"), id, check.value("kind", std::string {}), seconds, detail);
+        measured.push_back(Json { { "id", id }, { "kind", check.value("kind", std::string {}) }, { "ok", ok }, { "seconds", seconds },
+                                  { "since-start", std::chrono::duration<double>(Clock::now() - begin).count() } });
     }
     client.stop();
-    say("{}: {} failure(s), {:.1f}s", name, failures, std::chrono::duration<double>(Clock::now() - begin).count());
-    if (!options.keep) fs::remove_all(scratch);
+    Json firstNavigation = nullptr;
+    for (const auto& check : measured) {
+        const std::string kind { check.value("kind", std::string {}) };
+        if ((kind == "definition" || kind == "declaration" || kind == "definition-any") && check.value("ok", false)) {
+            firstNavigation = check["since-start"];
+            break;
+        }
+    }
+    if (options.navigationBudget) {
+        const bool within { firstNavigation.is_number() && firstNavigation.get<double>() <= *options.navigationBudget };
+        if (!within) ++failures;
+        say("{} navigation-budget first navigation {} within {:.1f}s", within ? "PASS" : "FAIL",
+            firstNavigation.is_number() ? std::format("{:.2f}s", firstNavigation.get<double>()) : std::string { "never answered" }, *options.navigationBudget);
+    }
+    const double total { std::chrono::duration<double>(Clock::now() - begin).count() };
+    say("{}: {} failure(s), {:.1f}s", name, failures, total);
+    if (!options.measureFile.empty()) {
+        // The timeline of usable plan W7: initialize, the first ready state, the first diagnostics, the first navigation.
+        auto since = [&](const std::optional<Clock::time_point>& at) -> Json {
+            return at ? Json(std::chrono::duration<double>(*at - begin).count()) : Json(nullptr);
+        };
+        Json summary { { "fixture", name }, { "failures", failures }, { "seconds", total }, { "reused-workspace", alreadyPrepared } };
+        summary["initialize"] = initializeSeconds;
+        summary["ready"] = since(client.firstReady);
+        summary["first-diagnostics"] = since(client.firstDiagnostics);
+        summary["first-navigation"] = firstNavigation;
+        summary["checks"] = measured;
+        if (auto written = fs::write_file(options.measureFile, summary.dump(2) + "\n"); !written) say("conformance: cannot write {}", options.measureFile);
+    }
+    if (!options.keep && !reused) fs::remove_all(scratch);
     return failures == 0 ? 0 : 1;
 }
 
@@ -653,6 +781,11 @@ int main(int argc, char* argv[]) {
     (void)runCommand.option("msvc-env").takes_value().help("File of NAME=value lines: the developer environment for fixtures that build with MSVC");
     (void)runCommand.option("keep").help("Keep the scratch workspace");
     (void)runCommand.option("verbose").help("Print server logs and status notifications");
+    (void)runCommand.option("workspace-dir").takes_value().help("Directory reused across runs: the fixture is copied and prepared there once");
+    (void)runCommand.option("cache-dir").takes_value().help("The server's cache directory, e.g. shared by a cold and a warm run");
+    (void)runCommand.option("measure").takes_value().help("File the checks' timings are written to, as JSON");
+    (void)runCommand.option("expect-warm").help("module-cache-reused checks fail unless an earlier run left module files in --cache-dir");
+    (void)runCommand.option("navigation-budget").takes_value().help("Seconds the first navigation may take from initialize; more fails the run");
     (void)runCommand.action([&](const cmdline::ParsedArgs& args) {
         Options options;
         options.server = absolute(args.value("server").value_or(""));
@@ -664,6 +797,19 @@ int main(int argc, char* argv[]) {
         if (auto timeout = args.value("timeout")) options.timeout = std::chrono::seconds { std::stoi(*timeout) };
         options.keep = args.is_flag_set("keep");
         options.verbose = args.is_flag_set("verbose");
+        options.workspaceDirectory = args.value("workspace-dir") ? absolute(*args.value("workspace-dir")) : std::string {};
+        options.cacheDirectory = args.value("cache-dir") ? absolute(*args.value("cache-dir")) : std::string {};
+        options.measureFile = args.value("measure") ? absolute(*args.value("measure")) : std::string {};
+        options.expectWarm = args.is_flag_set("expect-warm");
+        if (auto budget = args.value("navigation-budget")) {
+            try {
+                options.navigationBudget = std::stod(*budget);
+            } catch (...) {
+                say("run: --navigation-budget takes seconds");
+                status = 2;
+                return;
+            }
+        }
         if (options.server.empty() || options.fixture.empty()) {
             say("run: --server and --fixture are required");
             status = 2;

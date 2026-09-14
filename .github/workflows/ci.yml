@@ -221,7 +221,7 @@ jobs:
           failed=''
           for fixture in ${{ matrix.fixtures }}; do
             echo "::group::$fixture"
-            if ! "tools/lsp-mcpp-conformance$exe" run --server "payload/bin/lsp-mcpp$exe" --payload payload "${extra[@]}" \
+            if ! "tools/lsp-mcpp-conformance$exe" run --server "payload/bin/lsp-mcpp$exe" --payload payload ${extra[@]+"${extra[@]}"} \
                    --fixture "conformance/fixtures/$fixture" --timeout 180; then
               failed="$failed $fixture"
             fi
@@ -231,10 +231,33 @@ jobs:
             echo "::error::failed fixtures:$failed"
             # Rerun the first failure with the server's log, for the record.
             first=${failed# }; first=${first%% *}
-            "tools/lsp-mcpp-conformance$exe" run --server "payload/bin/lsp-mcpp$exe" --payload payload "${extra[@]}" \
+            "tools/lsp-mcpp-conformance$exe" run --server "payload/bin/lsp-mcpp$exe" --payload payload ${extra[@]+"${extra[@]}"} \
                 --fixture "conformance/fixtures/$first" --timeout 60 --verbose 2>&1 | tail -200 || true
             exit 1
           fi
+
+      # Startup timing (usable plan W7): the timing fixture cold, then warm with the same
+      # workspace and cache. A warm start must reuse the std module the cold one built
+      # (SC4). Only severe regressions fail here; nightly.yml records the medians.
+      - name: Cold and warm start
+        run: |
+          set -euo pipefail
+          exe=''; [ "$RUNNER_OS" = Windows ] && exe='.exe'
+          timing="$RUNNER_TEMP/timing"
+          rm -rf "$timing"
+          start() {
+            "tools/lsp-mcpp-conformance$exe" run --server "payload/bin/lsp-mcpp$exe" --payload payload --fixture conformance/fixtures/timing \
+                --workspace-dir "$timing/workspace" --cache-dir "$timing/cache" --timeout 120 "$@"
+          }
+          start --measure "$timing/cold.json" --navigation-budget 15
+          start --measure "$timing/warm.json" --navigation-budget 2 --expect-warm
+          cat "$timing/cold.json" "$timing/warm.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: timing-${{ matrix.platform }}
+          path: ${{ runner.temp }}/timing/*.json
+          if-no-files-found: ignore
 
       # A workspace reached through a symbolic link, which is where every macOS
       # temporary directory is (/var is /private/var): mcpp names files by their
