@@ -317,6 +317,12 @@
   },
   {
    "test": "tests/test_scan.cpp: non-module units import"
+  },
+  {
+   "check": "mcpp-split/C8-implementation-partition"
+  },
+  {
+   "check": "mcpp-split/C1-implementation"
   }
  ],
  "S1-8.2-2": [
