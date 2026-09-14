@@ -93,6 +93,20 @@ bool is_build_file(std::string_view name) {
     return std::ranges::find(BUILD_FILES, name) != BUILD_FILES.end() || name.ends_with(".cmake");
 }
 
+// The files a watch (dynamic or the W9.3 polling fallback below) cares about: the same build
+// description and C++ source files register_watchers_' glob patterns name.
+constexpr std::array<std::string_view, 7> WATCH_POLL_SKIP_DIRECTORIES { "target", "build", "node_modules", "out",
+                                                                        "_build", "cmake-build-debug", "cmake-build-release" };
+
+std::map<std::string, platform::fs::FileStamp> watched_files_snapshot(std::string_view root) {
+    std::map<std::string, platform::fs::FileStamp> files;
+    for (const auto& file : platform::fs::list_files(root, {}, WATCH_POLL_SKIP_DIRECTORIES)) {
+        if (!is_build_file(base::file_name(file)) && !project::is_cxx_source_name(file)) continue;
+        if (auto fileStamp = platform::fs::stamp(file)) files.emplace(file, *fileStamp);
+    }
+    return files;
+}
+
 // Requests a person waits for are answered without the engine after this long; the rest wait for the configured timeout.
 bool is_interactive(std::string_view method) {
     static constexpr std::array<std::string_view, 9> INTERACTIVE { "textDocument/definition", "textDocument/declaration", "textDocument/hover",
@@ -138,6 +152,9 @@ private:
     mutable std::unordered_map<std::string, std::string> canonicalByUri_;
     index::ModuleIndex index_;
     spec::MetadataReader metadataReader_ { spec::caching_metadata_reader() };
+    // usable plan W9.3: the watched-files snapshot at `initialize`, before the client can have
+    // changed anything; start_watch_polling_ takes it as its starting point.
+    std::map<std::string, platform::fs::FileStamp> watchBaseline_;
 
     // Project model and plan.
     std::shared_ptr<project::ProjectModel> model_;
@@ -466,6 +483,9 @@ private:
             if (auto kit = lsp::string_at(*init, "semanticKit")) kitEnabled_ = *kit != "off";
         }
         root_ = platform::fs::canonical_path(workspace_root_(params));
+        // usable plan W9.3: taken now, before this request is even answered, so the client cannot
+        // possibly have created or changed a watched file yet (see start_watch_polling_).
+        watchBaseline_ = watched_files_snapshot(root_);
         cacheDirectory_ = base::join_path(platform::dirs::cache_directory(), base::join_path("workspaces", project::workspace_key(root_)));
         databaseDirectory_ = base::join_path(cacheDirectory_, "contexts/default/cdb");
         primeDirectory_ = base::join_path(cacheDirectory_, "contexts/default/prime");
@@ -781,7 +801,12 @@ private:
 
     void register_watchers_() {
         const Json* dynamic { lsp::find_path(clientCapabilities_, { "workspace", "didChangeWatchedFiles", "dynamicRegistration" }) };
-        if (dynamic == nullptr || !dynamic->is_boolean() || !dynamic->get<bool>()) return;
+        if (dynamic == nullptr || !dynamic->is_boolean() || !dynamic->get<bool>()) {
+            // usable plan W9.3, design 12.3 item 5: the editor will not tell us about build
+            // description or source file changes, so a worker polls for them instead.
+            start_watch_polling_();
+            return;
+        }
         Json watchers = Json::array();
         for (std::string_view glob : { "**/mcpp.toml", "**/mcpp.lock", "**/CMakeLists.txt", "**/CMakePresets.json",
                                        "**/compile_commands.json", "**/build_database.json",
@@ -792,6 +817,40 @@ private:
                                                               { "method", "workspace/didChangeWatchedFiles" },
                                                               { "registerOptions", Json { { "watchers", watchers } } } } }) } };
         send_client_(lsp::make_request(std::format("s:{}", nextServerRequest_++), "client/registerCapability", std::move(params)));
+    }
+
+    // usable plan W9.3: every 2s, compares size and modification time of the same build
+    // description and source files the dynamic watchers above cover, and turns a difference into
+    // the exact notification workspace/didChangeWatchedFiles would have carried, so
+    // did_change_watched_files_ handles a polled change exactly like an editor's own. Starts from
+    // watchBaseline_, taken synchronously while handling `initialize` (handle_initialize_) so a
+    // file created the instant the client can act is never mistaken for one already there. Runs
+    // for the life of the process on its own thread, touching only its local snapshot and the
+    // event queue (Session state is only ever changed on the main thread, as elsewhere here).
+    void start_watch_polling_() {
+        auto events = events_;
+        const std::string root { root_ };
+        std::thread { [events, root, known = std::move(watchBaseline_)]() mutable {
+            while (true) {
+                std::this_thread::sleep_for(std::chrono::seconds { 2 });
+                std::map<std::string, platform::fs::FileStamp> current { watched_files_snapshot(root) };
+                Json changes = Json::array();
+                for (const auto& [file, fileStamp] : current) {
+                    const auto previous = known.find(file);
+                    if (previous == known.end()) changes.push_back(Json { { "uri", base::path_to_uri(file) }, { "type", 1 } });
+                    else if (previous->second != fileStamp) changes.push_back(Json { { "uri", base::path_to_uri(file) }, { "type", 2 } });
+                }
+                for (const auto& [file, fileStamp] : known) {
+                    if (!current.contains(file)) changes.push_back(Json { { "uri", base::path_to_uri(file) }, { "type", 3 } });
+                }
+                known = std::move(current);
+                if (changes.empty()) continue;
+                // `Json message { make_notification(...) }` would wrap the result in a one-element
+                // array (nlohmann's initializer-list constructor); `=` copies it as intended.
+                Json message = lsp::make_notification("workspace/didChangeWatchedFiles", Json { { "changes", std::move(changes) } });
+                events->push(Event { EventKind::client_message, std::move(message) });
+            }
+        } }.detach();
     }
 
     // ---- engine -------------------------------------------------------------------

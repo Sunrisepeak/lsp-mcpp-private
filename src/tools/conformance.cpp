@@ -52,6 +52,7 @@ struct Options {
     std::optional<double> navigationBudget;   // seconds from initialize to the first navigation that answers; more fails the run
     std::string cacheDirectory;       // the server's cache; empty: a fresh one beside the workspace
     std::string measureFile;          // where the checks' timings are written as JSON
+    bool noDynamicWatch { false };    // usable plan W9.3: do not advertise didChangeWatchedFiles.dynamicRegistration
 };
 
 std::string absolute(std::string_view path) {
@@ -521,6 +522,16 @@ public:
             open(file);
             return { true, file };
         }
+        if (kind == "write-file") {
+            // usable plan W9.3: writes a file directly, the way an editor's own file system watcher
+            // (or, without one, this server's own polling fallback) would notice it, without the
+            // runner opening it as a document. `content` defaults to a fresh module interface.
+            const std::string content { check.value("content", std::format("export module {};\n", check.value("module", std::string { "probe" }))) };
+            const std::string path { base::join_path(workspace_, file) };
+            (void)fs::create_directories(base::parent_path(path));
+            const auto written = fs::write_file(path, content);
+            return { written.has_value(), written ? file : written.error().message };
+        }
         if (kind == "diagnostics-empty") {
             open(file);
             const std::string documentUri { uri(file) };
@@ -641,13 +652,15 @@ public:
             return { ok, text.substr(0, std::min<std::size_t>(text.size(), 160)) };
         }
         if (kind == "module-graph-contains") {
+            // Retries within the check's own timeout (a check's "timeout" field, e.g. usable plan
+            // W9.3's watch-polling fixture, bounds how long a change may take to reach the graph).
             const std::string expected { check.value("expect", std::string {}) };
-            auto result = client_.request("cxxModules/graph", Json::object(), timeout_);
-            bool ok { false };
-            if (result && result->is_object()) {
-                for (const auto& module : result->value("modules", Json::array())) ok = ok || module.value("name", std::string {}) == expected;
-            }
-            return { ok, result ? lsp::dump(*result).substr(0, 160) : std::string { "no response" } };
+            auto [ok, result] = retry("cxxModules/graph", [] { return Json::object(); }, [&](const Json& value) {
+                if (!value.is_object()) return false;
+                return std::ranges::any_of(value.value("modules", Json::array()),
+                    [&](const Json& module) { return module.value("name", std::string {}) == expected; });
+            });
+            return { ok, result.is_object() ? lsp::dump(result).substr(0, 160) : std::string { "no response" } };
         }
         return { false, std::format("unknown check kind {}", kind) };
     }
@@ -719,7 +732,9 @@ int run(const Options& options) {
                                  { "documentSymbol", Json { { "hierarchicalDocumentSymbolSupport", true } } },
                                  { "completion", Json { { "completionItem", Json { { "snippetSupport", false } } } } },
                                  { "publishDiagnostics", Json { { "relatedInformation", true } } } } },
-        { "workspace", Json { { "didChangeWatchedFiles", Json { { "dynamicRegistration", true } } }, { "configuration", true } } },
+        // usable plan W9.3: --no-dynamic-watch exercises the polling fallback the same way a
+        // client with no didChangeWatchedFiles support would.
+        { "workspace", Json { { "didChangeWatchedFiles", Json { { "dynamicRegistration", !options.noDynamicWatch } } }, { "configuration", true } } },
         { "experimental", Json { { "cxxModules", Json { { "version", 1 }, { "status", true }, { "graph", true }, { "contexts", true } } } } },
     };
     auto initialized = client.request("initialize", Json { { "processId", nullptr }, { "rootUri", base::path_to_uri(workspace) },
@@ -813,6 +828,7 @@ int main(int argc, char* argv[]) {
     (void)runCommand.option("measure").takes_value().help("File the checks' timings are written to, as JSON");
     (void)runCommand.option("expect-warm").help("module-cache-reused checks fail unless an earlier run left module files in --cache-dir");
     (void)runCommand.option("navigation-budget").takes_value().help("Seconds the first navigation may take from initialize; more fails the run");
+    (void)runCommand.option("no-dynamic-watch").help("Do not advertise didChangeWatchedFiles.dynamicRegistration, exercising the polling fallback");
     (void)runCommand.action([&](const cmdline::ParsedArgs& args) {
         Options options;
         options.server = absolute(args.value("server").value_or(""));
@@ -828,6 +844,7 @@ int main(int argc, char* argv[]) {
         options.cacheDirectory = args.value("cache-dir") ? absolute(*args.value("cache-dir")) : std::string {};
         options.measureFile = args.value("measure") ? absolute(*args.value("measure")) : std::string {};
         options.expectWarm = args.is_flag_set("expect-warm");
+        options.noDynamicWatch = args.is_flag_set("no-dynamic-watch");
         if (auto budget = args.value("navigation-budget")) {
             try {
                 options.navigationBudget = std::stod(*budget);
