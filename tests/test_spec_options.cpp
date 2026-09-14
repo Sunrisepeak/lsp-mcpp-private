@@ -170,6 +170,34 @@ int main() {
         expect(!unknown.sets[0].options.has_value() && s::conformance_level(unknown) == 2);
     };
 
+    "local arguments that name the unit's source and output leave both out of its delta"_test = [] {
+        // mcpp 2026.9.15.1 writes a standard library unit's command after the set's baseline this way.
+        s::Database database;
+        database.hasIde = true;
+        s::Toolchain clang;
+        clang.family = s::Family::clang;
+        database.toolchains.emplace_back("llvm", clang);
+        s::Set set;
+        set.name = "mcpp:std";
+        set.hasIde = true;
+        set.toolchain = "llvm";
+        set.baselineArguments = { "-std=c++23", "-nostdinc++" };
+        const std::string source { "/llvm/share/libc++/v1/std.compat.cppm" };
+        std::vector<std::string> local { "-fmodule-file=std=/cache/pcm.cache/std.pcm", "--precompile", source, "-o", "pcm.cache/std.compat.pcm" };
+        std::vector<std::string> arguments { "/llvm/bin/clang++", "-std=c++23", "-nostdinc++" };
+        arguments.insert(arguments.end(), local.begin(), local.end());
+        s::TranslationUnit unit { unit_of(source, std::move(arguments), std::move(local)) };
+        unit.workDirectory = "/cache";
+        set.units.push_back(std::move(unit));
+        database.sets.push_back(std::move(set));
+
+        s::complete_options(database);
+        const auto& delta = database.sets[0].units[0].options;
+        expect(fatal(delta.has_value()));
+        expect(delta->rawSemanticArguments.empty()) << "neither the source, the BMI it reads nor the one it writes is an option";
+        expect(s::conformance_level(database) == 3);
+    };
+
     "the level 2 example completes to level 3"_test = [] {
         auto database = s::load_database(base::join_path(repository_root(), "specs/examples/s1-level2-clang-two-sets.json"));
         expect(fatal(database.has_value()));

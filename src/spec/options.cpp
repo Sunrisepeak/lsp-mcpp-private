@@ -204,16 +204,18 @@ bool is_input(std::string_view argument, Family family, const TranslationUnit& u
     return msvc_dialect(family) ? !msvc_body(argument).has_value() : !argument.starts_with('-');
 }
 
+// Groups without the unit's inputs. mcpp's local-arguments for a standard library unit name its source,
+// as in `--precompile <source> -o <bmi>`.
+std::vector<Group> without_inputs(std::vector<Group> groups, const TranslationUnit& unit, Family family) {
+    const std::string source { absolute_source(unit) };
+    std::erase_if(groups, [&](const Group& group) { return group.size() == 1 && is_input(group.front(), family, unit, source); });
+    return groups;
+}
+
 // A unit's command line without its driver and its inputs.
 std::vector<Group> unit_groups(const TranslationUnit& unit, Family family) {
     if (unit.arguments.empty()) return {};
-    const std::string source { absolute_source(unit) };
-    std::vector<Group> groups;
-    for (auto& group : groups_of(std::span { unit.arguments }.subspan(1), family)) {
-        if (group.size() == 1 && is_input(group.front(), family, unit, source)) continue;
-        groups.push_back(std::move(group));
-    }
-    return groups;
+    return without_inputs(groups_of(std::span { unit.arguments }.subspan(1), family), unit, family);
 }
 
 // The groups of `from` not matched, one for one, by a group of `minus`.
@@ -266,8 +268,8 @@ void complete_options(Database& database) {
         for (auto& unit : set.units) {
             if (unit.options) continue;
             const std::vector<std::string> local { unit.localArguments.empty() ? flatten(difference(unit_groups(unit, family), baseline))
-                                                                                : unit.localArguments };
-            if (local.empty()) continue;
+                                                                                : flatten(without_inputs(groups_of(unit.localArguments, family), unit, family)) };
+            if (local.empty() && unit.localArguments.empty()) continue;
             SemanticOptions delta { structure_arguments(local, family) };
             // S1 11.1: a unit whose local-arguments differ carries a delta, even one that changes nothing S1 structures.
             if (unit.localArguments.empty() && empty_options(delta)) continue;

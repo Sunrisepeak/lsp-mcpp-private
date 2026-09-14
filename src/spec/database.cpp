@@ -288,7 +288,7 @@ OrderedJson to_json(const Database& database) {
                 OrderedJson stdlib = OrderedJson::object();
                 stdlib["name"] = toolchain.stdlib->name;
                 if (!toolchain.stdlib->version.empty()) stdlib["version"] = toolchain.stdlib->version;
-                stdlib["module-metadata"] = toolchain.stdlib->moduleMetadata;
+                if (!toolchain.stdlib->moduleMetadata.empty()) stdlib["module-metadata"] = toolchain.stdlib->moduleMetadata;
                 value["stdlib"] = std::move(stdlib);
             }
             value["config-files"] = toolchain.configFiles;
