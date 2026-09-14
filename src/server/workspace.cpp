@@ -1121,13 +1121,14 @@ struct WorkspaceRoot::Impl {
 
     void pump_primer() {
         if (!engineAccepting) return;
-        // Prime units take the same clangd workers as the files a person opened. With no file waiting
-        // for its modules, preparation uses every thread; otherwise it leaves the waiting files a core
-        // each (hardware threads are counted as two per core except on macOS, where they are cores).
+        // Prime units take the same clangd workers (-j, one per core) as everything a person does:
+        // opening a file, typing, asking for completion. Preparation leaves a core to each file still
+        // waiting for its modules and one more for requests, so it never holds every worker (hardware
+        // threads count as two per core except on macOS, where they are cores).
         const std::size_t threads { std::max<std::size_t>(1, std::thread::hardware_concurrency()) };
         const std::size_t cores { lspmcpp::os::FAMILY == lspmcpp::os::Family::macos ? threads : std::max<std::size_t>(1, threads / 2) };
-        const std::size_t waiting { awaitingDiagnostics.size() };
-        primer.set_limit(waiting == 0 ? std::max<std::size_t>(2, threads) : (cores > waiting ? cores - waiting : 1));
+        const std::size_t reserved { awaitingDiagnostics.size() + 1 };
+        primer.set_limit(cores > reserved ? cores - reserved : 1);
         for (const PrimeModule* module : primer.start_ready([this](const PrimeModule& candidate) { return module_already_built(candidate); })) {
             const std::string uri { base::path_to_uri(module->primeFile) };
             Json params { { "textDocument", Json { { "uri", uri }, { "languageId", "cpp" }, { "version", 1 },
