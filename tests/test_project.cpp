@@ -15,6 +15,7 @@ import lspmcpp.project.infer;
 import lspmcpp.project.mcpp;
 import lspmcpp.project.model;
 import lspmcpp.project.compdb;
+import lspmcpp.project.cmake;
 
 namespace fs = lspmcpp::platform::fs;
 namespace b = lspmcpp::base;
@@ -169,6 +170,129 @@ int main() {
         expect(units[1].role == std::optional<s::Role> { s::Role::module_interface }) << "scanned";
         expect(units[1].providedModules.size() == 1u && units[1].providedModules[0].first == "hello.greet");
         expect(units[2].requiredModules == std::vector<std::string> { "std" }) << "kept as the producer wrote it";
+        fs::remove_all(root);
+    };
+
+    "CMake build-database gate UUIDs"_test = [] {
+        // Measured (W4): 4.4.0-4.4.3 merge build_database.json correctly and
+        // share this UUID; every other line CMake currently ships (3.31.x,
+        // 4.0.x-4.3.x) configures fine but never merges anything into it, so
+        // it is deliberately not in the table (see project/cmake.cpp).
+        expect(p::build_database_gate_uuid("cmake version 4.4.2\n\nCMake suite maintained and supported by Kitware (kitware.com/cmake).\n")
+               == std::optional<std::string> { "70ef007e-b743-492d-9407-e35eeac03a40" });
+        expect(p::build_database_gate_uuid("cmake version 4.4.0\n") == std::optional<std::string> { "70ef007e-b743-492d-9407-e35eeac03a40" })
+            << "the whole 4.4 line, not only 4.4.2";
+        expect(!p::build_database_gate_uuid("cmake version 3.31.6\n\nCMake suite maintained and supported by Kitware (kitware.com/cmake).\n"))
+            << "configures without error, but never merges (W4 measurement)";
+        expect(!p::build_database_gate_uuid("cmake version 4.3.5\n")) << "same measurement, the other UUID group";
+        expect(!p::build_database_gate_uuid("")) << "unparsable: empty output";
+        expect(!p::build_database_gate_uuid("zsh: command not found: cmake\n")) << "unparsable: no \"cmake version\" prefix";
+        expect(!p::build_database_gate_uuid("cmake version four point four\n")) << "unparsable: non-numeric components";
+    };
+
+    "the private configure's arguments carry the gate only when it is known"_test = [] {
+        const auto withGate = p::cmake_configure_arguments("/proj", "/cache/cmake", true, std::optional<std::string> { "the-uuid" });
+        expect(std::ranges::find(withGate, std::string { "-DCMAKE_EXPERIMENTAL_EXPORT_BUILD_DATABASE=the-uuid" }) != withGate.end());
+        expect(std::ranges::find(withGate, std::string { "-DCMAKE_EXPORT_BUILD_DATABASE=ON" }) != withGate.end());
+        expect(std::ranges::find(withGate, std::string { "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON" }) != withGate.end()) << "always written";
+        expect(fatal(withGate.size() >= 2u));
+        expect(withGate[withGate.size() - 2] == "-G" && withGate.back() == "Ninja");
+
+        const auto unknownVersion = p::cmake_configure_arguments("/proj", "/cache/cmake", true, std::nullopt);
+        expect(std::ranges::none_of(unknownVersion, [](const std::string& arg) { return arg.contains("BUILD_DATABASE"); }))
+            << "an unconfirmed CMake version must not see the switch";
+        expect(std::ranges::find(unknownVersion, std::string { "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON" }) != unknownVersion.end())
+            << "today's behaviour is otherwise unchanged";
+
+        const auto noNinja = p::cmake_configure_arguments("/proj", "/cache/cmake", false, std::optional<std::string> { "the-uuid" });
+        expect(std::ranges::none_of(noNinja, [](const std::string& arg) { return arg.contains("BUILD_DATABASE") || arg == "Ninja"; }))
+            << "the gate was only measured with Ninja";
+    };
+
+    "a real CMake 4.4.2 build database becomes a level 2 model"_test = [] {
+        // Recorded 2026-09-14 from `cmake -G Ninja -DCMAKE_CXX_COMPILER=clang++
+        // -DCMAKE_EXPERIMENTAL_EXPORT_BUILD_DATABASE=70ef007e-b743-492d-9407-e35eeac03a40
+        // -DCMAKE_EXPORT_BUILD_DATABASE=ON` then `cmake --build build --target
+        // build_database.json` (CMake 4.4.2, Clang 22.1.8, Ninja) against the
+        // same shapes/circle/app project as conformance/fixtures/cmake-clang,
+        // trimmed of nothing but its absolute paths. CMake's own document has
+        // no "ide" object anywhere (unlike the synthetic one above), so every
+        // role below comes from scanning; "provides"/"requires" are kept
+        // exactly as CMake wrote them, empty ones included.
+        const std::string root { make_root("cmake-bdb") };
+        write(root, "CMakeLists.txt", "project(shapes)\n");
+        write(root, "build/CMakeCache.txt", "");
+        write(root, "src/shapes.cppm", "export module shapes;\nexport import :circle;\n\nexport namespace shapes {\nint square(int side) { return side * side; }\n}\n");
+        write(root, "src/circle.cppm", "export module shapes:circle;\n\nexport namespace shapes {\ndouble circle_area(double radius) { return 3.0 * radius * radius; }\n}\n");
+        write(root, "src/main.cpp", "import shapes;\n\nint main() {\n    return shapes::square(2) + static_cast<int>(shapes::circle_area(1.0));\n}\n");
+        const std::string build { b::join_path(root, "build") };
+        constexpr std::string_view TEMPLATE { R"json({
+          "version": 1, "revision": 0,
+          "sets": [
+            { "name": "shapes@", "family-name": "shapes", "visible-sets": [], "translation-units": [
+                { "source": "@ROOT@/src/shapes.cppm", "work-directory": "@BUILD@",
+                  "arguments": ["/opt/llvm/bin/clang++", "-std=c++20", "-c", "@ROOT@/src/shapes.cppm"],
+                  "object": "CMakeFiles/shapes.dir/src/shapes.cppm.o", "private": false,
+                  "provides": { "shapes": "@BUILD@/CMakeFiles/shapes.dir/shapes.pcm" }, "requires": ["shapes:circle"] },
+                { "source": "@ROOT@/src/circle.cppm", "work-directory": "@BUILD@",
+                  "arguments": ["/opt/llvm/bin/clang++", "-std=c++20", "-c", "@ROOT@/src/circle.cppm"],
+                  "object": "CMakeFiles/shapes.dir/src/circle.cppm.o", "private": false,
+                  "provides": { "shapes:circle": "@BUILD@/CMakeFiles/shapes.dir/shapes-circle.pcm" }, "requires": [] }
+            ] },
+            { "name": "app@", "family-name": "app", "visible-sets": ["shapes@"], "translation-units": [
+                { "source": "@ROOT@/src/main.cpp", "work-directory": "@BUILD@",
+                  "arguments": ["/opt/llvm/bin/clang++", "-std=c++20", "-c", "@ROOT@/src/main.cpp"],
+                  "object": "CMakeFiles/app.dir/src/main.cpp.o", "private": true,
+                  "provides": {}, "requires": ["shapes"] }
+            ] }
+          ]
+        })json" };
+        write(root, "build/build_database.json", b::replace_all(b::replace_all(TEMPLATE, "@ROOT@", root), "@BUILD@", build));
+
+        // End to end: a CMakeLists.txt with a build/ that has both
+        // CMakeCache.txt and build_database.json is a CMake project (not a
+        // bare S1 override), and its level is the fixed 2 the design gives
+        // every CMake source (project/model.cpp), not whatever
+        // conformance_level would compute from the document alone.
+        p::LoadOptions options;
+        options.trusted = false;
+        options.cacheDirectory = b::join_path(root, ".cache-dir");
+        const auto model = p::load_project(root, options);
+        expect(model.source == p::SourceKind::cmake);
+        expect(model.level == 2_i);
+        expect(fatal(model.database.sets.size() == 2u));
+        const auto& shapesSet = model.database.sets[0];
+        const auto& appSet = model.database.sets[1];
+        expect(shapesSet.name == "shapes@");
+        expect(fatal(shapesSet.units.size() == 2u));
+        expect(shapesSet.units[0].role == std::optional<s::Role> { s::Role::module_interface }) << "scanned: no \"ide\" object anywhere";
+        expect(shapesSet.units[0].requiredModules == std::vector<std::string> { "shapes:circle" }) << "kept as CMake wrote it";
+        expect(shapesSet.units[1].role == std::optional<s::Role> { s::Role::module_partition_interface }) << "scanned";
+        expect(appSet.visibleSets == std::vector<std::string> { "shapes@" });
+        expect(fatal(appSet.units.size() == 1u));
+        expect(appSet.units[0].role == std::optional<s::Role> { s::Role::non_module }) << "scanned";
+        expect(appSet.units[0].requiredModules == std::vector<std::string> { "shapes" }) << "kept as CMake wrote it";
+
+        // The same document, read the way load_cmake reads it (spec::load_database
+        // then enrich_database) with a fake compiler standing in for probing:
+        // toolchain facts come from the first unit of each set, one probe per set.
+        auto database = s::load_database(b::join_path(build, "build_database.json"));
+        expect(fatal(database.has_value()));
+        int probes { 0 };
+        const p::Prober prober = [&](std::string_view driver, std::span<const std::string>) -> std::optional<lspmcpp::toolchain::ToolchainFacts> {
+            ++probes;
+            lspmcpp::toolchain::ToolchainFacts facts;
+            facts.toolchain.family = s::Family::clang;
+            facts.toolchain.version = "22.1.8";
+            facts.toolchain.driver = std::string { driver };
+            facts.toolchain.target = "x86_64-linux-gnu";
+            return facts;
+        };
+        const auto enriched = p::enrich_database(std::move(*database), p::file_scanner(), prober);
+        expect(probes == 2_i) << "one probe per set, shapes@ and app@";
+        expect(fatal(enriched.facts.size() == 1u)) << "both sets share the same clang++ driver, so the same toolchain id";
+        expect(enriched.database.sets[0].toolchain == "clang-22.1.8-x86_64-linux-gnu");
+        expect(enriched.database.sets[1].toolchain == enriched.database.sets[0].toolchain);
         fs::remove_all(root);
     };
 
