@@ -11,6 +11,7 @@ struct SessionOptions {
     std::string payloadDirectory;
     std::string clangd;
     std::string kit;
+    std::string mcpp;                      // the mcpp executable for mcpp projects; empty: found on PATH
     bool trusted { true };
     bool discoverCompilers { true };
     bool verboseEngineLog { false };

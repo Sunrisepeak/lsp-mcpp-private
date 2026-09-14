@@ -4,7 +4,12 @@ All changes to the specifications in this directory. Each specification is versi
 
 ## S1 — C++ Build Database: IDE Profile
 
-### 0.2.0 — 2026-09-14 (Draft)
+### 0.2.0 — 2026-09-14 (Draft), revised 2026-09-14
+
+Revision:
+
+- `stdlib.module-metadata` may name the MSVC STL's own `modules.json` shape (`library`, `module-sources`).
+- The standard library modules may be provided by translation units of a set every requiring set sees, for example a dependency package's `std.cppm`; `stdlib` is then optional, and units win over a manifest listing the same module.
 
 First public draft, derived from the design draft of 2026-09-13.
 
@@ -17,6 +22,11 @@ First public draft, derived from the design draft of 2026-09-13.
 - JSON Schema `schema/s1-build-database.schema.json` and examples.
 
 ## S2 — Build Database Discovery Protocol
+
+### 0.2.0 — 2026-09-14 (Draft)
+
+- Single-document mode (section 3.4): one envelope on standard output with the database inline, advertised through the producer's `--protocol-version`; the producer writes nothing into the workspace. It matches mcpp's machine-output protocol version 1 and mcpp-community/mcpp#636.
+- Schema `envelope` definition and example `examples/s2-envelope.json`.
 
 ### 0.1.0 — 2026-09-14 (Draft)
 
@@ -31,6 +41,7 @@ First public draft, derived from the design draft of 2026-09-13.
 - Capability negotiation through `experimental.cxxModules`.
 - `cxxModules/status` notification; `cxxModules/graph`, `cxxModules/moduleInfo`, `cxxModules/contexts` and `cxxModules/setContext` requests.
 - Module features mapped onto standard LSP messages, with diagnostic codes `unresolved-module`, `ambiguous-module` and `partition-outside-module`.
+- Revision 2026-09-14: `cxxModules/status` gains optional `notices`, facts that reduce no feature; issue code `module-build-failed`.
 
 ## S4 — Semantic Kit
 

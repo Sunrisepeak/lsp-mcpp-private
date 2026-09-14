@@ -117,6 +117,7 @@ ProjectModel load_project(std::string_view rootInput, const LoadOptions& options
         return *facts;
     };
     ProviderContext context { options.trusted, options.runner, scanner, prober };
+    context.mcppExecutable = options.mcppExecutable;
 
     std::optional<InferredDatabase> loaded;
     auto accept = [&](base::Result<InferredDatabase> result, SourceKind kind) {
@@ -124,6 +125,7 @@ ProjectModel load_project(std::string_view rootInput, const LoadOptions& options
             loaded = std::move(*result);
             model.source = kind;
             for (const auto& problem : loaded->problems) model.issues.push_back(ModelIssue { "toolchain-not-found", problem });
+            for (const auto& [code, message] : loaded->notices) model.notices.push_back(ModelIssue { code, message });
         } else {
             model.issues.push_back(ModelIssue { result.error().code, result.error().message });
         }

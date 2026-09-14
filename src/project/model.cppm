@@ -33,6 +33,7 @@ struct ProjectModel {
     bool usesKit { false };
     std::vector<std::string> watch;           // glob patterns relative to the root
     std::vector<ModelIssue> issues;
+    std::vector<ModelIssue> notices;          // informational: no feature is reduced
     SemanticProfile profile;
 };
 
@@ -40,7 +41,8 @@ struct LoadOptions {
     bool trusted { false };
     std::string cacheDirectory;               // <cache>/workspaces/<hash>
     std::string configuredDatabase;
-    std::string compilerOverride;             // lspMcpp.compiler
+    std::string compilerOverride;             // lspMcpp.compiler; "kit" forces the semantic kit
+    std::string mcppExecutable;               // the producer for mcpp projects; empty: found on PATH
     bool discoverCompilers { true };          // false: loose sources use the kit
     const spec::Kit* kit { nullptr };
     toolchain::Runner runner;

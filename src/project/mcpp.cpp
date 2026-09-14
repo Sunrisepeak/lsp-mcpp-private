@@ -37,27 +37,55 @@ std::string mcpp_package_name(std::string_view manifestText) {
     return {};
 }
 
+namespace {
+
+// S2 0.2 single-document mode against mcpp's machine-output protocol (mcpp-community/mcpp#636):
+// `mcpp --protocol-version` advertises the kind, `mcpp emit build-database --format json` answers it.
+std::optional<InferredDatabase> emit_build_database(const std::string& mcpp, const Detection& detection, const ProviderContext& context) {
+    platform::SpawnOptions query;
+    query.program = mcpp;
+    query.arguments = { "--protocol-version" };
+    query.workDirectory = detection.root;
+    auto answered = platform::run(std::move(query), std::chrono::seconds { 20 });
+    if (!answered || answered->timedOut) return std::nullopt;
+    auto protocol = spec::parse_producer_protocol(answered->output);
+    if (!protocol || !protocol->kinds.contains("mcpp.build-database")) {
+        base::log::info("mcpp does not produce build databases (no mcpp.build-database kind); using its compile database");
+        return std::nullopt;
+    }
+    const std::vector<std::string> command { mcpp, "emit", "build-database", "--format", "json" };
+    auto document = spec::run_database_command(command, detection.root, context.configureTimeout);
+    if (!document) {
+        base::log::warning("mcpp emit build-database failed: {}", document.error().message);
+        return std::nullopt;
+    }
+    if (std::ranges::find(document->effects, std::string_view { "write-project" }) != document->effects.end()) {
+        base::log::warning("mcpp emit build-database reports that it wrote into the project");
+    }
+    auto database = spec::from_json(document->database, detection.root);
+    if (!database) {
+        base::log::warning("mcpp's build database cannot be read: {}", database.error().message);
+        return std::nullopt;
+    }
+    auto enriched = enrich_database(std::move(*database), context.scanner, context.prober);
+    enriched.watch = std::move(document->watch);
+    return enriched;
+}
+
+} // namespace
+
 base::Result<InferredDatabase> load_mcpp(const Detection& detection, const ProviderContext& context) {
     const std::string commandsPath { base::join_path(detection.root, "compile_commands.json") };
+    std::vector<std::pair<std::string, std::string>> notices;
     if (context.trusted) {
         const std::string home { platform::dirs::home_directory() };
         const std::vector<std::string> fallbacks { base::join_path(home, ".mcpp/bin/mcpp"), base::join_path(home, ".xlings/subos/current/bin/mcpp") };
-        if (auto mcpp = find_tool("mcpp", fallbacks)) {
-            // S2 first: a producer that can describe the build answers at level 3.
-            const std::vector<std::string> discover { *mcpp, "emit", "build-database", "--format", "jsonl" };
-            auto discovered = spec::run_discovery(discover, spec::DiscoveryRequest { detection.root, {}, {} }, detection.root, std::chrono::minutes { 2 });
-            if (discovered) {
-                if (auto database = spec::load_database(discovered->database)) {
-                    auto enriched = enrich_database(std::move(*database), context.scanner, context.prober);
-                    enriched.watch = discovered->watch;
-                    enriched.watch.push_back(discovered->database);
-                    return enriched;
-                } else {
-                    base::log::warning("mcpp discovery named {} but it cannot be read: {}", discovered->database, database.error().message);
-                }
-            } else {
-                base::log::info("mcpp has no build-database producer ({}); using its compile database", discovered.error().message);
-            }
+        const std::optional<std::string> mcpp { context.mcppExecutable.empty() ? find_tool("mcpp", fallbacks) : std::optional<std::string> { context.mcppExecutable } };
+        if (mcpp) {
+            if (auto emitted = emit_build_database(*mcpp, detection, context)) return std::move(*emitted);
+            // This mcpp cannot describe the build without configuring it, which writes into the project.
+            notices.emplace_back("producer-writes-project",
+                                 "this mcpp has no emit build-database; mcpp build --configure-only writes compile_commands.json and target/ into the project");
             platform::SpawnOptions options;
             options.program = *mcpp;
             options.arguments = { "build", "--configure-only" };
@@ -84,6 +112,7 @@ base::Result<InferredDatabase> load_mcpp(const Detection& detection, const Provi
     }
     auto database = database_from_commands(*commands, name, context.scanner, context.prober);
     database.database.generator = spec::Generator { "lsp-mcpp", "mcpp compile_commands.json" };
+    database.notices = std::move(notices);
     return database;
 }
 

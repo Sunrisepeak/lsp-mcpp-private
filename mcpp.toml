@@ -9,7 +9,7 @@ repo        = "https://github.com/Sunrisepeak/lsp-mcpp-private"
 [build]
 sources = ["src/**/*.cppm", "src/**/*.cpp"]
 
-# Three executables share every module under src/.
+# Four executables share every module under src/.
 [targets.lsp-mcpp]
 kind = "bin"
 main = "src/main.cpp"
@@ -21,6 +21,11 @@ main = "src/tools/conformance.cpp"
 [targets.lsp-mcpp-lspgen]
 kind = "bin"
 main = "src/tools/lspgen.cpp"
+
+# Stands in for mcpp in conformance fixtures: the build-database contract of mcpp-community/mcpp#636.
+[targets.lsp-mcpp-mock-mcpp]
+kind = "bin"
+main = "src/tools/mockmcpp.cpp"
 
 [toolchain]
 default = "llvm@22.1.8"

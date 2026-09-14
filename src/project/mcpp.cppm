@@ -1,6 +1,6 @@
-// mcpp as a producer (design section 14.2). Until `mcpp emit build-database`
-// exists, the model comes from `mcpp build --configure-only`'s compile database
-// plus scanning and probing.
+// mcpp as a producer (design section 14.2): `mcpp emit build-database --format json`
+// when this mcpp advertises the kind (mcpp-community/mcpp#636), otherwise
+// `mcpp build --configure-only`'s compile database plus scanning and probing.
 export module lspmcpp.project.mcpp;
 
 import std;

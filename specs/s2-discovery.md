@@ -3,15 +3,15 @@
 | | |
 |---|---|
 | Specification | S2 |
-| Version | 0.1.0 |
+| Version | 0.2.0 |
 | Status | Draft |
 | Schema | [`schema/s2-discovery.schema.json`](schema/s2-discovery.schema.json) |
-| Examples | [`examples/s2-request.json`](examples/s2-request.json), [`examples/s2-messages.jsonl`](examples/s2-messages.jsonl) |
+| Examples | [`examples/s2-request.json`](examples/s2-request.json), [`examples/s2-messages.jsonl`](examples/s2-messages.jsonl), [`examples/s2-envelope.json`](examples/s2-envelope.json) |
 | License | Apache-2.0 |
 
 ## Abstract
 
-This specification defines how a consumer — typically a language server — locates an [S1](s1-build-database.md) build database, how it asks a producer to write or refresh one, and how it learns when the database must be read again. The command form follows the shape of rust-analyzer's project discovery command and Go's `GOPACKAGESDRIVER`: a child process, one JSON request on standard input, and a stream of JSON messages on standard output.
+This specification defines how a consumer — typically a language server — locates an [S1](s1-build-database.md) build database, how it asks a producer to write or refresh one, and how it learns when the database must be read again. The command has two modes. In stream mode it follows the shape of rust-analyzer's project discovery command and Go's `GOPACKAGESDRIVER`: a child process, one JSON request on standard input, and a stream of JSON messages on standard output. In single-document mode it follows a build tool's machine-output envelope, such as mcpp's: one JSON document on standard output that carries the database inline, and a protocol description the consumer reads before running anything.
 
 ## 1. Conventions
 
@@ -80,12 +80,31 @@ Example stream:
 {"kind": "finished", "database": "/abs/path/to/workspace/target/build_database.json", "watch": ["mcpp.toml", "mcpp.lock", "src/**/*.cppm"], "profile-version": "0.2.0"}
 ```
 
+### 3.4 Single-document mode
+
+A producer that already prints machine-readable envelopes offers discovery as one command whose standard output is one JSON object (mcpp's wire protocol version 1 is an example, `mcpp emit build-database --format json`):
+
+| Field | Type | Requirement | Description |
+|---|---|---|---|
+| `schemaVersion` | integer | MUST | The envelope version; this section describes version `1`. |
+| `kind` | string | MUST | A name ending in `.build-database`, for example `mcpp.build-database`. |
+| `kindVersion` | integer | MUST | `1`. |
+| `effects` | string[] | MUST | What running the command did, for example `read-project`. |
+| `data` | object | conditional MUST | Present when the command succeeded: `database` (object, MUST), the S1 document; `watch` (string[], MUST), as in section 3.3; `inputs-fingerprint` (string, SHOULD), a digest of the inputs `watch` names. |
+| `diagnostics` | object[] | MUST | Each with `code`, `severity` (`error`, `warning` or `note`) and `message`. |
+
+The consumer writes nothing to the command's standard input. Before running it, the consumer reads the producer's protocol description, `<producer> --protocol-version`: a JSON object whose `kinds` maps kind names to versions and whose `commands` maps command names to the `effects` they may have. A consumer **MUST** use single-document mode only when `kinds` contains the build-database kind, and **MUST** run the command only when the workspace is trusted and the listed effects are acceptable. A command without `data` has failed; its `diagnostics` say why.
+
+In this mode the producer does not write a database file. The consumer keeps the document where it keeps its own state.
+
+Example: [`examples/s2-envelope.json`](examples/s2-envelope.json).
+
 ## 4. Producer requirements
 
 A producer:
 
 - **MUST NOT** require a full build. It performs only what is needed to know the translation units, their arguments and the module graph: configuration and dependency scanning.
-- **MUST** write the database before emitting `finished`, and **SHOULD** write it atomically (section 2).
+- In stream mode, **MUST** write the database before emitting `finished`, and **SHOULD** write it atomically (section 2). In single-document mode, **MUST NOT** write into the workspace to answer.
 - **MUST** write a database that conforms to S1 at level 1 or higher, with a `profile-version` no higher than the request's when it can write that version.
 - **MUST** list in `watch` every input whose change can change the database, such as build description files, lock files and module sources whose declarations determine the graph.
 - **SHOULD** emit a `progress` message whenever work takes noticeably long, so that a consumer can show that discovery is alive.

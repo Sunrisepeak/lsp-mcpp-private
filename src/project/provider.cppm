@@ -14,6 +14,7 @@ struct ProviderContext {
     Scanner scanner;
     Prober prober;
     std::chrono::milliseconds configureTimeout { std::chrono::minutes { 5 } };
+    std::string mcppExecutable;             // empty: found on PATH or in the usual install locations
 };
 
 // The first executable found on PATH or at one of the fallback absolute paths.

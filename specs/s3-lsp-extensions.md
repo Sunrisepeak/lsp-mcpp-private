@@ -70,6 +70,7 @@ interface CxxModulesStatusParams {
   engine: { name: "clangd"; version: string };
   progress?: { done: number; total: number };
   issues?: CxxModulesIssue[];      // reasons for degradation; absent or empty when there are none
+  notices?: CxxModulesIssue[];     // facts worth showing that reduce no feature, e.g. a producer that writes into the project
 }
 
 interface SemanticProfile {

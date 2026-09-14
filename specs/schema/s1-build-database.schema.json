@@ -4,20 +4,35 @@
   "title": "C++ Build Database: IDE Profile 0.2.0 (S1)",
   "description": "A P2977R2-compatible build database with the IDE profile fields of S1. Unknown fields are permitted everywhere; consumers ignore them.",
   "type": "object",
-  "required": ["version", "revision", "sets"],
+  "required": [
+    "version",
+    "revision",
+    "sets"
+  ],
   "properties": {
-    "version": { "const": 1 },
-    "revision": { "type": "integer", "minimum": 0 },
-    "ide": { "$ref": "#/$defs/documentIde" },
+    "version": {
+      "const": 1
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "ide": {
+      "$ref": "#/$defs/documentIde"
+    },
     "sets": {
       "type": "array",
-      "items": { "$ref": "#/$defs/set" }
+      "items": {
+        "$ref": "#/$defs/set"
+      }
     }
   },
   "$defs": {
     "stringArray": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
     "nonEmptyString": {
       "type": "string",
@@ -29,7 +44,10 @@
     },
     "documentIde": {
       "type": "object",
-      "required": ["profile-version", "toolchains"],
+      "required": [
+        "profile-version",
+        "toolchains"
+      ],
       "properties": {
         "profile-version": {
           "type": "string",
@@ -37,43 +55,86 @@
         },
         "generator": {
           "type": "object",
-          "required": ["name"],
+          "required": [
+            "name"
+          ],
           "properties": {
-            "name": { "$ref": "#/$defs/nonEmptyString" },
-            "version": { "type": "string" }
+            "name": {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "version": {
+              "type": "string"
+            }
           }
         },
         "toolchains": {
           "type": "object",
-          "additionalProperties": { "$ref": "#/$defs/toolchain" }
+          "additionalProperties": {
+            "$ref": "#/$defs/toolchain"
+          }
         },
-        "extensions": { "$ref": "#/$defs/extensions" }
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
       }
     },
     "toolchain": {
       "type": "object",
-      "required": ["family", "version", "driver", "target"],
+      "required": [
+        "family",
+        "version",
+        "driver",
+        "target"
+      ],
       "properties": {
-        "family": { "enum": ["gcc", "clang", "msvc", "clang-cl", "other"] },
-        "version": { "$ref": "#/$defs/nonEmptyString" },
-        "build-id": { "type": "string" },
-        "driver": { "$ref": "#/$defs/nonEmptyString" },
-        "target": { "$ref": "#/$defs/nonEmptyString" },
-        "sysroot": { "type": "string" },
-        "stdlib": { "$ref": "#/$defs/stdlib" },
-        "config-files": { "$ref": "#/$defs/stringArray" },
+        "family": {
+          "enum": [
+            "gcc",
+            "clang",
+            "msvc",
+            "clang-cl",
+            "other"
+          ]
+        },
+        "version": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "build-id": {
+          "type": "string"
+        },
+        "driver": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "target": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "sysroot": {
+          "type": "string"
+        },
+        "stdlib": {
+          "$ref": "#/$defs/stdlib"
+        },
+        "config-files": {
+          "$ref": "#/$defs/stringArray"
+        },
         "introspection": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["command"],
+            "required": [
+              "command"
+            ],
             "properties": {
               "command": {
                 "type": "array",
                 "minItems": 1,
-                "items": { "type": "string" }
+                "items": {
+                  "type": "string"
+                }
               },
-              "output": { "type": "string" }
+              "output": {
+                "type": "string"
+              }
             }
           }
         }
@@ -81,72 +142,144 @@
     },
     "stdlib": {
       "type": "object",
-      "required": ["name", "module-metadata"],
+      "required": [
+        "name"
+      ],
       "properties": {
-        "name": { "enum": ["libstdc++", "libc++", "msvc-stl", "other"] },
-        "version": { "type": "string" },
-        "module-metadata": { "$ref": "#/$defs/nonEmptyString" }
+        "name": {
+          "enum": [
+            "libstdc++",
+            "libc++",
+            "msvc-stl",
+            "other"
+          ]
+        },
+        "version": {
+          "type": "string"
+        },
+        "module-metadata": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
       }
     },
     "set": {
       "type": "object",
-      "required": ["name", "visible-sets", "translation-units"],
+      "required": [
+        "name",
+        "visible-sets",
+        "translation-units"
+      ],
       "properties": {
-        "name": { "$ref": "#/$defs/nonEmptyString" },
-        "family-name": { "type": "string" },
+        "name": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "family-name": {
+          "type": "string"
+        },
         "visible-sets": {
           "type": "array",
-          "items": { "$ref": "#/$defs/nonEmptyString" },
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          },
           "uniqueItems": true
         },
-        "baseline-arguments": { "$ref": "#/$defs/stringArray" },
+        "baseline-arguments": {
+          "$ref": "#/$defs/stringArray"
+        },
         "translation-units": {
           "type": "array",
-          "items": { "$ref": "#/$defs/translationUnit" }
+          "items": {
+            "$ref": "#/$defs/translationUnit"
+          }
         },
-        "ide": { "$ref": "#/$defs/setIde" }
+        "ide": {
+          "$ref": "#/$defs/setIde"
+        }
       }
     },
     "setIde": {
       "type": "object",
-      "required": ["toolchain"],
+      "required": [
+        "toolchain"
+      ],
       "properties": {
-        "toolchain": { "$ref": "#/$defs/nonEmptyString" },
-        "configuration": { "type": "string" },
-        "kind": { "enum": ["library", "executable", "test", "other"] },
-        "options": { "$ref": "#/$defs/semanticOptions" },
+        "toolchain": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "configuration": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "library",
+            "executable",
+            "test",
+            "other"
+          ]
+        },
+        "options": {
+          "$ref": "#/$defs/semanticOptions"
+        },
         "module-metadata": {
           "type": "array",
-          "items": { "$ref": "#/$defs/nonEmptyString" }
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
         },
-        "extensions": { "$ref": "#/$defs/extensions" }
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
       }
     },
     "translationUnit": {
       "type": "object",
-      "required": ["source", "work-directory", "arguments"],
+      "required": [
+        "source",
+        "work-directory",
+        "arguments"
+      ],
       "properties": {
-        "source": { "$ref": "#/$defs/nonEmptyString" },
-        "work-directory": { "$ref": "#/$defs/nonEmptyString" },
+        "source": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "work-directory": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
         "arguments": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
-        "local-arguments": { "$ref": "#/$defs/stringArray" },
-        "object": { "type": "string" },
-        "private": { "type": "boolean" },
+        "local-arguments": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "object": {
+          "type": "string"
+        },
+        "private": {
+          "type": "boolean"
+        },
         "provides": {
           "type": "object",
-          "propertyNames": { "$ref": "#/$defs/moduleName" },
-          "additionalProperties": { "type": "string" }
+          "propertyNames": {
+            "$ref": "#/$defs/moduleName"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
         },
         "requires": {
           "type": "array",
-          "items": { "$ref": "#/$defs/moduleName" },
+          "items": {
+            "$ref": "#/$defs/moduleName"
+          },
           "uniqueItems": true
         },
-        "ide": { "$ref": "#/$defs/unitIde" }
+        "ide": {
+          "$ref": "#/$defs/unitIde"
+        }
       }
     },
     "moduleName": {
@@ -156,11 +289,19 @@
     },
     "unitIde": {
       "type": "object",
-      "required": ["role"],
+      "required": [
+        "role"
+      ],
       "properties": {
-        "role": { "$ref": "#/$defs/role" },
-        "options": { "$ref": "#/$defs/semanticOptions" },
-        "extensions": { "$ref": "#/$defs/extensions" }
+        "role": {
+          "$ref": "#/$defs/role"
+        },
+        "options": {
+          "$ref": "#/$defs/semanticOptions"
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
       }
     },
     "role": {
@@ -178,19 +319,40 @@
       "oneOf": [
         {
           "type": "object",
-          "required": ["define"],
-          "not": { "required": ["undefine"] },
+          "required": [
+            "define"
+          ],
+          "not": {
+            "required": [
+              "undefine"
+            ]
+          },
           "properties": {
-            "define": { "$ref": "#/$defs/nonEmptyString" },
-            "value": { "type": ["string", "null"] }
+            "define": {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "value": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         },
         {
           "type": "object",
-          "required": ["undefine"],
-          "not": { "required": ["define"] },
+          "required": [
+            "undefine"
+          ],
+          "not": {
+            "required": [
+              "define"
+            ]
+          },
           "properties": {
-            "undefine": { "$ref": "#/$defs/nonEmptyString" }
+            "undefine": {
+              "$ref": "#/$defs/nonEmptyString"
+            }
           }
         }
       ]
@@ -198,29 +360,66 @@
     "includeDirectories": {
       "type": "object",
       "properties": {
-        "user": { "$ref": "#/$defs/stringArray" },
-        "quote": { "$ref": "#/$defs/stringArray" },
-        "system": { "$ref": "#/$defs/stringArray" },
-        "after": { "$ref": "#/$defs/stringArray" }
+        "user": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "quote": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "system": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "after": {
+          "$ref": "#/$defs/stringArray"
+        }
       }
     },
     "semanticOptions": {
       "type": "object",
       "properties": {
-        "language-standard": { "type": "string", "pattern": "^c\\+\\+[0-9a-z]+$" },
-        "language-extensions": { "enum": ["none", "gnu", "ms"] },
+        "language-standard": {
+          "type": "string",
+          "pattern": "^c\\+\\+[0-9a-z]+$"
+        },
+        "language-extensions": {
+          "enum": [
+            "none",
+            "gnu",
+            "ms"
+          ]
+        },
         "macros": {
           "type": "array",
-          "items": { "$ref": "#/$defs/macro" }
+          "items": {
+            "$ref": "#/$defs/macro"
+          }
         },
-        "include-directories": { "$ref": "#/$defs/includeDirectories" },
-        "forced-includes": { "$ref": "#/$defs/stringArray" },
-        "exceptions": { "type": "boolean" },
-        "rtti": { "type": "boolean" },
+        "include-directories": {
+          "$ref": "#/$defs/includeDirectories"
+        },
+        "forced-includes": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "exceptions": {
+          "type": "boolean"
+        },
+        "rtti": {
+          "type": "boolean"
+        },
         "raw-semantic-arguments": {
           "type": "object",
-          "propertyNames": { "enum": ["gcc", "clang", "msvc", "clang-cl", "other"] },
-          "additionalProperties": { "$ref": "#/$defs/stringArray" }
+          "propertyNames": {
+            "enum": [
+              "gcc",
+              "clang",
+              "msvc",
+              "clang-cl",
+              "other"
+            ]
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/stringArray"
+          }
         }
       }
     }

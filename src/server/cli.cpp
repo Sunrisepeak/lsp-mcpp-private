@@ -71,6 +71,7 @@ Loaded load(std::string_view root, const cmdline::ParsedArgs& args, bool trusted
     options.runner = toolchain::process_runner(std::chrono::seconds { 20 });
     options.probeCache = &cache;
     options.discoverCompilers = !args.is_flag_set("no-discover");
+    options.mcppExecutable = args.value("mcpp").value_or("");
     loaded.model = project::load_project(root, options);
 
     normalize::PlanInput input;
@@ -170,6 +171,7 @@ int run_cli(int argc, char* argv[]) {
         options.payloadDirectory = args.value("payload").value_or("");
         options.clangd = args.value("clangd").value_or("");
         options.kit = args.value("kit").value_or("");
+        options.mcpp = args.value("mcpp").value_or("");
         options.trusted = !args.is_flag_set("untrusted");
         options.discoverCompilers = !args.is_flag_set("no-discover");
         options.verboseEngineLog = args.value("log-level").value_or("") == "debug";
@@ -190,6 +192,7 @@ int run_cli(int argc, char* argv[]) {
     (void)app.option("payload").takes_value().global(true).help("Payload directory with clangd and the semantic kit");
     (void)app.option("clangd").takes_value().global(true).help("clangd executable (overrides the payload)");
     (void)app.option("kit").takes_value().global(true).help("Semantic kit directory (overrides the payload)");
+    (void)app.option("mcpp").takes_value().global(true).help("The mcpp executable for mcpp projects (default: found on PATH)");
     (void)app.option("untrusted").global(true).help("Do not run build tools or compilers");
     (void)app.option("no-discover").global(true).help("Do not look for compilers; loose sources use the semantic kit");
     (void)app.option("log-level").takes_value().global(true).help("debug | info | warning | error");

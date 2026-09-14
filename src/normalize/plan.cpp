@@ -252,6 +252,8 @@ EnginePlan plan_engine(const PlanInput& input) {
                              && representative.facts->toolchain.stdlib->name == "msvc-stl" };
         for (const auto& module : stdEntries) {
             if (seenSources.contains(base::path_key(module.source))) continue;
+            // A producer that describes where std comes from (a dependency package's std.cppm) is taken at its word.
+            if (providers.contains(module.logicalName)) continue;
             EngineEntry entry { representative.unit->workDirectory, module.source, {} };
             entry.arguments.push_back(representative.driver);
             entry.arguments.insert(entry.arguments.end(), base.begin(), base.end());

@@ -1032,6 +1032,7 @@ private:
         load.trusted = options_.trusted;
         load.cacheDirectory = cacheDirectory_;
         load.compilerOverride = compilerOverride_;
+        load.mcppExecutable = options_.mcpp;
         load.discoverCompilers = options_.discoverCompilers;
         std::shared_ptr<const spec::Kit> kit = kit_ ? std::make_shared<const spec::Kit>(*kit_) : nullptr;
         const std::string root { root_ };
@@ -1225,6 +1226,10 @@ private:
         }
         if (!options_.trusted) add("untrusted-workspace", "the workspace is not trusted: build tools and compilers are not run", "");
         if (kit_ && spec::requires_macos_sdk(*kit_) && macosSdk_.empty()) add("sdk-missing", "the macOS SDK was not found; install the Command Line Tools", "");
+        Json notices = Json::array();
+        if (model_) {
+            for (const auto& notice : model_->notices) notices.push_back(Json { { "code", notice.code }, { "message", notice.message } });
+        }
         Json project { { "root", base::path_to_uri(root_) }, { "source", model_ ? std::string { project::to_string(model_->source) } : std::string { "inferred" } } };
         if (model_) project["level"] = model_->level;
         Json params {
@@ -1234,6 +1239,7 @@ private:
             { "engine", Json { { "name", "clangd" }, { "version", payload_.clangdVersion.empty() ? std::string { "unknown" } : payload_.clangdVersion } } },
             { "issues", issues },
         };
+        if (!notices.empty()) params["notices"] = std::move(notices);
         std::string serialized { lsp::dump(params) };
         if (serialized == lastStatus_) return;
         lastStatus_ = std::move(serialized);

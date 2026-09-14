@@ -20,6 +20,8 @@ struct InferredDatabase {
     FactsMap facts;
     std::vector<std::string> problems;
     std::vector<std::string> watch;   // extra paths to watch, from a discovery command
+    // Facts a person may want to know that do not reduce any feature: (code, message).
+    std::vector<std::pair<std::string, std::string>> notices;
 };
 
 // Completes a database a producer wrote: probes each set's compiler when the

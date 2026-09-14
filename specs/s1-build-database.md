@@ -125,7 +125,7 @@ A Toolchain describes the compiler the **build** uses. Its `family` selects the 
 | `driver` | string | MUST | Absolute path of the driver the build invokes. |
 | `target` | string | MUST | Target triple, from `-dumpmachine`, `-print-target-triple` or an equivalent query. |
 | `sysroot` | string | MAY | The sysroot the build uses. |
-| `stdlib` | object | conditional MUST | REQUIRED when any unit using this toolchain requires `std` or `std.compat` (section 6.1). |
+| `stdlib` | object | conditional MUST | REQUIRED when any unit using this toolchain requires `std` or `std.compat`, unless those modules are provided by translation units the requiring units can see (section 10, steps 1 and 2): a dependency package may ship the standard library's module sources itself (section 6.1). |
 | `config-files` | string[] | SHOULD | Implicit configuration inputs known to the producer, such as a `.cfg` file next to a clang driver or a GCC specs file. An empty array states that there are none. |
 | `introspection` | object[] | MAY | The queries run to obtain the fields above, for reproduction. Each element has `command` (string[], MUST) and `output` (string, MAY). |
 
@@ -135,9 +135,11 @@ A Toolchain describes the compiler the **build** uses. Its `family` selects the 
 |---|---|---|---|
 | `name` | enum | MUST | `libstdc++`, `libc++`, `msvc-stl` or `other`. |
 | `version` | string | SHOULD | Standard library version. |
-| `module-metadata` | string | MUST | Path of the standard library module manifest in P3286 shape, for example `libstdc++.modules.json`. |
+| `module-metadata` | string | MUST | Path of the standard library module manifest, for example `libstdc++.modules.json`. The manifest has either the P3286 shape (a `modules` array of objects with `logical-name` and `source-path`) or the shape the MSVC STL ships in `<toolset>/modules/modules.json`: `{"library": "microsoft/STL", "module-sources": ["std.ixx", "std.compat.ixx"]}`, in which each source provides the module its file name spells without the extension. |
 
 Rationale: some clang distributions place a default configuration file next to the driver that silently switches the standard library from libstdc++ to libc++. A consumer that does not know which standard library the build actually uses produces wrong semantics without reporting any error. The standard library is therefore stated explicitly.
+
+A standard library whose module sources come from a dependency package rather than from the toolchain (for example a runtime package's own `std.cppm`) has no manifest to name. A producer then lists those sources as translation units with `provides` `std` and `std.compat` in a set that every requiring set can see, and omits `stdlib` or its `module-metadata`. When units provide a standard library module that a manifest also lists, a consumer **MUST** use the units.
 
 ## 7. Set object
 

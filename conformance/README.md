@@ -26,6 +26,8 @@ checks fail at once with that reason instead of each waiting out its timeout.
 | `untrusted` | An mcpp package in an untrusted workspace: nothing is executed, the kit answers, the status is `degraded` with the reason |
 | `mcpp-gcc` | mcpp with GCC 16: GCC arguments translated for clangd (P1), libstdc++'s `std` injected |
 | `mcpp-llvm` | mcpp with LLVM 22: libc++ selected through include paths, BMI arguments removed (P3) |
+| `mcpp-emit` | mcpp's `emit build-database --format json` (mcpp-community/mcpp#636), simulated by `lsp-mcpp-mock-mcpp` from `mcpp-mock.json`: an S1 level 3 model and an unchanged workspace |
+| `mcpp-emit-package-std` | The same with `std` and `std.compat` provided by a dependency package's translation units instead of the toolchain's manifest |
 | `mingw` | A compile database for `x86_64-windows-gnu`: MinGW-w64 GCC semantics through `--sysroot` (P2) |
 | `cmake-clang` | CMake 3.28+ with `FILE_SET CXX_MODULES`, Clang and Ninja: `@modmap` expansion, partitions |
 | `cmake-msvc` | The same project built by cl.exe on Windows: cl.exe arguments translated into clang++ arguments, `-interface`, `-ifcOutput` and `-reference` removed from the expanded `.modmap` files, the Visual Studio toolset and Windows SDK passed explicitly (P7) |

@@ -20,6 +20,21 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # The specifications' schemas, examples and the fixtures' simulated producer data (specs/tools/validate.py).
+  specifications:
+    name: specifications
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Schemas, examples, text blocks and links
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/specs"
+          "$RUNNER_TEMP/specs/bin/pip" install --quiet 'jsonschema>=4.18'
+          "$RUNNER_TEMP/specs/bin/python" specs/tools/validate.py | grep -v '^PASS'
+
+  # ---------------------------------------------------------------------------
   # Unit tests on each host, and every executable starts.
   build-test:
     name: build and unit tests (${{ matrix.os }})
@@ -135,10 +150,11 @@ jobs:
           set -euo pipefail
           server=$(find target -type f -name "lsp-mcpp${{ matrix.exe }}" -path '*/bin/*' | head -1)
           runner=$(find target -type f -name "lsp-mcpp-conformance${{ matrix.exe }}" -path '*/bin/*' | head -1)
+          mock=$(find target -type f -name "lsp-mcpp-mock-mcpp${{ matrix.exe }}" -path '*/bin/*' | head -1)
           python3 packaging/scripts/assemble_payload.py --platform ${{ matrix.platform }} --server "$server" \
               --clangd work/clangd --kit work/kit --out payload
           python3 packaging/scripts/assemble_payload.py --verify payload
-          mkdir -p tools && cp "$runner" tools/
+          mkdir -p tools && cp "$runner" "$mock" tools/
           # A tarball keeps executable bits and links, which an artifact zip does not.
           tar -czf payload-${{ matrix.platform }}.tar.gz payload tools
           du -sh payload payload-${{ matrix.platform }}.tar.gz
@@ -161,7 +177,7 @@ jobs:
         include:
           - platform: linux-x64
             os: ubuntu-24.04
-            fixtures: inferred untrusted mcpp-gcc mcpp-llvm mingw cmake-clang
+            fixtures: inferred untrusted mcpp-gcc mcpp-llvm mcpp-emit mcpp-emit-package-std mingw cmake-clang
           - platform: darwin-arm64
             os: macos-14
             fixtures: inferred untrusted mcpp-llvm
