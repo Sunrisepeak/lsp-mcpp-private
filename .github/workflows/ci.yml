@@ -177,13 +177,13 @@ jobs:
         include:
           - platform: linux-x64
             os: ubuntu-24.04
-            fixtures: inferred untrusted mcpp-gcc mcpp-llvm mcpp-emit mcpp-emit-package-std mingw cmake-clang
+            fixtures: inferred untrusted mcpp-gcc mcpp-llvm mcpp-emit mcpp-emit-package-std mingw cmake-clang s1-two-sets watch-polling payload-corrupt multi-root
           - platform: darwin-arm64
             os: macos-14
-            fixtures: inferred untrusted mcpp-llvm
+            fixtures: inferred untrusted mcpp-llvm multi-root
           - platform: win32-x64
             os: windows-2022
-            fixtures: inferred inferred-msvc untrusted mingw cmake-msvc cmake-msvc-std cmake-clangxx-msvc compdb-clangxx-msvc-std compdb-clang-cl-std mcpp-msvc mcpp-llvm-msvc
+            fixtures: inferred inferred-msvc untrusted mingw cmake-msvc cmake-msvc-std cmake-clangxx-msvc compdb-clangxx-msvc-std compdb-clang-cl-std mcpp-msvc mcpp-llvm-msvc multi-root
     defaults:
       run:
         shell: bash
@@ -218,11 +218,15 @@ jobs:
           export CONFORMANCE_CLANGXX="${CONFORMANCE_CLANGXX/#\~/$HOME}"
           exe=''; extra=()
           if [ "$RUNNER_OS" = Windows ]; then exe='.exe'; extra=(--msvc-env "$RUNNER_TEMP/msvc.env"); fi
+          # usable plan W9.3: watch-polling proves the fallback that only runs when the client
+          # never declares didChangeWatchedFiles.dynamicRegistration in the first place.
+          fixture_extra() { case "$1" in watch-polling) echo --no-dynamic-watch ;; esac; }
           failed=''
           for fixture in ${{ matrix.fixtures }}; do
             echo "::group::$fixture"
+            fx_extra=$(fixture_extra "$fixture")
             if ! "tools/lsp-mcpp-conformance$exe" run --server "payload/bin/lsp-mcpp$exe" --payload payload ${extra[@]+"${extra[@]}"} \
-                   --fixture "conformance/fixtures/$fixture" --timeout 180; then
+                   ${fx_extra:+$fx_extra} --fixture "conformance/fixtures/$fixture" --timeout 180; then
               failed="$failed $fixture"
             fi
             echo "::endgroup::"
@@ -231,8 +235,9 @@ jobs:
             echo "::error::failed fixtures:$failed"
             # Rerun the first failure with the server's log, for the record.
             first=${failed# }; first=${first%% *}
+            fx_extra=$(fixture_extra "$first")
             "tools/lsp-mcpp-conformance$exe" run --server "payload/bin/lsp-mcpp$exe" --payload payload ${extra[@]+"${extra[@]}"} \
-                --fixture "conformance/fixtures/$first" --timeout 60 --verbose 2>&1 | tail -200 || true
+                ${fx_extra:+$fx_extra} --fixture "conformance/fixtures/$first" --timeout 60 --verbose 2>&1 | tail -200 || true
             exit 1
           fi
 

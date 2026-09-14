@@ -101,6 +101,8 @@ States:
 
 A server **MUST** send the notification whenever any field changes, **SHOULD** coalesce changes that occur within a short interval, and **MUST** send at least one notification after `initialized`. `project.source` names where the model came from: an mcpp project, a CMake project, an S1 database, a `compile_commands.json`, or inference from sources alone. `profile.kind` is `semantic-kit` when the server analyzes the project with an [S4](s4-semantic-kit.md) semantic kit because no suitable compiler was found.
 
+A server that manages more than one workspace root (multiple `workspaceFolders`, or folders added or removed later through `workspace/didChangeWorkspaceFolders`) **MUST** send one notification per root, each with that root's own `project.root`, rather than one notification describing all of them; a client that presents status per folder tells them apart by it. This is a backward-compatible addition: `project.root` already existed in protocol version 1, and a single-root server's one notification already satisfied "at least one notification" above. A request that names a document (for example `cxxModules/setContext`) is answered by the root that owns it; `cxxModules/graph` and a bare-name `cxxModules/moduleInfo` name no document and so, until a later protocol version adds a way to select one, are answered by the first root.
+
 ## 5. Requests
 
 ### 5.1 `cxxModules/graph`

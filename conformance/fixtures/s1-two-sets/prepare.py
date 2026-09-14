@@ -1,17 +1,23 @@
 """Writes build_database.json: an S1 document the workspace carries itself (usable plan W9.2),
 with two sets ("variant1", "variant2") that both compile src/main.cpp, one with -DVARIANT=1 and
 the other with -DVARIANT=2. No build system runs; this is the database a producer would have
-written. The toolchain is the LLVM 22.1.8 this repository's other Linux fixtures already use, so
-the compiler introspection the server does at load time (project/infer.cpp's enrich_database)
-resolves it instead of guessing from a fake driver path.
+written. sys.argv[1] (scenario.json passes {env:CONFORMANCE_CLANGXX|clang++}, the same convention
+cmake-clang's own prepare step uses) is a real, introspectable compiler, so the server's own
+toolchain probing at load time (project/infer.cpp's enrich_database) resolves it instead of
+guessing from a fake driver path.
 """
 import json
-import os
 import pathlib
+import shutil
+import sys
 
 root = pathlib.Path.cwd()
-llvm = pathlib.Path(os.environ["HOME"]) / ".mcpp" / "registry" / "data" / "xpkgs" / "xim-x-llvm" / "22.1.8"
-clangxx = str(llvm / "bin" / "clang++")
+clangxx = sys.argv[1] if len(sys.argv) > 1 else "clang++"
+if not pathlib.Path(clangxx).is_absolute():
+    found = shutil.which(clangxx)
+    if not found:
+        sys.exit(f"s1-two-sets: {clangxx} is not on PATH")
+    clangxx = found
 source = str(root / "src" / "main.cpp")
 
 

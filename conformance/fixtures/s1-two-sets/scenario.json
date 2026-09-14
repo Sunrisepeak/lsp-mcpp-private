@@ -2,7 +2,7 @@
   "name": "s1-two-sets",
   "description": "A workspace carrying its own S1 build database (usable plan W9.2, prepare.py writes it): two sets compile the same file with -DVARIANT=1 and -DVARIANT=2, and cxxModules/setContext switches which one answers.",
   "prepare": [
-    ["python3", "prepare.py"]
+    ["python3", "prepare.py", "{env:CONFORMANCE_CLANGXX|clang++}"]
   ],
   "server-arguments": ["--database", "build_database.json"],
   "checks": [
