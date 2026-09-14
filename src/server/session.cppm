@@ -4,6 +4,7 @@
 export module lspmcpp.server.session;
 
 import std;
+import lspmcpp.engine;
 
 export namespace lspmcpp::server {
 
@@ -16,6 +17,9 @@ struct SessionOptions {
     bool discoverCompilers { true };
     bool verboseEngineLog { false };
     std::chrono::milliseconds requestTimeout { std::chrono::seconds { 60 } };
+    // usable plan W9.5: empty means a real clangd (lspmcpp.engine.clangd::Clangd); a test can supply
+    // a fake engine instead, since the session only ever uses the lspmcpp.engine interface.
+    std::function<std::unique_ptr<engine::Engine>()> engineFactory;
 };
 
 // Serves the Language Server Protocol on standard input and output until the

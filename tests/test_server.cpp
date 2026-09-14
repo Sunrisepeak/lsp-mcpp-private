@@ -2,11 +2,13 @@
 import std;
 import nlohmann.json;
 import lspmcpp.testing;
+import lspmcpp.base.error;
 import lspmcpp.base.text;
 import lspmcpp.base.uri;
 import lspmcpp.index.modules;
 import lspmcpp.server.documents;
 import lspmcpp.server.router;
+import lspmcpp.engine;
 import lspmcpp.engine.clangd;
 import lspmcpp.server.primer;
 
@@ -14,8 +16,44 @@ using Json = nlohmann::json;
 using lspmcpp::base::Position;
 namespace idx = lspmcpp::index;
 namespace srv = lspmcpp::server;
+namespace eng = lspmcpp::engine;
 
 namespace {
+
+// usable plan W9.5: a fake that satisfies the lspmcpp.engine interface without a clangd process,
+// recording what the session (or anything else coded only against the interface) does to it.
+class FakeEngine : public eng::Engine {
+public:
+    int starts { 0 };
+    bool running_ { false };
+    eng::EngineConfig lastConfig;
+    std::vector<std::string> pushedDatabases;
+    std::vector<Json> sent;
+    eng::EngineCapabilities capabilitiesToReport;
+    MessageHandler onMessage;
+    ClosedHandler onClosed;
+
+    lspmcpp::base::Result<void> start(const eng::EngineConfig& config, MessageHandler message, ClosedHandler closed, LogHandler) override {
+        ++starts;
+        running_ = true;
+        lastConfig = config;
+        onMessage = std::move(message);
+        onClosed = std::move(closed);
+        return {};
+    }
+    lspmcpp::base::Result<void> push_database(std::string_view compileCommandsJson) override {
+        pushedDatabases.emplace_back(compileCommandsJson);
+        return {};
+    }
+    lspmcpp::base::Result<void> send(const Json& message) override {
+        sent.push_back(message);
+        return {};
+    }
+    void stop(std::chrono::milliseconds) override { running_ = false; }
+    bool running() const override { return running_; }
+    const eng::EngineConfig& config() const override { return lastConfig; }
+    eng::EngineCapabilities capabilities() const override { return capabilitiesToReport; }
+};
 
 idx::ModuleIndex fixture_index() {
     idx::ModuleIndex index;
@@ -243,6 +281,48 @@ int main() {
         const auto next = primer.start_ready();
         expect(fatal(next.size() == 1u));
         expect(next.front()->name == "z-root") << next.front()->name;
+    };
+
+    "the clangd capability table is keyed by version"_test = [] {
+        const auto pinned = lspmcpp::engine::capabilities_for_clangd_version("23.1.0");
+        expect(pinned.experimentalModulesSupport && pinned.useDirtyHeaders && pinned.persistentModuleCache && pinned.msvcStlNeedsNoAlignedAllocation);
+        const auto other = lspmcpp::engine::capabilities_for_clangd_version("22.1.8");
+        expect(!other.experimentalModulesSupport && !other.useDirtyHeaders && !other.persistentModuleCache && !other.msvcStlNeedsNoAlignedAllocation)
+            << "an unrecognized version assumes none of the optional behaviour, not the pinned one's";
+    };
+
+    "a fake engine satisfies the lspmcpp.engine interface with no clangd process"_test = [] {
+        // usable plan W9.5: anything coded only against eng::Engine (the session, and this test)
+        // works the same with this fake as with lspmcpp.engine.clangd::Clangd.
+        FakeEngine fake;
+        expect(!fake.running());
+        eng::EngineConfig config;
+        config.executable = "/payload/clangd/bin/clangd";
+        config.version = "23.1.0";
+        config.databaseDirectory = "/cache/contexts/default/cdb";
+        bool closed { false };
+        std::vector<Json> received;
+        const auto started = fake.start(
+            config, [&](Json message) { received.push_back(std::move(message)); }, [&] { closed = true; }, [](std::string_view) {});
+        expect(started.has_value() && fake.running() && fake.starts == 1);
+        expect(fake.config().version == "23.1.0" && fake.config().databaseDirectory == "/cache/contexts/default/cdb");
+        expect(fake.capabilities().experimentalModulesSupport == false) << "a fresh fake reports no capability until the test sets one";
+        fake.capabilitiesToReport = eng::capabilities_for_clangd_version("23.1.0");
+        expect(fake.capabilities().useDirtyHeaders);
+
+        expect(fake.push_database("[]").has_value());
+        expect(fake.pushedDatabases == std::vector<std::string> { "[]" });
+        expect(fake.send(Json { { "method", "initialized" } }).has_value());
+        expect(fake.sent.size() == 1u && fake.sent.front()["method"] == "initialized");
+
+        // The handlers given to start() work like a real connection's: the "engine" can call back in.
+        fake.onMessage(Json { { "method", "textDocument/publishDiagnostics" } });
+        expect(received.size() == 1u && received.front()["method"] == "textDocument/publishDiagnostics");
+        fake.onClosed();
+        expect(closed);
+
+        fake.stop(std::chrono::milliseconds { 0 });
+        expect(!fake.running());
     };
 
     return report();

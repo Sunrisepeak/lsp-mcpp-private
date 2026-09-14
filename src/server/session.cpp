@@ -25,6 +25,7 @@ import lspmcpp.project.detect;
 import lspmcpp.project.model;
 import lspmcpp.normalize.plan;
 import lspmcpp.index.modules;
+import lspmcpp.engine;
 import lspmcpp.engine.clangd;
 import lspmcpp.server.documents;
 import lspmcpp.server.payload;
@@ -165,8 +166,9 @@ private:
     // reaches again. So they stay open until nothing is being prepared or waited for.
     std::map<std::string, std::string, std::less<>> heldPrimeUnits_;              // path key -> path
 
-    // Engine.
-    engine::Clangd clangd_;
+    // Engine (usable plan W9.5): only ever used through the interface, so a test can drive the
+    // session with a fake instead of a real clangd process.
+    std::unique_ptr<engine::Engine> engine_;
     int engineGeneration_ { 0 };
     bool engineHandshakeDone_ { false };
     bool engineAccepting_ { false };
@@ -194,7 +196,9 @@ private:
     std::string lastStatus_;
 
 public:
-    explicit Session(SessionOptions options) : options_ { std::move(options) } {}
+    explicit Session(SessionOptions options)
+        : options_ { std::move(options) },
+          engine_ { options_.engineFactory ? options_.engineFactory() : std::make_unique<engine::Clangd>() } {}
 
     int run() {
         start_input_reader_();
@@ -204,7 +208,7 @@ public:
             if (event) handle_(*event);
             handle_timers_();
         }
-        clangd_.stop(std::chrono::seconds { 2 });
+        engine_->stop(std::chrono::seconds { 2 });
         return shutdownRequested_ ? 0 : 1;
     }
 
@@ -311,8 +315,8 @@ private:
     }
 
     bool send_engine_(const Json& message) {
-        if (!clangd_.running()) return false;
-        if (auto sent = clangd_.send(engine_view_(message)); !sent) {
+        if (!engine_->running()) return false;
+        if (auto sent = engine_->send(engine_view_(message)); !sent) {
             log::warning("cannot write to clangd: {}", sent.error().message);
             return false;
         }
@@ -525,7 +529,7 @@ private:
 
     void handle_shutdown_(const Json& id) {
         shutdownRequested_ = true;
-        if (clangd_.running() && engineHandshakeDone_) {
+        if (engine_->running() && engineHandshakeDone_) {
             const std::int64_t engineId { nextEngineId_++ };
             pending_[engineId] = PendingRequest { Purpose::engine_shutdown, id, "shutdown", {}, Merge::none, {},
                                                   Clock::now() + std::chrono::seconds { 3 }, engineGeneration_ };
@@ -603,7 +607,7 @@ private:
         const std::string method { message.value("method", std::string {}) };
         const Json params = message.contains("params") ? message["params"] : Json::object();
         if (method == lsp::method::EXIT) {
-            if (clangd_.running()) (void)send_engine_(lsp::make_notification("exit", nullptr));
+            if (engine_->running()) (void)send_engine_(lsp::make_notification("exit", nullptr));
             exitRequested_ = true;
             return;
         }
@@ -803,8 +807,9 @@ private:
             return;
         }
         const int generation { ++engineGeneration_ };
-        engine::ClangdConfig config;
+        engine::EngineConfig config;
         config.executable = payload_.clangd;
+        config.version = payload_.clangdVersion;
         config.databaseDirectory = databaseDirectory_;
         config.workDirectory = root_;
         config.verboseLog = options_.verboseEngineLog;
@@ -815,7 +820,7 @@ private:
             }
         }
         auto events = events_;
-        auto started = clangd_.start(
+        auto started = engine_->start(
             config,
             [events, generation](Json message) { events->push(Event { EventKind::engine_message, std::move(message), generation }); },
             [events, generation] { events->push(Event { EventKind::engine_closed, {}, generation }); },
@@ -862,7 +867,7 @@ private:
         engineToClient_.clear();
         forget_primes_();
         ++engineGeneration_;   // late events of the old process are ignored
-        clangd_.stop(std::chrono::milliseconds { 500 });
+        engine_->stop(std::chrono::milliseconds { 500 });
         engineDiagnostics_.clear();
         timeoutsByUri_.clear();
         start_engine_();
@@ -1157,9 +1162,8 @@ private:
         const bool structureChanged { structure != writtenStructure_ };
         writtenStructure_ = structure;
         if (changed) {
-            (void)platform::fs::create_directories(databaseDirectory_);
-            if (auto written = platform::fs::write_file_atomic(base::join_path(databaseDirectory_, "compile_commands.json"), database); !written) {
-                log::error("cannot write the engine database: {}", written.error().message);
+            if (auto pushed = engine_->push_database(database); !pushed) {
+                log::error("cannot write the engine database: {}", pushed.error().message);
             }
             writtenDatabase_ = database;
             log::info("engine database: {} entries ({} standard library units), {} left out, {} issues", plan.entries.size(),

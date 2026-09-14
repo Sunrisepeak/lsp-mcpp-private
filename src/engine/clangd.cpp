@@ -3,13 +3,38 @@ module lspmcpp.engine.clangd;
 import std;
 import nlohmann.json;
 import lspmcpp.base.error;
+import lspmcpp.base.path;
 import lspmcpp.base.text;
+import lspmcpp.platform.fs;
 import lspmcpp.platform.process;
 import lspmcpp.lsp.connection;
 
 namespace lspmcpp::engine {
 
-std::vector<std::string> clangd_arguments(const ClangdConfig& config) {
+namespace {
+
+// usable plan W9.5: one row per clangd release line this server has been run against (design 15.1
+// pins 23.1.x). Extend with a new row, never by changing behaviour under an existing version.
+struct CapabilityRow {
+    std::string_view versionPrefix;
+    EngineCapabilities capabilities;
+};
+
+constexpr std::array<CapabilityRow, 1> CAPABILITY_TABLE { {
+    { "23.", EngineCapabilities { .experimentalModulesSupport = true, .useDirtyHeaders = true,
+                                  .persistentModuleCache = true, .msvcStlNeedsNoAlignedAllocation = true } },
+} };
+
+} // namespace
+
+EngineCapabilities capabilities_for_clangd_version(std::string_view version) {
+    for (const auto& row : CAPABILITY_TABLE) {
+        if (version.starts_with(row.versionPrefix)) return row.capabilities;
+    }
+    return {};   // an unrecognized version: assume none of the optional behaviour
+}
+
+std::vector<std::string> clangd_arguments(const EngineConfig& config) {
     std::vector<std::string> arguments {
         "--experimental-modules-support",
         "--use-dirty-headers",
@@ -53,7 +78,7 @@ std::string parse_clangd_version(std::string_view output) {
     return {};
 }
 
-base::Result<void> Clangd::start(const ClangdConfig& config, MessageHandler onMessage, ClosedHandler onClosed, LogHandler onLog) {
+base::Result<void> Clangd::start(const EngineConfig& config, MessageHandler onMessage, ClosedHandler onClosed, LogHandler onLog) {
     stop(std::chrono::milliseconds { 200 });
     config_ = config;
     platform::SpawnOptions options;
@@ -64,6 +89,13 @@ base::Result<void> Clangd::start(const ClangdConfig& config, MessageHandler onMe
     if (!connection) return std::unexpected { connection.error() };
     connection_ = std::move(*connection);
     return {};
+}
+
+base::Result<void> Clangd::push_database(std::string_view compileCommandsJson) {
+    // clangd rereads --compile-commands-dir/compile_commands.json itself (design 15.1); "pushing"
+    // the database to this engine means writing it there atomically.
+    if (auto created = platform::fs::create_directories(config_.databaseDirectory); !created) return created;
+    return platform::fs::write_file_atomic(base::join_path(config_.databaseDirectory, "compile_commands.json"), std::string { compileCommandsJson });
 }
 
 base::Result<void> Clangd::send(const nlohmann::json& message) {
