@@ -625,6 +625,21 @@ public:
                 });
             return { ok, lsp::dump(result).substr(0, 160) };
         }
+        if (kind == "set-context") {
+            // usable plan W9.2: cxxModules/setContext (S3 5.4), then a hover that should have
+            // changed once the engine reloads under the new context's arguments.
+            open(file);
+            const std::string context { check.value("context", std::string {}) };
+            auto set = client_.request("cxxModules/setContext",
+                Json { { "textDocument", Json { { "uri", uri(file) } } }, { "context", context } }, timeout_);
+            if (!set) return { false, std::format("no response to setContext({})", context) };
+            const std::string expected { check.value("expect", std::string {}) };
+            auto [ok, result] = retry("textDocument/hover",
+                [&] { return Json { { "textDocument", Json { { "uri", uri(file) } } }, { "position", position(check.at("at")) } }; },
+                [&](const Json& value) { return hover_text(value).find(expected) != std::string::npos; });
+            std::string text { hover_text(result) };
+            return { ok, text.substr(0, std::min<std::size_t>(text.size(), 160)) };
+        }
         if (kind == "module-graph-contains") {
             const std::string expected { check.value("expect", std::string {}) };
             auto result = client_.request("cxxModules/graph", Json::object(), timeout_);

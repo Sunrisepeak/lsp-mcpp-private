@@ -1078,6 +1078,7 @@ private:
         load.cacheDirectory = cacheDirectory_;
         load.compilerOverride = compilerOverride_;
         load.mcppExecutable = options_.mcpp;
+        load.configuredDatabase = options_.database;
         load.discoverCompilers = options_.discoverCompilers;
         std::shared_ptr<const spec::Kit> kit = kit_ ? std::make_shared<const spec::Kit>(*kit_) : nullptr;
         const std::string root { root_ };

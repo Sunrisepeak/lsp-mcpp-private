@@ -13,6 +13,7 @@ struct SessionOptions {
     std::string clangd;
     std::string kit;
     std::string mcpp;                      // the mcpp executable for mcpp projects; empty: found on PATH
+    std::string database;                  // a workspace's own S1 document, relative to the root (usable plan W9.2)
     bool trusted { true };
     bool discoverCompilers { true };
     bool verboseEngineLog { false };
