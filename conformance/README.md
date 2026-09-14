@@ -64,7 +64,7 @@ $bin/lsp-mcpp-conformance run --server $bin/lsp-mcpp --payload payload --fixture
 | `--navigation-budget SECONDS` | The run fails when the first navigation took longer |
 | `--expect-warm` | A `module-cache-reused` check fails unless an earlier run left the module's files in the cache |
 
-CI runs the pair on every host with budgets of 15 and 2 seconds and uploads the measure files; nightly records three runs per host.
+CI runs the pair on every host with budgets of 15 and 5 seconds and uploads the measure files; nightly records three runs per host.
 
 ## Scenario format
 

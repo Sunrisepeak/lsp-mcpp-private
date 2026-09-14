@@ -1210,10 +1210,12 @@ private:
         }
     }
 
-    // The standard library and the imports of every open document, then as many ready modules as the limit allows.
+    // std, which nearly every file imports, and the imports of every open document, then as many
+    // ready modules as the limit allows. std.compat waits for a file that imports it: building it
+    // takes cores a cold start needs.
     void prepare_modules_() {
         if (!engineAccepting_) return;
-        const std::vector<std::string> standard { "std", "std.compat" };
+        const std::vector<std::string> standard { "std" };
         primer_.want(standard);
         for (const Document* document : documents_.all()) prepare_imports_of_(*document, false);
         pump_primer_();
