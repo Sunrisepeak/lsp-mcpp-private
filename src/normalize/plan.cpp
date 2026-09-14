@@ -125,9 +125,11 @@ EnginePlan plan_engine(const PlanInput& input) {
             const bool importable { spec::is_importable(candidate.role) };
             const auto syntax { lspmcpp::os::FAMILY == lspmcpp::os::Family::windows ? project::CommandSyntax::windows
                                                                                   : project::CommandSyntax::posix };
-            // S1 section 9 rule 1: options, when the database has them, decide the unit's semantics; they
+            // S1 section 9 rule 1: options, when the producer stated them, decide the unit's semantics; they
             // are written in the toolchain's dialect and take the translation a build's arguments take.
-            const auto effective = effective_options(set.options, unit.options);
+            // Options the S1 library derived (spec::complete_options) only restate the arguments.
+            const auto effective = effective_options(set.optionsDerived ? std::nullopt : set.options,
+                                                     unit.optionsDerived ? std::nullopt : unit.options);
             const auto arguments = effective
                 ? options_arguments(*effective, facts != nullptr ? facts->toolchain.family : spec::Family::clang,
                                     facts != nullptr ? facts->toolchain.driver : std::string_view { "clang++" }, candidate.source)

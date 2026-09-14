@@ -81,6 +81,7 @@ struct TranslationUnit {
     std::vector<std::string> requiredModules;
     std::optional<Role> role;
     std::optional<SemanticOptions> options;
+    bool optionsDerived { false };   // `options` restate `arguments` (spec::complete_options); the producer stated none
 };
 
 struct Set {
@@ -93,6 +94,7 @@ struct Set {
     std::string configuration;
     std::string kind;             // library | executable | test | other
     std::optional<SemanticOptions> options;
+    bool optionsDerived { false };   // `options` restate the units' arguments (spec::complete_options); the producer stated none
     std::vector<std::string> moduleMetadata;
     std::vector<TranslationUnit> units;
 };

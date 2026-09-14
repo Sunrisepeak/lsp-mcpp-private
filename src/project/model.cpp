@@ -9,6 +9,7 @@ import lspmcpp.base.log;
 import lspmcpp.platform.fs;
 import lspmcpp.spec.database;
 import lspmcpp.spec.kit;
+import lspmcpp.spec.options;
 import lspmcpp.toolchain.probe;
 import lspmcpp.toolchain.discover;
 import lspmcpp.project.detect;
@@ -226,6 +227,12 @@ ProjectModel load_project(std::string_view rootInput, const LoadOptions& options
 
     model.database = std::move(loaded->database);
     model.facts = std::move(loaded->facts);
+    // A database a producer wrote is level 2 at least (enrichment saw to that); the S1 library structures
+    // its arguments into options for level 3, which mcpp leaves to it (mcpp-community/mcpp#636). Before
+    // the renaming below, while each unit's source is still spelled as its arguments spell it.
+    const bool producedDatabase { model.source == SourceKind::build_database
+                                  || model.database.generator.value_or(spec::Generator {}).name == "mcpp" };
+    if (producedDatabase) spec::complete_options(model.database);
     // One name for each file. A producer may reach a file through a symbolic
     // link the workspace does not (mcpp resolves /var to /private/var on macOS),
     // and everything after this compares files by name: open documents,
@@ -234,8 +241,7 @@ ProjectModel load_project(std::string_view rootInput, const LoadOptions& options
     for (auto& set : model.database.sets) {
         for (auto& unit : set.units) unit.source = platform::fs::canonical_path(spec::absolute_source(unit));
     }
-    model.level = (model.source == SourceKind::build_database || model.database.generator.value_or(spec::Generator {}).name == "mcpp")
-                      ? std::max(spec::conformance_level(model.database), 1) : 2;
+    model.level = producedDatabase ? std::max(spec::conformance_level(model.database), 1) : 2;
     set_profile(model, options.kit);
     if (options.probeCache != nullptr) options.probeCache->save();
     return model;

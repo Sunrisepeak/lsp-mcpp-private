@@ -390,6 +390,14 @@ int main() {
         const auto& arguments = plan.entries.front().arguments;
         expect(contains(arguments, "-DFROM_SET=1") && contains(arguments, "-std=c++23"));
         expect(!contains(arguments, "-DFROM_ARGUMENTS") && !contains(arguments, "-std=c++20"));
+
+        // Options the S1 library derived restate the arguments: the arguments are what is compiled.
+        database.sets.front().optionsDerived = true;
+        const auto derived = n::plan_engine(input);
+        expect(fatal(derived.entries.size() == 1u));
+        const auto& restated = derived.entries.front().arguments;
+        expect(contains(restated, "-DFROM_ARGUMENTS") && contains(restated, "-std=c++20"));
+        expect(!contains(restated, "-DFROM_SET=1"));
     };
 
     "a kit plan excludes std when the macOS SDK is missing"_test = [] {
