@@ -54,6 +54,10 @@ jobs:
           done
       - name: Unit tests
         run: mcpp test ${{ matrix.target }}
+      # The payloads ship release builds, and every release-only defect found so
+      # far (design 12.9, K7 and K13) was invisible to the dev profile.
+      - name: Unit tests (release)
+        run: mcpp test --profile release ${{ matrix.target }}
       - name: Generated protocol is fresh
         if: runner.os == 'Linux'
         run: |
@@ -118,10 +122,10 @@ jobs:
         with:
           path: .payload-cache
           key: payload-inputs-${{ matrix.platform }}-${{ hashFiles('packaging/payload.lock.json') }}
-      # The dev profile, not release: optimized builds over openkal-windows and
-      # openkal-macos misbehave at startup (design 12.9, K7).
+      # Release builds: openkal-llvm-runtime 0.9.5 carries the fixes for the two
+      # release-only defects beneath the server (design 12.9, K7 and K13).
       - name: Build the server
-        run: mcpp build ${{ matrix.target }}
+        run: mcpp build --profile release ${{ matrix.target }}
       - name: Trim clangd
         run: python3 packaging/scripts/trim_clangd.py --platform ${{ matrix.platform }} --out work/clangd --cache "$PAYLOAD_CACHE"
       - name: Build the semantic kit
@@ -163,7 +167,7 @@ jobs:
             fixtures: inferred untrusted mcpp-llvm
           - platform: win32-x64
             os: windows-2022
-            fixtures: inferred untrusted mingw
+            fixtures: inferred untrusted mingw cmake-msvc
     defaults:
       run:
         shell: bash
@@ -175,6 +179,12 @@ jobs:
           set -euo pipefail
           case " ${{ matrix.fixtures }} " in *" mcpp-gcc "*|*" mingw "*) mcpp toolchain install gcc 16.1.0 ;; esac
           if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -q && sudo apt-get install -y -q ninja-build; fi
+      # cl.exe, its headers and libraries for the cmake-msvc fixture, and for the
+      # server's probe of the compiler that fixture records.
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
       - uses: actions/download-artifact@v4
         with:
           name: payload-${{ matrix.platform }}

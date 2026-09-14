@@ -28,6 +28,7 @@ checks fail at once with that reason instead of each waiting out its timeout.
 | `mcpp-llvm` | mcpp with LLVM 22: libc++ selected through include paths, BMI arguments removed (P3) |
 | `mingw` | A compile database for `x86_64-windows-gnu`: MinGW-w64 GCC semantics through `--sysroot` (P2) |
 | `cmake-clang` | CMake 3.28+ with `FILE_SET CXX_MODULES`, Clang and Ninja: `@modmap` expansion, partitions |
+| `cmake-msvc` | The same project built by cl.exe on Windows: MSVC arguments translated for clangd's cl driver mode, `-interface`, `-ifcOutput` and `-reference` removed from the expanded `.modmap` files (P7) |
 
 ## Scenario format
 
