@@ -461,6 +461,10 @@ private:
         }
         root_ = platform::fs::canonical_path(workspace_root_(params));
         cacheDirectory_ = base::join_path(platform::dirs::cache_directory(), base::join_path("workspaces", project::workspace_key(root_)));
+        // Under its one name, like every file the engine is given (engine_uri_): the prime units
+        // and the database live here, and clangd answers for them under the name it was given.
+        (void)platform::fs::create_directories(cacheDirectory_);
+        cacheDirectory_ = platform::fs::canonical_path(cacheDirectory_);
         databaseDirectory_ = base::join_path(cacheDirectory_, "contexts/default/cdb");
         primeDirectory_ = base::join_path(cacheDirectory_, "contexts/default/prime");
         moduleHintDirectory_ = base::join_path(cacheDirectory_, "contexts/default/module-hints");   // never created
@@ -1243,7 +1247,8 @@ private:
     // which the log reports). True for any prime unit, whose diagnostics are nobody's.
     bool finish_prime_(std::string_view engineUri) {
         if (primeDirectory_.empty()) return false;
-        auto path = base::uri_to_path(engineUri);
+        const std::string canonical { path_of_uri_(engineUri) };
+        const std::optional<std::string> path { canonical.empty() ? std::nullopt : std::optional<std::string> { canonical } };
         if (!path || !base::is_within(*path, primeDirectory_)) return false;
         const std::string key { base::path_key(*path) };
         const auto it = primeModuleByPath_.find(key);
