@@ -603,6 +603,7 @@ mcpp 在 mcpp-community/mcpp#639 中实现 `emit build-database`，随 2026.9.15
 | 工具链的 `stdlib` 不带 `module-metadata` 时（mcpp 以 `mcpp:std` 单元提供 `std`），导出的 S1 文档写出空字符串 | 为空时不写 |
 | 依赖包的 `std` 单元的工作目录是 mcpp 的 std 缓存目录，在从未构建过的机器上不存在 | 实测不影响：`mcpp-emit-package-std` 录制的目录在 CI 机器上不存在，本地以不存在的目录复验通过 |
 | 工程的 `.xlings.json` 固定 mcpp 版本时，xlings 在工程目录中运行那个版本。mcpp 仓库自身固定 2026.9.14.3（`self-mcpp` 所用提交固定 2026.9.14.1），在编辑器中打开它仍走 `--configure-only` 回退；固定的版本未安装时 xlings 拒绝运行，状态此前只显示 `mcpp did not produce compile_commands.json` | 状态改为 `mcpp could not describe the project: <xlings 或 mcpp 自己的说明>`（新夹具 `mcpp-emit-unavailable`）；`producer-writes-project` 只在回退确实写入工程时给出，并写明 mcpp 的版本与“2026.9.15.1 起提供该命令”；nightly 的 `self-mcpp` 先安装该提交固定的 mcpp |
+| 每次重新加载都先运行 `mcpp --protocol-version`，经 xlings 启动器约 0.32 秒；W3 方案第 3 条原定按可执行文件的路径、大小、修改时间缓存，但 xlings 启动器的路径不变，实际运行的 mcpp 随工程的 `.xlings.json` 与安装而变 | 按 mcpp 可执行文件与工程根目录记住“支持”的回答，`emit build-database` 失败时忘掉；“不支持”不记住，用户按提示升级 mcpp 后不必重启。`mcpp-watch` 中重新加载后的状态由 0.9 秒变为 0.6 秒 |
 
 测量（开发机）：`emit build-database` 在示例工程上 0.55–0.60 秒，在 lsp-mcpp 仓库（11 个集合、1747 个单元）上 1.6 秒，与 `--configure-only` 同一量级；运行前后工程目录的文件清单与内容哈希不变。
 

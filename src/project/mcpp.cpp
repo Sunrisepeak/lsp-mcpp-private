@@ -130,23 +130,48 @@ std::string explanation(const platform::RunResult& result) {
     return text;
 }
 
-// S2 0.2 single-document mode against mcpp's machine-output protocol (mcpp-community/mcpp#636):
-// `mcpp --protocol-version` advertises the kind, `mcpp emit build-database --format json` answers it.
-// nullopt when this mcpp cannot be asked, with `version` set when it said which it is; an mcpp that
-// can be asked and fails says why, and nothing else is tried: configuring instead would write into
-// the project and hide what mcpp reported. The query runs in the project, whose .xlings.json may
-// select another mcpp than the one on PATH.
-std::optional<base::Result<InferredDatabase>> emit_build_database(const std::string& mcpp, const Detection& detection, const ProviderContext& context,
-                                                                  std::string& version) {
+// The mcpp executables and roots whose mcpp said it produces build databases. Asking starts a process
+// (0.3 s through the xlings launcher) on every reload a watched input causes, so a yes is kept until
+// emit build-database fails. A no is not kept: the upgrade that producer-writes-project asks for would
+// go unnoticed until the server restarted.
+class ProducerAnswers {
+public:
+    bool known(const std::string& key) {
+        std::lock_guard lock { mutex_ };
+        return keys_.contains(key);
+    }
+    void remember(std::string key) {
+        std::lock_guard lock { mutex_ };
+        keys_.insert(std::move(key));
+    }
+    void forget(const std::string& key) {
+        std::lock_guard lock { mutex_ };
+        keys_.erase(key);
+    }
+
+private:
+    std::mutex mutex_;
+    std::set<std::string, std::less<>> keys_;
+};
+
+ProducerAnswers& producer_answers() {
+    static ProducerAnswers answers;
+    return answers;
+}
+
+// `mcpp --protocol-version` in the project, whose .xlings.json may select another mcpp than the one on
+// PATH: whether that mcpp advertises the kind and runs the command without writing into the project.
+// `version` is set when it said which it is.
+bool produces_build_databases(const std::string& mcpp, const Detection& detection, std::string& version) {
     platform::SpawnOptions query;
     query.program = mcpp;
     query.arguments = { "--protocol-version" };
     query.workDirectory = detection.root;
     auto answered = platform::run(std::move(query), std::chrono::seconds { 20 });
-    if (!answered || answered->timedOut) return std::nullopt;
+    if (!answered || answered->timedOut) return false;
     if (answered->exitCode != 0) {
         base::log::info("mcpp --protocol-version failed ({}): {}", answered->exitCode, explanation(*answered));
-        return std::nullopt;
+        return false;
     }
     const nlohmann::json described = nlohmann::json::parse(answered->output, nullptr, false);
     if (described.is_object()) {
@@ -157,16 +182,31 @@ std::optional<base::Result<InferredDatabase>> emit_build_database(const std::str
     auto protocol = spec::parse_producer_protocol(answered->output);
     if (!protocol || !protocol->kinds.contains("mcpp.build-database")) {
         base::log::info("mcpp does not produce build databases (no mcpp.build-database kind); using its compile database");
-        return std::nullopt;
+        return false;
     }
     if (const auto effects = protocol->commandEffects.find("emit build-database");
         effects != protocol->commandEffects.end() && !spec::effects_acceptable(effects->second)) {
         base::log::warning("mcpp emit build-database declares that it writes into the project; not running it");
-        return std::nullopt;
+        return false;
+    }
+    return true;
+}
+
+// S2 0.2 single-document mode against mcpp's machine-output protocol (mcpp-community/mcpp#636):
+// `mcpp --protocol-version` advertises the kind, `mcpp emit build-database --format json` answers it.
+// nullopt when this mcpp cannot be asked; an mcpp that can be asked and fails says why, and nothing
+// else is tried: configuring instead would write into the project and hide what mcpp reported.
+std::optional<base::Result<InferredDatabase>> emit_build_database(const std::string& mcpp, const Detection& detection, const ProviderContext& context,
+                                                                  std::string& version) {
+    const std::string key { std::format("{}\n{}", mcpp, detection.root) };
+    if (!producer_answers().known(key)) {
+        if (!produces_build_databases(mcpp, detection, version)) return std::nullopt;
+        producer_answers().remember(key);
     }
     const std::vector<std::string> command { mcpp, "emit", "build-database", "--format", "json" };
     auto document = spec::run_database_command(command, detection.root, context.configureTimeout);
     if (!document) {
+        producer_answers().forget(key);
         base::log::warning("mcpp emit build-database failed: {}", document.error().message);
         return base::fail(document.error().code, std::format("mcpp emit build-database failed: {}", document.error().message));
     }
