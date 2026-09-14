@@ -37,7 +37,7 @@ using Json = nlohmann::json;
 using Clock = std::chrono::steady_clock;
 namespace log = base::log;
 
-enum class EventKind { client_message, client_closed, engine_message, engine_closed, model_loaded };
+enum class EventKind { client_message, client_closed, engine_message, engine_closed, engine_module_failed, model_loaded };
 
 struct Event {
     EventKind kind { EventKind::client_message };
@@ -81,11 +81,21 @@ struct Issue {
     std::string command;   // a VS Code command id, optional
 };
 
+constexpr std::chrono::milliseconds INTERACTIVE_TIMEOUT { std::chrono::seconds { 10 } };
+
 constexpr std::array<std::string_view, 6> BUILD_FILES { "mcpp.toml", "mcpp.lock", "CMakeLists.txt", "CMakePresets.json",
                                                         "compile_commands.json", "build_database.json" };
 
 bool is_build_file(std::string_view name) {
     return std::ranges::find(BUILD_FILES, name) != BUILD_FILES.end() || name.ends_with(".cmake");
+}
+
+// Requests a person waits for are answered without the engine after this long; the rest wait for the configured timeout.
+bool is_interactive(std::string_view method) {
+    static constexpr std::array<std::string_view, 9> INTERACTIVE { "textDocument/definition", "textDocument/declaration", "textDocument/hover",
+        "textDocument/completion", "textDocument/signatureHelp", "textDocument/documentHighlight", "textDocument/typeDefinition",
+        "textDocument/implementation", "completionItem/resolve" };
+    return std::ranges::find(INTERACTIVE, method) != INTERACTIVE.end();
 }
 
 // The module structure of a scan, for deciding whether an edit changes the engine database.
@@ -137,6 +147,9 @@ private:
     bool firstPlanWritten_ { false };
     std::string contextSet_;
     std::map<std::string, std::string, std::less<>> structures_;   // path key -> module structure at planning time
+
+    // Modules clangd could not build, by name, with the reason; cleared when sources change.
+    std::map<std::string, std::string, std::less<>> failedModules_;
 
     // Engine.
     engine::Clangd clangd_;
@@ -335,6 +348,9 @@ private:
         case EventKind::engine_closed:
             if (event.generation == engineGeneration_) handle_engine_closed_();
             break;
+        case EventKind::engine_module_failed:
+            if (event.generation == engineGeneration_) handle_module_failure_(event.message);
+            break;
         case EventKind::model_loaded: handle_model_loaded_(event.generation, std::move(event.model)); break;
         }
     }
@@ -399,8 +415,8 @@ private:
             return;
         }
         const std::int64_t engineId { nextEngineId_++ };
-        pending_[engineId] = PendingRequest { Purpose::client, id, method, uri, decision.merge, params,
-                                              Clock::now() + options_.requestTimeout, engineGeneration_ };
+        const auto timeout = is_interactive(method) ? std::min(options_.requestTimeout, INTERACTIVE_TIMEOUT) : options_.requestTimeout;
+        pending_[engineId] = PendingRequest { Purpose::client, id, method, uri, decision.merge, params, Clock::now() + timeout, engineGeneration_ };
         Json forwarded = message;
         forwarded["id"] = engineId;
         if (!send_engine_(forwarded)) {
@@ -589,6 +605,7 @@ private:
             const std::string uri { uri_of_params_(params) };
             const std::string path { path_of_uri_(uri) };
             if (!path.empty() && !excluded_.contains(base::path_key(path)) && engineAccepting_) (void)send_engine_(message);
+            retry_failed_modules_();
             return;
         }
         if (method == lsp::method::WORKSPACE_DID_CHANGE_WATCHED_FILES) {
@@ -691,6 +708,7 @@ private:
             if (model_ && model_->source == project::SourceKind::inferred && type != 2) reload = true;
             else replan = true;
         }
+        if (reload || replan) retry_failed_modules_();
         if (reload) schedule_reload_();
         else if (replan) schedule_replan_();
         if (engineAccepting_) (void)send_engine_(message);
@@ -766,7 +784,13 @@ private:
             config,
             [events, generation](Json message) { events->push(Event { EventKind::engine_message, std::move(message), generation }); },
             [events, generation] { events->push(Event { EventKind::engine_closed, {}, generation }); },
-            [](std::string_view line) { log::info("clangd: {}", line); });
+            [events, generation](std::string_view line) {
+                log::info("clangd: {}", line);
+                if (auto failure = engine::parse_module_failure(line)) {
+                    events->push(Event { EventKind::engine_module_failed,
+                                         Json { { "module", failure->module }, { "reason", failure->reason }, { "source", failure->failedSource } }, generation });
+                }
+            });
         if (!started) {
             engineUnavailable_ = true;
             add_engine_issue_(Issue { "engine-crashed", std::format("clangd could not start: {}", started.error().message), "lspMcpp.restartServer" });
@@ -1027,6 +1051,7 @@ private:
     void handle_model_loaded_(int generation, std::shared_ptr<project::ProjectModel> model) {
         if (generation != modelGeneration_) return;
         loading_ = false;
+        failedModules_.clear();
         loadGiveUpAt_.reset();
         model_ = std::move(model);
         log::info("project model: source {}, level {}, {} sets, profile {} {} {}", project::to_string(model_->source), model_->level,
@@ -1079,6 +1104,7 @@ private:
             return text ? project::scan_source(*text) : project::ScanResult {};
         };
         input.metadataReader = metadataReader_;
+        input.failedModules = failedModules_;
         normalize::EnginePlan plan { normalize::plan_engine(input) };
         const std::string database { normalize::to_compile_commands(plan).dump(1) };
         const bool changed { database != writtenDatabase_ };
@@ -1120,6 +1146,31 @@ private:
         }
         for (const Document* document : documents_.all()) publish_diagnostics_(document->uri);
         update_status_();
+    }
+
+    // clangd could not build a module: importers of it, and of the module whose source failed
+    // to compile, leave the engine database and are answered at once, with an issue saying why.
+    void handle_module_failure_(const Json& failure) {
+        bool added { false };
+        const std::string reason { failure.value("reason", std::string {}) };
+        auto add = [&](std::string name) {
+            if (name.empty() || failedModules_.contains(name)) return;
+            log::warning("clangd could not build module {}: {}", name, reason);
+            failedModules_.emplace(std::move(name), reason);
+            added = true;
+        };
+        add(failure.value("module", std::string {}));
+        if (const std::string source { failure.value("source", std::string {}) }; !source.empty()) {
+            if (auto text = platform::fs::read_file(source)) add(project::provided_name(project::scan_source(*text)));
+        }
+        if (added) schedule_replan_();
+    }
+
+    // A change to sources or build files may have fixed a module that did not build.
+    void retry_failed_modules_() {
+        if (failedModules_.empty()) return;
+        failedModules_.clear();
+        schedule_replan_();
     }
 
     void schedule_replan_() { replanAt_ = Clock::now() + std::chrono::milliseconds { 800 }; }
@@ -1204,9 +1255,11 @@ private:
             pending_.erase(id);
             switch (request.purpose) {
             case Purpose::client: {
-                log::warning("clangd did not answer {} within {} ms", request.method, options_.requestTimeout.count());
+                log::warning("clangd did not answer {} in time", request.method);
                 reply_(request.clientId, local_fallback_(request.merge, request.params, path_of_uri_(request.uri)));
                 (void)send_engine_(lsp::make_notification("$/cancelRequest", Json { { "id", id } }));
+                // A file whose modules are still being built is slow, not stuck: restarting would throw that work away.
+                if (awaitingDiagnostics_.contains(client_uri_(request.uri))) break;
                 add_engine_issue_(Issue { "engine-timeout", std::format("clangd did not answer {} in time", request.method), "lspMcpp.restartServer" });
                 if (++timeoutsByUri_[request.uri] >= 3) restart = true;
                 break;

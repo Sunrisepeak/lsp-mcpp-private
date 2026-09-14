@@ -2,7 +2,7 @@
 // and reports each check (conformance/README.md).
 //
 //   lsp-mcpp-conformance run --server <lsp-mcpp> --fixture <dir> [--payload DIR] [--clangd PATH] [--kit DIR]
-//                            [--timeout SECONDS] [--keep] [--verbose]
+//                            [--msvc-env FILE] [--timeout SECONDS] [--keep] [--verbose]
 //   lsp-mcpp-conformance version
 import std;
 import nlohmann.json;
@@ -41,6 +41,7 @@ struct Options {
     std::string payload;
     std::string clangd;
     std::string kit;
+    std::string msvcEnvironment;   // "NAME=value" lines of a developer environment, for fixtures that build with MSVC
     std::chrono::seconds timeout { 180 };
     bool keep { false };
     bool verbose { false };
@@ -63,9 +64,18 @@ void copy_tree(const std::string& from, const std::string& to) {
     }
 }
 
-// "{exe}" is the executable suffix; "{env:NAME|fallback}" is a variable or the fallback.
-std::string expand(std::string word) {
+// Placeholders in prepare commands and server arguments.
+struct Expansion {
+    std::string workspace;
+    std::string runnerDirectory;
+};
+
+// "{exe}" is the executable suffix; "{env:NAME|fallback}" is a variable or the fallback;
+// "{workspace}" is the fixture's scratch copy; "{runner-dir}" is where this program lives.
+std::string expand(std::string word, const Expansion& expansion = {}) {
     word = base::replace_all(word, "{exe}", lspmcpp::os::EXECUTABLE_SUFFIX);
+    word = base::replace_all(word, "{workspace}", expansion.workspace);
+    word = base::replace_all(word, "{runner-dir}", expansion.runnerDirectory);
     for (std::size_t at { word.find("{env:") }; at != std::string::npos; at = word.find("{env:", at)) {
         const std::size_t close { word.find('}', at) };
         if (close == std::string::npos) break;
@@ -80,11 +90,32 @@ std::string expand(std::string word) {
     return word;
 }
 
+// The environment a prepare step runs in: this process's, with a developer environment laid over it when given.
+std::optional<std::vector<std::string>> prepare_environment(const std::string& overlayFile) {
+    if (overlayFile.empty()) return std::nullopt;
+    auto text = fs::read_file(overlayFile);
+    if (!text) return std::nullopt;
+    const bool caseInsensitive { lspmcpp::os::FAMILY == lspmcpp::os::Family::windows };
+    auto key = [&](std::string_view entry) {
+        std::string name { entry.substr(0, entry.find('=')) };
+        return caseInsensitive ? base::to_lower_ascii(name) : name;
+    };
+    std::vector<std::string> environment { lspmcpp::platform::env::variables() };
+    for (auto line : base::split_lines(*text)) {
+        line = base::trim(line);
+        if (line.empty() || line.find('=') == std::string_view::npos || line.front() == '=') continue;
+        std::erase_if(environment, [&](const std::string& entry) { return key(entry) == key(line); });
+        environment.emplace_back(line);
+    }
+    return environment;
+}
+
 // Runs a prepare step in the workspace.
-bool run_prepare(const Json& command, const std::string& workspace, bool verbose) {
+bool run_prepare(const Json& command, const std::string& workspace, bool verbose, const Expansion& expansion,
+                 const std::optional<std::vector<std::string>>& environment) {
     if (!command.is_array() || command.empty()) return true;
     std::vector<std::string> argv;
-    for (const auto& word : command) argv.push_back(expand(word.get<std::string>()));
+    for (const auto& word : command) argv.push_back(expand(word.get<std::string>(), expansion));
     std::string program { argv.front() };
     if (!base::is_absolute_path(program)) {
         auto found = lspmcpp::platform::env::find_executable(program);
@@ -98,6 +129,7 @@ bool run_prepare(const Json& command, const std::string& workspace, bool verbose
     options.program = program;
     options.arguments.assign(argv.begin() + 1, argv.end());
     options.workDirectory = workspace;
+    options.environment = environment;
     auto result = lspmcpp::platform::run(std::move(options), std::chrono::minutes { 20 });
     if (!result || result->exitCode != 0 || result->timedOut) {
         say("prepare failed: {}", lsp::dump(command));
@@ -106,6 +138,24 @@ bool run_prepare(const Json& command, const std::string& workspace, bool verbose
     }
     if (verbose) say("prepare: {}\n{}", lsp::dump(command), result->output);
     return true;
+}
+
+// Every file under a directory with its content, dot directories included: the server must not write any of them.
+std::map<std::string, std::string> snapshot(const std::string& root) {
+    std::map<std::string, std::string> files;
+    std::vector<std::string> pending { root };
+    while (!pending.empty()) {
+        const std::string directory { pending.back() };
+        pending.pop_back();
+        for (const auto& entry : fs::list_directory(directory)) {
+            if (fs::is_directory(entry)) {
+                pending.push_back(entry);
+            } else if (auto content = fs::read_file(entry)) {
+                files[*base::relative_path(entry, root)] = std::move(*content);
+            }
+        }
+    }
+    return files;
 }
 
 class Client {
@@ -292,10 +342,11 @@ private:
     std::string workspace_;
     std::map<std::string, std::pair<std::string, int>> open_;   // relative path -> (text, version)
     std::chrono::seconds timeout_;
+    std::map<std::string, std::string> prepared_;               // the workspace as the prepare steps left it
 
 public:
-    Scenario(Client& client, std::string workspace, std::chrono::seconds timeout)
-        : client_ { client }, workspace_ { std::move(workspace) }, timeout_ { timeout } {}
+    Scenario(Client& client, std::string workspace, std::chrono::seconds timeout, std::map<std::string, std::string> prepared)
+        : client_ { client }, workspace_ { std::move(workspace) }, timeout_ { timeout }, prepared_ { std::move(prepared) } {}
 
     std::string uri(std::string_view relative) const { return base::path_to_uri(base::join_path(workspace_, relative)); }
 
@@ -353,7 +404,27 @@ public:
             if (auto source = check.find("source"); source != check.end()) matches = matches && client_.status["project"].value("source", std::string {}) == source->get<std::string>();
             if (auto profile = check.find("profile-kind"); profile != check.end()) matches = matches && client_.status["profile"].value("kind", std::string {}) == profile->get<std::string>();
             if (auto state = check.find("state"); state != check.end()) matches = matches && state_of(client_.status) == state->get<std::string>();
+            if (auto level = check.find("level"); level != check.end()) matches = matches && client_.status["project"].value("level", 0) == level->get<int>();
+            if (auto compiler = check.find("profile-compiler"); compiler != check.end()) {
+                matches = matches && client_.status["profile"].value("compiler", std::string {}).starts_with(compiler->get<std::string>());
+            }
             return { matches, detail };
+        }
+        if (kind == "workspace-unchanged") {
+            // Give the server time to do what it does after opening the workspace.
+            client_.drain(std::chrono::milliseconds { 2000 });
+            const auto now = snapshot(workspace_);
+            std::vector<std::string> differences;
+            for (const auto& [path, content] : now) {
+                const auto before = prepared_.find(path);
+                if (before == prepared_.end()) differences.push_back("added " + path);
+                else if (before->second != content) differences.push_back("changed " + path);
+            }
+            for (const auto& [path, content] : prepared_) {
+                if (!now.contains(path)) differences.push_back("removed " + path);
+            }
+            if (differences.size() > 8) differences.resize(8);
+            return { differences.empty(), lsp::dump(differences) };
         }
         if (kind == "open") {
             open(file);
@@ -496,13 +567,23 @@ int run(const Options& options) {
     fs::remove_all(base::join_path(workspace, "scenario.json"));
     say("fixture {} in {}", name, workspace);
 
+    Expansion expansion { workspace, base::parent_path(absolute(lspmcpp::platform::env::arguments().front())) };
+    std::optional<std::vector<std::string>> prepareEnvironment;
+    if (scenario.value("prepare-environment", std::string {}) == "msvc") {
+        if (options.msvcEnvironment.empty()) {
+            say("conformance: {} builds with MSVC; pass --msvc-env with a developer environment", name);
+            return 2;
+        }
+        prepareEnvironment = prepare_environment(options.msvcEnvironment);
+    }
     for (const auto& command : scenario.value("prepare", Json::array())) {
-        if (!run_prepare(command, workspace, options.verbose)) return 1;
+        if (!run_prepare(command, workspace, options.verbose, expansion, prepareEnvironment)) return 1;
     }
     for (const auto& removed : scenario.value("remove", Json::array())) fs::remove_all(base::join_path(workspace, removed.get<std::string>()));
 
     std::vector<std::string> serverArguments;
-    for (const auto& argument : scenario.value("server-arguments", Json::array())) serverArguments.push_back(argument.get<std::string>());
+    for (const auto& argument : scenario.value("server-arguments", Json::array())) serverArguments.push_back(expand(argument.get<std::string>(), expansion));
+    auto prepared = snapshot(workspace);
     Client client;
     if (auto started = client.start(options, serverArguments, workspace, base::join_path(scratch, "cache")); !started) {
         say("conformance: cannot start the server: {}", started.error().message);
@@ -530,7 +611,7 @@ int run(const Options& options) {
                  std::chrono::duration<double>(Clock::now() - begin).count(), advertised);
     client.notify("initialized", Json::object());
 
-    Scenario runner { client, workspace, options.timeout };
+    Scenario runner { client, workspace, options.timeout, std::move(prepared) };
     int failures { advertised ? 0 : 1 };
     for (const auto& check : scenario.value("checks", Json::array())) {
         const std::string id { check.value("id", std::string { "-" }) };
@@ -569,6 +650,7 @@ int main(int argc, char* argv[]) {
     (void)runCommand.option("clangd").takes_value().help("clangd executable");
     (void)runCommand.option("kit").takes_value().help("Semantic kit directory");
     (void)runCommand.option("timeout").takes_value().help("Seconds each check may take (default 180)");
+    (void)runCommand.option("msvc-env").takes_value().help("File of NAME=value lines: the developer environment for fixtures that build with MSVC");
     (void)runCommand.option("keep").help("Keep the scratch workspace");
     (void)runCommand.option("verbose").help("Print server logs and status notifications");
     (void)runCommand.action([&](const cmdline::ParsedArgs& args) {
@@ -578,6 +660,7 @@ int main(int argc, char* argv[]) {
         options.payload = args.value("payload") ? absolute(*args.value("payload")) : std::string {};
         options.clangd = args.value("clangd") ? absolute(*args.value("clangd")) : std::string {};
         options.kit = args.value("kit") ? absolute(*args.value("kit")) : std::string {};
+        options.msvcEnvironment = args.value("msvc-env") ? absolute(*args.value("msvc-env")) : std::string {};
         if (auto timeout = args.value("timeout")) options.timeout = std::chrono::seconds { std::stoi(*timeout) };
         options.keep = args.is_flag_set("keep");
         options.verbose = args.is_flag_set("verbose");

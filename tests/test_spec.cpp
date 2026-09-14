@@ -147,6 +147,14 @@ int main() {
         expect(fatal(gccEntries.has_value() && gccEntries->size() == 1u));
         expect((*gccEntries)[0].source == "/usr/include/c++/16/bits/std.cc");
         expect(!lspmcpp::spec::read_module_metadata(base::join_path(directory, "absent.json")).has_value());
+        // The MSVC STL's own shape, as windows-2022's 14.44.35207 ships it (usable plan E1).
+        const std::string msvc { base::join_path(directory, "msvc/modules/modules.json") };
+        expect(fs::create_directories(base::parent_path(msvc)).has_value());
+        expect(fs::write_file(msvc, R"({"version": 1, "revision": 0, "library": "microsoft/STL", "module-sources": ["std.ixx", "std.compat.ixx"]})").has_value());
+        auto msvcEntries = lspmcpp::spec::read_module_metadata(msvc);
+        expect(fatal(msvcEntries.has_value() && msvcEntries->size() == 2u));
+        expect((*msvcEntries)[0].logicalName == "std" && (*msvcEntries)[1].logicalName == "std.compat") << (*msvcEntries)[1].logicalName;
+        expect((*msvcEntries)[0].source == base::join_path(directory, "msvc/modules/std.ixx") && (*msvcEntries)[0].isStdLibrary);
         fs::remove_all(directory);
     };
 

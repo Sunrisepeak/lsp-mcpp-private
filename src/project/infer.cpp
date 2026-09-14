@@ -158,9 +158,15 @@ InferredDatabase infer_database(std::string_view rootInput, const InferOptions& 
         result.database.toolchains.emplace_back(set.toolchain, options.facts->toolchain);
         result.facts.emplace(set.toolchain, *options.facts);
     }
-    std::vector<std::string> baseline { "-std=" + options.languageStandard };
+    // cl's own spelling for the MSVC family, which the engine's translation reads (design 14.4, P7).
+    const bool msvc { options.facts && (options.facts->toolchain.family == spec::Family::msvc || options.facts->toolchain.family == spec::Family::clang_cl) };
+    std::vector<std::string> baseline;
+    if (msvc) baseline = { "/std:c++latest", "/EHsc", "/permissive-", "/MD" };
+    else baseline = { "-std=" + options.languageStandard };
     for (std::string_view include : { "include", "src" }) {
-        if (const std::string directory { base::join_path(root, include) }; platform::fs::is_directory(directory)) baseline.push_back("-I" + directory);
+        if (const std::string directory { base::join_path(root, include) }; platform::fs::is_directory(directory)) {
+            baseline.push_back((msvc ? "/I" : "-I") + directory);
+        }
     }
     set.baselineArguments = baseline;
 
@@ -170,7 +176,7 @@ InferredDatabase infer_database(std::string_view rootInput, const InferOptions& 
         unit.workDirectory = root;
         unit.arguments.push_back(driver);
         unit.arguments.insert(unit.arguments.end(), baseline.begin(), baseline.end());
-        unit.arguments.push_back("-c");
+        unit.arguments.push_back(msvc ? "/c" : "-c");
         unit.arguments.push_back(file);
         fill_modules(unit, scanner(file));
         set.units.push_back(std::move(unit));

@@ -21,6 +21,15 @@ struct ClangdConfig {
 };
 
 std::vector<std::string> clangd_arguments(const ClangdConfig& config);
+
+// clangd's log line for a module it could not build:
+// "E[..] Failed to build module greet; due to Failed to compile C:/.../std.ixx. Use '--log=verbose' ..."
+struct ModuleFailure {
+    std::string module;
+    std::string reason;
+    std::string failedSource;   // the source that did not compile, when the reason names one
+};
+std::optional<ModuleFailure> parse_module_failure(std::string_view line);
 // "clangd version 23.1.0 (https://github.com/llvm/llvm-project ea7d852a70e8...)" -> "23.1.0"
 std::string parse_clangd_version(std::string_view output);
 

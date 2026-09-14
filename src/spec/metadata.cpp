@@ -18,6 +18,23 @@ std::string resolve(std::string_view directory, std::string_view path) {
 
 base::Result<std::vector<ModuleEntry>> parse_module_metadata(const nlohmann::json& document, std::string_view manifestDirectory) {
     if (!document.is_object()) return base::fail("metadata-invalid", "module metadata is not a JSON object");
+    // The MSVC STL ships its own shape: {"library": "microsoft/STL", "module-sources": ["std.ixx", "std.compat.ixx"]}.
+    // Each source provides the module its file name spells.
+    if (const auto sources = document.find("module-sources"); sources != document.end() && sources->is_array() && !document.contains("modules")) {
+        std::vector<ModuleEntry> entries;
+        const bool standardLibrary { document.value("library", std::string {}) == "microsoft/STL" };
+        for (const auto& source : *sources) {
+            if (!source.is_string() || source.get<std::string>().empty()) continue;
+            ModuleEntry entry;
+            entry.source = resolve(manifestDirectory, source.get<std::string>());
+            std::string_view name { base::file_name(entry.source) };
+            if (const std::size_t dot { name.rfind('.') }; dot != std::string_view::npos && dot > 0) name = name.substr(0, dot);
+            entry.logicalName = std::string { name };
+            entry.isStdLibrary = standardLibrary;
+            entries.push_back(std::move(entry));
+        }
+        return entries;
+    }
     const auto modules = document.find("modules");
     if (modules == document.end() || !modules->is_array()) {
         return base::fail("metadata-invalid", "module metadata has no \"modules\" array");

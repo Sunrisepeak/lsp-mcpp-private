@@ -66,9 +66,42 @@ std::vector<std::string> translate_gnu(const GnuInput& input) {
             out.push_back("--gcc-install-dir=" + facts.gccInstallDirectory);
         }
     }
+    if (input.facts != nullptr && input.facts->toolchain.target.find("windows-msvc") != std::string::npos) {
+        for (auto& argument : windows_msvc_arguments(*input.facts, out)) out.push_back(std::move(argument));
+    }
     if (input.importable) {
         out.emplace_back("-x");
         out.emplace_back("c++-module");
+    }
+    return out;
+}
+
+std::vector<std::string> windows_msvc_arguments(const toolchain::ToolchainFacts& facts, std::span<const std::string> existing) {
+    std::vector<std::string> out;
+    auto has = [&](std::string_view prefix) {
+        const auto starts = [&](const std::string& argument) { return argument.starts_with(prefix); };
+        return std::ranges::any_of(existing, starts) || std::ranges::any_of(out, starts);
+    };
+    if (!facts.toolchain.target.empty() && !has("--target=") && !has("-target")) out.push_back("--target=" + facts.toolchain.target);
+    if (!facts.msCompatibilityVersion.empty() && !has("-fms-compatibility-version=")) {
+        out.push_back("-fms-compatibility-version=" + facts.msCompatibilityVersion);
+    }
+    if (facts.msvc) {
+        if (!facts.msvc->toolsDirectory.empty() && !has("-Xmicrosoft-visualc-tools-root")) {
+            out.emplace_back("-Xmicrosoft-visualc-tools-root");
+            out.push_back(facts.msvc->toolsDirectory);
+        }
+        if (!facts.msvc->sdkRoot.empty() && !has("-Xmicrosoft-windows-sdk-root")) {
+            out.emplace_back("-Xmicrosoft-windows-sdk-root");
+            out.push_back(facts.msvc->sdkRoot);
+            if (!facts.msvc->sdkVersion.empty()) {
+                out.emplace_back("-Xmicrosoft-windows-sdk-version");
+                out.push_back(facts.msvc->sdkVersion);
+            }
+        }
+    }
+    if (facts.toolchain.stdlib && facts.toolchain.stdlib->name == "msvc-stl" && !has("-fno-aligned-allocation") && !has("-faligned-allocation")) {
+        out.emplace_back("-fno-aligned-allocation");
     }
     return out;
 }

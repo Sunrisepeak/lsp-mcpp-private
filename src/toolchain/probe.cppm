@@ -10,12 +10,23 @@ import lspmcpp.spec.database;
 
 export namespace lspmcpp::toolchain {
 
+// The Visual Studio toolset and Windows SDK a `*-windows-msvc` toolchain uses,
+// passed to the engine explicitly so no developer environment is needed.
+struct MsvcEnvironment {
+    std::string toolsDirectory;        // <vs>/VC/Tools/MSVC/14.44.35207
+    std::string toolsVersion;          // 14.44.35207
+    std::string sdkRoot;               // <...>/Windows Kits/10; empty when no SDK was found
+    std::string sdkVersion;            // 10.0.26100.0
+};
+
 struct ToolchainFacts {
     spec::Toolchain toolchain;
     std::string gccInstallDirectory;   // GCC for non-MinGW targets: the directory holding libgcc.a
     std::string mingwRoot;             // GCC for MinGW targets: the toolchain root above bin/
     std::string resourceDirectory;     // Clang: -print-resource-dir
     bool appleClang { false };
+    std::optional<MsvcEnvironment> msvc;
+    std::string msCompatibilityVersion;   // cl version the engine emulates, e.g. 19.44.35228
     std::vector<std::string> problems;
 };
 

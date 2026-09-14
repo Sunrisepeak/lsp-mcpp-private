@@ -167,7 +167,7 @@ jobs:
             fixtures: inferred untrusted mcpp-llvm
           - platform: win32-x64
             os: windows-2022
-            fixtures: inferred untrusted mingw cmake-msvc
+            fixtures: inferred inferred-msvc untrusted mingw cmake-msvc cmake-msvc-std cmake-clangxx-msvc compdb-clangxx-msvc-std compdb-clang-cl-std mcpp-msvc mcpp-llvm-msvc
     defaults:
       run:
         shell: bash
@@ -179,12 +179,16 @@ jobs:
           set -euo pipefail
           case " ${{ matrix.fixtures }} " in *" mcpp-gcc "*|*" mingw "*) mcpp toolchain install gcc 16.1.0 ;; esac
           if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -q && sudo apt-get install -y -q ninja-build; fi
-      # cl.exe, its headers and libraries for the cmake-msvc fixture, and for the
-      # server's probe of the compiler that fixture records.
-      - uses: ilammy/msvc-dev-cmd@v1
+      # The MSVC fixtures build inside a developer environment; the server under test
+      # runs without one, as it does when an editor starts it (usable plan D30).
+      - name: The MSVC developer environment, for the fixtures' own builds
         if: runner.os == 'Windows'
-        with:
-          arch: x64
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          Set-Content -Path "$env:RUNNER_TEMP\capture-msvc.cmd" -Value "@call `"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul`r`n@set"
+          cmd /d /c "$env:RUNNER_TEMP\capture-msvc.cmd" | Out-File -Encoding utf8 "$env:RUNNER_TEMP\msvc.env"
+          Select-String -Path "$env:RUNNER_TEMP\msvc.env" -Pattern '^(VCToolsInstallDir|WindowsSDKVersion)='
       - uses: actions/download-artifact@v4
         with:
           name: payload-${{ matrix.platform }}
@@ -196,11 +200,12 @@ jobs:
         run: |
           set -euo pipefail
           export CONFORMANCE_CLANGXX="${CONFORMANCE_CLANGXX/#\~/$HOME}"
-          exe=''; [ "$RUNNER_OS" = Windows ] && exe='.exe'
+          exe=''; extra=()
+          if [ "$RUNNER_OS" = Windows ]; then exe='.exe'; extra=(--msvc-env "$RUNNER_TEMP/msvc.env"); fi
           failed=''
           for fixture in ${{ matrix.fixtures }}; do
             echo "::group::$fixture"
-            if ! "tools/lsp-mcpp-conformance$exe" run --server "payload/bin/lsp-mcpp$exe" --payload payload \
+            if ! "tools/lsp-mcpp-conformance$exe" run --server "payload/bin/lsp-mcpp$exe" --payload payload "${extra[@]}" \
                    --fixture "conformance/fixtures/$fixture" --timeout 180; then
               failed="$failed $fixture"
             fi
@@ -210,7 +215,7 @@ jobs:
             echo "::error::failed fixtures:$failed"
             # Rerun the first failure with the server's log, for the record.
             first=${failed# }; first=${first%% *}
-            "tools/lsp-mcpp-conformance$exe" run --server "payload/bin/lsp-mcpp$exe" --payload payload \
+            "tools/lsp-mcpp-conformance$exe" run --server "payload/bin/lsp-mcpp$exe" --payload payload "${extra[@]}" \
                 --fixture "conformance/fixtures/$first" --timeout 60 --verbose 2>&1 | tail -200 || true
             exit 1
           fi

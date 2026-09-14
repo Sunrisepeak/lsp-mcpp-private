@@ -1,6 +1,7 @@
 {
   "name": "cmake-msvc",
-  "description": "A CMake project with C++20 modules built by MSVC (cl.exe) and Ninja: the model comes from the build directory's compile database, whose cl.exe arguments are translated for clangd's cl driver mode and whose module response files and IFC arguments are removed.",
+  "description": "A CMake project with C++20 modules built by MSVC (cl.exe) and Ninja, the server without a developer environment: the model comes from the build directory's compile database, whose cl.exe arguments are translated into clang++ arguments and whose module response files and IFC arguments are removed.",
+  "prepare-environment": "msvc",
   "prepare": [
     [
       "cmake",

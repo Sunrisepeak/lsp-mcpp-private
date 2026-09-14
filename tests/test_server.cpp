@@ -7,6 +7,7 @@ import lspmcpp.base.uri;
 import lspmcpp.index.modules;
 import lspmcpp.server.documents;
 import lspmcpp.server.router;
+import lspmcpp.engine.clangd;
 
 using Json = nlohmann::json;
 using lspmcpp::base::Position;
@@ -137,6 +138,19 @@ int main() {
         expect(srv::route_request("textDocument/references", onModule, index, "/p/src/main.cpp", text).route == srv::Route::engine);
         expect(srv::route_request("textDocument/documentSymbol", onModule, index, "/p/src/main.cpp", text).merge == srv::Merge::document_symbols);
         expect(srv::route_request("workspace/symbol", Json::object(), index, "", "").merge == srv::Merge::workspace_symbols);
+    };
+
+    "clangd's module build failures are recognized"_test = [] {
+        const auto failure = lspmcpp::engine::parse_module_failure(
+            R"(E[03:15:19.435] Failed to build module greet; due to Failed to compile C:\Program Files\VS\modules\std.ixx. Use '--log=verbose' to view detailed failure reasons.)");
+        expect(fatal(failure.has_value()));
+        expect(failure->module == "greet") << failure->module;
+        expect(failure->reason == R"(Failed to compile C:\Program Files\VS\modules\std.ixx)") << failure->reason;
+        expect(failure->failedSource == R"(C:\Program Files\VS\modules\std.ixx)") << failure->failedSource;
+        const auto other = lspmcpp::engine::parse_module_failure("E[04:05:38.910] Failed to build module std; due to Don't get the module unit for module std");
+        expect(fatal(other.has_value()));
+        expect(other->module == "std" && other->failedSource.empty());
+        expect(!lspmcpp::engine::parse_module_failure("I[04:34:47.305] Built module std to /cache/std.pcm").has_value());
     };
 
     "merging"_test = [] {

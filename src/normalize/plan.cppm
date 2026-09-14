@@ -22,7 +22,7 @@ struct EngineEntry {
 };
 
 struct PlanIssue {
-    std::string code;                     // unresolved-module | ambiguous-module | toolchain-not-found | sdk-missing
+    std::string code;                     // unresolved-module | ambiguous-module | module-build-failed | toolchain-not-found | sdk-missing
     std::string message;
     std::string file;
     std::string module;
@@ -45,6 +45,9 @@ struct PlanInput {
     std::string macosSdk;                                            // for kits that require it
     std::function<project::ScanResult(std::string_view path)> scanner;
     spec::MetadataReader metadataReader;
+    // Modules the engine reported it could not build, with the reason: their importers are
+    // left out like importers of an unresolvable module, so they are answered at once.
+    std::map<std::string, std::string, std::less<>> failedModules;
 };
 
 EnginePlan plan_engine(const PlanInput& input);

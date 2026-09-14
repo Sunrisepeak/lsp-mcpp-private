@@ -70,7 +70,20 @@ EnginePlan plan_engine(const PlanInput& input) {
     if (input.database == nullptr) return plan;
     const spec::Database& database { *input.database };
     const std::string clangDriver { base::join_path(input.engineDriverDirectory, ENGINE_CLANG_DRIVER) };
-    const std::string clangClDriver { base::join_path(input.engineDriverDirectory, ENGINE_CLANG_CL_DRIVER) };
+
+    // 0. The standard library's own module sources. A build that compiles them (CMake's
+    //    import std writes std.ixx into the compile database) does not decide how the
+    //    engine builds them: they are injected once from the manifest, step 5.
+    std::set<std::string> standardSources;
+    if (input.metadataReader) {
+        for (const std::size_t setIndex : context_sets(database, input.contextSet)) {
+            const toolchain::ToolchainFacts* facts { facts_for(input, database.sets[setIndex]) };
+            if (facts == nullptr || !facts->toolchain.stdlib || facts->toolchain.stdlib->moduleMetadata.empty()) continue;
+            for (const auto& entry : input.metadataReader(facts->toolchain.stdlib->moduleMetadata)) {
+                if (is_std_module(entry.logicalName)) standardSources.insert(base::path_key(entry.source));
+            }
+        }
+    }
 
     // 1. Candidates: every unit of the context, first occurrence of a source wins.
     std::vector<Candidate> candidates;
@@ -83,6 +96,7 @@ EnginePlan plan_engine(const PlanInput& input) {
             candidate.set = &set;
             candidate.unit = &unit;
             candidate.source = spec::absolute_source(unit);
+            if (standardSources.contains(base::path_key(candidate.source))) continue;
             if (!seenSources.insert(base::path_key(candidate.source)).second) continue;
 
             std::optional<project::ScanResult> scanned;
@@ -109,8 +123,8 @@ EnginePlan plan_engine(const PlanInput& input) {
                 candidate.arguments = translate_gnu(GnuInput { arguments, candidate.source, unit.workDirectory, facts, importable });
                 candidate.driver = facts->toolchain.family == spec::Family::gcc ? clangDriver : facts->toolchain.driver;
             } else if (usable(facts)) {
-                candidate.arguments = translate_msvc(MsvcInput { arguments, candidate.source, unit.workDirectory, facts, importable, {}, {} });
-                candidate.driver = clangClDriver;
+                candidate.arguments = translate_msvc(MsvcInput { arguments, candidate.source, unit.workDirectory, facts, importable });
+                candidate.driver = clangDriver;
             } else if (input.kit != nullptr) {
                 candidate.usesKit = true;
                 candidate.arguments = kit_arguments(*input.kit, language_standard_of(arguments), input.macosSdk);
@@ -172,6 +186,14 @@ EnginePlan plan_engine(const PlanInput& input) {
     for (std::size_t i { 0 }; i < candidates.size(); ++i) {
         for (const auto& name : candidates[i].required) {
             if (is_std_module(name)) anyStd = true;
+            if (const auto failed = input.failedModules.find(name); failed != input.failedModules.end()) {
+                excluded[i] = true;
+                if (reported.insert(candidates[i].source + "\n" + name).second) {
+                    plan.issues.push_back(PlanIssue { "module-build-failed", std::format("module {} could not be built: {}", name, failed->second),
+                                                      candidates[i].source, name });
+                }
+                continue;
+            }
             if (providers.contains(name) || std_provides(name)) continue;
             const auto setIndex = spec::find_set(database, candidates[i].set->name);
             bool resolved { false };
@@ -222,33 +244,26 @@ EnginePlan plan_engine(const PlanInput& input) {
     if (anyStd && templateIndex && !stdEntries.empty()) {
         const auto& representative = candidates[*templateIndex];
         std::vector<std::string> base { representative.arguments };
-        const bool clMode { !base.empty() && base.front() == "--driver-mode=cl" };
-        std::erase(base, std::string { "/clang:-xc++-module" });
         for (std::size_t k { 0 }; k + 1 < base.size();) {
             if (base[k] == "-x" && base[k + 1] == "c++-module") base.erase(base.begin() + static_cast<std::ptrdiff_t>(k), base.begin() + static_cast<std::ptrdiff_t>(k + 2));
             else ++k;
         }
+        const bool msvcStl { representative.facts != nullptr && representative.facts->toolchain.stdlib
+                             && representative.facts->toolchain.stdlib->name == "msvc-stl" };
         for (const auto& module : stdEntries) {
             if (seenSources.contains(base::path_key(module.source))) continue;
             EngineEntry entry { representative.unit->workDirectory, module.source, {} };
             entry.arguments.push_back(representative.driver);
             entry.arguments.insert(entry.arguments.end(), base.begin(), base.end());
             for (const auto& directory : module.systemIncludeDirectories) {
-                if (clMode) {
-                    entry.arguments.push_back("/clang:-isystem" + directory);
-                } else {
-                    entry.arguments.emplace_back("-isystem");
-                    entry.arguments.push_back(directory);
-                }
+                entry.arguments.emplace_back("-isystem");
+                entry.arguments.push_back(directory);
             }
-            if (clMode) {
-                entry.arguments.emplace_back("/clang:-Wno-reserved-module-identifier");
-                entry.arguments.emplace_back("/clang:-xc++-module");
-            } else {
-                entry.arguments.emplace_back("-Wno-reserved-module-identifier");
-                entry.arguments.emplace_back("-x");
-                entry.arguments.emplace_back("c++-module");
-            }
+            entry.arguments.emplace_back("-Wno-reserved-module-identifier");
+            // The MSVC STL includes its headers inside the module purview (usable plan E7).
+            if (msvcStl) entry.arguments.emplace_back("-Wno-include-angled-in-module-purview");
+            entry.arguments.emplace_back("-x");
+            entry.arguments.emplace_back("c++-module");
             entry.arguments.push_back(module.source);
             plan.entries.push_back(std::move(entry));
             ++plan.stdUnits;

@@ -1,6 +1,7 @@
 module lspmcpp.project.model;
 
 import std;
+import lspmcpp.os;
 import lspmcpp.base.error;
 import lspmcpp.base.path;
 import lspmcpp.base.text;
@@ -34,7 +35,10 @@ std::string_view short_family(spec::Family family) {
 
 bool usable_for_semantics(const toolchain::ToolchainFacts& facts) {
     if (facts.appleClang) return false;
-    if (facts.toolchain.family != spec::Family::gcc && facts.toolchain.family != spec::Family::clang) return false;
+    const bool msvc { facts.toolchain.family == spec::Family::msvc || facts.toolchain.family == spec::Family::clang_cl };
+    if (facts.toolchain.family != spec::Family::gcc && facts.toolchain.family != spec::Family::clang && !msvc) return false;
+    // The MSVC STL's semantics need the toolset and SDK paths the engine is given explicitly.
+    if (msvc && !facts.msvc) return false;
     return facts.toolchain.stdlib && !facts.toolchain.stdlib->moduleMetadata.empty()
         && platform::fs::is_regular_file(facts.toolchain.stdlib->moduleMetadata);
 }
@@ -167,19 +171,31 @@ ProjectModel load_project(std::string_view rootInput, const LoadOptions& options
     if (!loaded || loaded->database.sets.empty() || std::ranges::all_of(loaded->database.sets, [](const spec::Set& set) { return set.units.empty(); })) {
         InferOptions infer;
         if (options.trusted && options.runner) {
-            if (!options.compilerOverride.empty()) {
+            if (!options.compilerOverride.empty() && options.compilerOverride != "kit") {
                 if (auto facts = prober(options.compilerOverride, std::vector<std::string> {}); facts && usable_for_semantics(*facts)) {
                     infer.facts = std::move(*facts);
                 } else {
                     model.issues.push_back(ModelIssue { "toolchain-not-found", std::format("the configured compiler {} cannot provide module semantics", options.compilerOverride) });
                 }
             }
-            if (!infer.facts && options.discoverCompilers) {
-                for (const auto& candidate : toolchain::discover_compilers(options.runner)) {
+            const bool kitRequested { options.compilerOverride == "kit" };
+            if (!infer.facts && options.discoverCompilers && !kitRequested) {
+                const auto candidates = toolchain::discover_compilers(options.runner);
+                // On Windows the machine's own Visual Studio comes first when it has the std module (design 9.3, D27).
+                if constexpr (lspmcpp::os::FAMILY == lspmcpp::os::Family::windows) {
+                    for (const auto& candidate : candidates) {
+                        if (candidate.origin != "visual-studio" || candidate.family != spec::Family::msvc) continue;
+                        if (auto facts = prober(candidate.driver, std::vector<std::string> {}); facts && usable_for_semantics(*facts)) {
+                            infer.facts = std::move(*facts);
+                            break;
+                        }
+                    }
+                }
+                for (const auto& candidate : candidates) {
+                    if (infer.facts) break;
                     if (candidate.family != spec::Family::gcc && candidate.family != spec::Family::clang) continue;
                     if (auto facts = prober(candidate.driver, std::vector<std::string> {}); facts && usable_for_semantics(*facts)) {
                         infer.facts = std::move(*facts);
-                        break;
                     }
                 }
             }

@@ -1,5 +1,5 @@
-// Module metadata manifests in the P3286 / EcoStd shape, such as
-// libc++.modules.json and libstdc++.modules.json.
+// Module metadata manifests: the P3286 / EcoStd shape of libc++.modules.json and
+// libstdc++.modules.json, and the MSVC STL's modules.json (module-sources).
 export module lspmcpp.spec.metadata;
 
 import std;

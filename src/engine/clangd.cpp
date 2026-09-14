@@ -23,6 +23,26 @@ std::vector<std::string> clangd_arguments(const ClangdConfig& config) {
     return arguments;
 }
 
+std::optional<ModuleFailure> parse_module_failure(std::string_view line) {
+    static constexpr std::string_view MARKER { "Failed to build module " };
+    const std::size_t marker { line.find(MARKER) };
+    if (marker == std::string_view::npos) return std::nullopt;
+    std::string_view rest { line.substr(marker + MARKER.size()) };
+    const std::size_t semicolon { rest.find(';') };
+    if (semicolon == std::string_view::npos || semicolon == 0) return std::nullopt;
+    ModuleFailure failure;
+    failure.module = std::string { base::trim(rest.substr(0, semicolon)) };
+    std::string_view reason { rest.substr(semicolon + 1) };
+    if (const std::size_t due { reason.find("due to ") }; due != std::string_view::npos) reason = reason.substr(due + 7);
+    if (const std::size_t hint { reason.find(" Use '--log=verbose'") }; hint != std::string_view::npos) reason = reason.substr(0, hint);
+    reason = base::trim(reason);
+    if (reason.ends_with('.')) reason.remove_suffix(1);
+    failure.reason = std::string { reason };
+    static constexpr std::string_view COMPILE { "Failed to compile " };
+    if (reason.starts_with(COMPILE)) failure.failedSource = std::string { base::trim(reason.substr(COMPILE.size())) };
+    return failure;
+}
+
 std::string parse_clangd_version(std::string_view output) {
     for (auto line : base::split_lines(output)) {
         const std::size_t marker { line.find("clangd version ") };

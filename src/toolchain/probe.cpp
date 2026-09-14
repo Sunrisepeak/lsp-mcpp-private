@@ -6,8 +6,10 @@ import lspmcpp.base.error;
 import lspmcpp.base.path;
 import lspmcpp.base.text;
 import lspmcpp.platform.process;
+import lspmcpp.platform.env;
 import lspmcpp.platform.fs;
 import lspmcpp.spec.database;
+import lspmcpp.toolchain.visualstudio;
 
 namespace lspmcpp::toolchain {
 
@@ -106,6 +108,29 @@ std::optional<std::string> manifest_from_include_paths(std::span<const std::stri
     return std::nullopt;
 }
 
+// Visual Studio facts for a driver that targets the MSVC ABI: toolset, SDK and the MSVC STL manifest.
+void apply_visual_studio(std::string_view driver, const Runner& runner, ToolchainFacts& facts) {
+    visualstudio::DiscoveryInputs inputs;
+    inputs.environment = [](std::string_view name) { return platform::env::get(name); };
+    inputs.run = [&runner](std::span<const std::string> argv) -> std::optional<std::string> {
+        auto result = runner(argv);
+        if (!result || result->timedOut || result->exitCode != 0) return std::nullopt;
+        return result->output;
+    };
+    // CMake records cl.exe under its short name (C:/PROGRA~1/...); derivations need the long one.
+    inputs.recordedDriver = platform::fs::canonical_path(driver);
+    const auto installation = visualstudio::discover(inputs);
+    if (!installation) {
+        facts.problems.push_back("Visual Studio with the C++ tools was not found");
+        return;
+    }
+    facts.msvc = MsvcEnvironment { installation->toolsDirectory, installation->toolsVersion, installation->sdkRoot, installation->sdkVersion };
+    const std::string manifest { base::join_path(installation->toolsDirectory, "modules/modules.json") };
+    facts.toolchain.stdlib = spec::Stdlib { "msvc-stl", installation->toolsVersion,
+                                            platform::fs::is_regular_file(manifest) ? manifest : std::string {} };
+    if (facts.msCompatibilityVersion.empty()) facts.msCompatibilityVersion = visualstudio::compatibility_version(installation->toolsVersion);
+}
+
 void probe_gcc(std::string_view driver, std::span<const std::string> relevant, const Runner& runner, ToolchainFacts& facts) {
     if (auto target = query(runner, driver, relevant, { "-dumpmachine" })) facts.toolchain.target = *target;
     else facts.problems.push_back(target.error().message);
@@ -148,13 +173,24 @@ void probe_clang(std::string_view driver, std::span<const std::string> relevant,
         facts.toolchain.stdlib = spec::Stdlib { "libstdc++", {}, base::normalize_path(*gnu) };
     }
     if (facts.toolchain.stdlib && facts.toolchain.stdlib->name == "libc++") facts.toolchain.stdlib->version = facts.toolchain.version;
+    // clang++ for the MSVC ABI uses the MSVC STL unless a libc++ was selected explicitly (P5).
+    if (facts.toolchain.target.find("windows-msvc") != std::string::npos && (!facts.toolchain.stdlib || facts.toolchain.stdlib->name != "libc++")) {
+        apply_visual_studio(driver, runner, facts);
+    }
 }
 
 void probe_msvc(std::string_view driver, const Runner& runner, ToolchainFacts& facts, bool clangCl) {
     const std::string normalized { base::normalize_path(driver) };
+    facts.toolchain.target = "x86_64-pc-windows-msvc";
     if (clangCl) {
         std::vector<std::string> argv { normalized, "--version" };
-        if (auto result = runner(argv); result && !result->timedOut) parse_clang_version(result->output, facts);
+        if (auto result = runner(argv); result && !result->timedOut) {
+            parse_clang_version(result->output, facts);
+            for (auto line : base::split_lines(result->output)) {
+                line = base::trim(line);
+                if (line.starts_with("Target:")) facts.toolchain.target = std::string { base::trim(line.substr(7)) };
+            }
+        }
     } else {
         // cl.exe prints its banner to standard error when started without arguments.
         std::vector<std::string> argv { normalized };
@@ -164,18 +200,13 @@ void probe_msvc(std::string_view driver, const Runner& runner, ToolchainFacts& f
             if (marker != std::string::npos) {
                 const std::string_view rest { std::string_view { banner }.substr(marker + 8) };
                 facts.toolchain.version = std::string { rest.substr(0, rest.find_first_of(" \r\n")) };
+                facts.msCompatibilityVersion = facts.toolchain.version;
             }
+            if (banner.find("for ARM64") != std::string::npos) facts.toolchain.target = "aarch64-pc-windows-msvc";
+            else if (banner.find("for x86") != std::string::npos) facts.toolchain.target = "i686-pc-windows-msvc";
         }
     }
-    facts.toolchain.target = "x86_64-pc-windows-msvc";
-    // <VCToolsInstallDir>/bin/Host<arch>/<arch>/cl.exe  ->  <VCToolsInstallDir>/modules/modules.json
-    const std::string toolsDirectory { base::parent_path(base::parent_path(base::parent_path(base::parent_path(normalized)))) };
-    const std::string manifest { base::join_path(toolsDirectory, "modules/modules.json") };
-    if (!clangCl && platform::fs::is_regular_file(manifest)) {
-        facts.toolchain.stdlib = spec::Stdlib { "msvc-stl", facts.toolchain.version, manifest };
-    } else {
-        facts.toolchain.stdlib = spec::Stdlib { "msvc-stl", {}, platform::fs::is_regular_file(manifest) ? manifest : std::string {} };
-    }
+    apply_visual_studio(normalized, runner, facts);
 }
 
 } // namespace
@@ -279,6 +310,11 @@ nlohmann::json facts_to_json(const ToolchainFacts& facts) {
     value["mingw-root"] = facts.mingwRoot;
     value["resource-directory"] = facts.resourceDirectory;
     value["apple-clang"] = facts.appleClang;
+    if (facts.msvc) {
+        value["msvc"] = nlohmann::json { { "tools-directory", facts.msvc->toolsDirectory }, { "tools-version", facts.msvc->toolsVersion },
+                                         { "sdk-root", facts.msvc->sdkRoot }, { "sdk-version", facts.msvc->sdkVersion } };
+    }
+    if (!facts.msCompatibilityVersion.empty()) value["ms-compatibility-version"] = facts.msCompatibilityVersion;
     return value;
 }
 
@@ -303,6 +339,11 @@ std::optional<ToolchainFacts> facts_from_json(const nlohmann::json& value) {
     facts.mingwRoot = value.value("mingw-root", std::string {});
     facts.resourceDirectory = value.value("resource-directory", std::string {});
     facts.appleClang = value.value("apple-clang", false);
+    if (const auto msvc = value.find("msvc"); msvc != value.end() && msvc->is_object()) {
+        facts.msvc = MsvcEnvironment { msvc->value("tools-directory", std::string {}), msvc->value("tools-version", std::string {}),
+                                       msvc->value("sdk-root", std::string {}), msvc->value("sdk-version", std::string {}) };
+    }
+    facts.msCompatibilityVersion = value.value("ms-compatibility-version", std::string {});
     return facts;
 }
 

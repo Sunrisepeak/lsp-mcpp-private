@@ -41,6 +41,18 @@ ToolchainFacts gcc_facts(std::string target = "x86_64-linux-gnu") {
     return facts;
 }
 
+ToolchainFacts msvc_facts(s::Family family) {
+    ToolchainFacts facts;
+    facts.toolchain.family = family;
+    facts.toolchain.version = family == s::Family::msvc ? "19.44.35228" : "20.1.8";
+    facts.toolchain.driver = "C:/VS/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe";
+    facts.toolchain.target = "x86_64-pc-windows-msvc";
+    facts.toolchain.stdlib = s::Stdlib { "msvc-stl", "14.44.35207", "C:/VS/VC/Tools/MSVC/14.44.35207/modules/modules.json" };
+    facts.msvc = lspmcpp::toolchain::MsvcEnvironment { "C:/VS/VC/Tools/MSVC/14.44.35207", "14.44.35207", "C:/Windows Kits/10", "10.0.26100.0" };
+    facts.msCompatibilityVersion = family == s::Family::msvc ? "19.44.35228" : "19.44";
+    return facts;
+}
+
 } // namespace
 
 int main() {
@@ -84,18 +96,62 @@ int main() {
         expect(!contains(out, "--no-default-config"));
     };
 
-    "P6/P7: MSVC arguments for clang-cl"_test = [] {
-        const std::vector<std::string> arguments { "cl.exe", "/std:c++latest", "/EHsc", "/interface", "/ifcOutput", "out\\m.ifc",
-            "/reference", "a=out\\a.ifc", "/ifcSearchDir", "out", "/scanDependencies-", "/sourceDependencies:directives", "deps.json",
-            "/Foout\\m.obj", "/Fdout\\m.pdb", "/FS", "/c", "/DNAME=1", "src\\m.ixx" };
-        const auto out = n::translate_msvc(n::MsvcInput { arguments, "C:/p/src/m.ixx", "C:/p", nullptr, true, "C:/VC", "C:/SDK" });
-        expect(out.front() == "--driver-mode=cl");
-        expect(contains(out, "/std:c++latest") && contains(out, "/EHsc") && contains(out, "/DNAME=1"));
-        expect(!contains(out, "/interface") && !contains(out, "/ifcOutput") && !contains(out, "out\\m.ifc")) << std::format("{}", out);
-        expect(!contains(out, "/reference") && !contains(out, "a=out\\a.ifc") && !contains(out, "/ifcSearchDir"));
-        expect(!contains_prefix(out, "/Fo") && !contains_prefix(out, "/Fd") && !contains(out, "/c") && !contains(out, "src\\m.ixx") && !contains(out, "deps.json")) << std::format("{}", out);
-        expect(contains(out, "/vctoolsdirC:/VC") && contains(out, "/winsdkdirC:/SDK"));
-        expect(out.back() == "/clang:-xc++-module");
+    "P7: a CMake cl.exe command becomes a clang++ command"_test = [] {
+        const auto facts = msvc_facts(s::Family::msvc);
+        // CMake's module map expanded: -interface, -ifcOutput and -reference with the dash spelling.
+        const std::vector<std::string> arguments { "C:\\PROGRA~1\\MICROS~2\\2022\\ENTERP~1\\VC\\Tools\\MSVC\\1444~1.352\\bin\\Hostx64\\x64\\cl.exe",
+            "/nologo", "/TP", "/DWIN32", "/D_WINDOWS", "/EHsc", "/Ob0", "/Od", "/RTC1", "-std:c++latest", "-MDd", "-Zi", "/showIncludes",
+            "-interface", "-ifcOutput", "CMakeFiles\\greet.dir\\greet.ifc", "-reference", "std=CMakeFiles\\__cmake_cxx23.dir\\std.ifc",
+            "/FoCMakeFiles\\greet.dir\\src\\greet.ixx.obj", "/FdCMakeFiles\\greet.dir\\greet.pdb", "/FS", "-c", "C:\\p\\src\\greet.ixx" };
+        const auto out = n::translate_msvc(n::MsvcInput { arguments, "C:/p/src/greet.ixx", "C:/p/build", &facts, true });
+        expect(contains(out, "-DWIN32") && contains(out, "-D_WINDOWS") && contains(out, "-std=c++26")) << std::format("{}", out);
+        expect(contains(out, "-fcxx-exceptions") && contains(out, "-fexceptions") && contains(out, "-fms-runtime-lib=dll_dbg"));
+        expect(!contains_prefix(out, "/") && !contains_prefix(out, "-interface") && !contains_prefix(out, "-ifc") && !contains_prefix(out, "-reference"))
+            << std::format("{}", out);
+        expect(!contains(out, "std=CMakeFiles\\__cmake_cxx23.dir\\std.ifc") && !contains(out, "CMakeFiles\\greet.dir\\greet.ifc"));
+        expect(!contains(out, "C:\\p\\src\\greet.ixx") && !contains(out, "-c") && !contains_prefix(out, "-Zi"));
+        expect(contains(out, "--no-default-config") && contains(out, "--target=x86_64-pc-windows-msvc"));
+        expect(contains(out, "-fms-compatibility-version=19.44.35228"));
+        expect(contains(out, "-Xmicrosoft-visualc-tools-root") && contains(out, "C:/VS/VC/Tools/MSVC/14.44.35207"));
+        expect(contains(out, "-Xmicrosoft-windows-sdk-root") && contains(out, "-Xmicrosoft-windows-sdk-version") && contains(out, "10.0.26100.0"));
+        expect(contains(out, "-fno-aligned-allocation"));
+        expect(out.size() >= 2 && out[out.size() - 2] == "-x" && out.back() == "c++-module");
+    };
+
+    "P7: an mcpp cl.exe command"_test = [] {
+        const auto facts = msvc_facts(s::Family::msvc);
+        const std::vector<std::string> arguments { "C:\\VS\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe", "/std:c++latest", "/nologo",
+            "/EHsc", "/utf-8", "/MD", "/reference", "std=D:\\w\\target\\ifc.cache\\std.ifc", "/ifcSearchDir", "D:\\w\\target\\ifc.cache",
+            "/Od", "/Zi", "/FS", "-c", "D:\\w\\src\\main.cpp", "-o", "D:\\w\\target\\obj\\main.obj" };
+        const auto out = n::translate_msvc(n::MsvcInput { arguments, "D:/w/src/main.cpp", "D:/w", &facts, false });
+        expect(contains(out, "-std=c++26") && contains(out, "-fms-runtime-lib=dll")) << std::format("{}", out);
+        expect(!contains(out, "D:\\w\\target\\ifc.cache") && !contains(out, "D:\\w\\target\\obj\\main.obj") && !contains(out, "-o"));
+        expect(!contains(out, "c++-module"));
+    };
+
+    "P6: clang-cl passes GNU arguments through"_test = [] {
+        const auto facts = msvc_facts(s::Family::clang_cl);
+        const std::vector<std::string> arguments { "C:/LLVM/bin/clang-cl.exe", "/std:c++20", "/GR-", "/I", "C:/p/include", "/FIpch.h",
+            "/external:I", "C:/deps", "/clang:-fmodule-output=C:/b/m.pcm", "/clang:-fmodule-file=std=C:/b/std.pcm", "-fmodule-file=a=C:/b/a.pcm",
+            "-Wno-unused", "-mavx2", "/Zc:alignedNew-", "/c", "C:/p/src/m.ixx" };
+        const auto out = n::translate_msvc(n::MsvcInput { arguments, "C:/p/src/m.ixx", "C:/p", &facts, true });
+        expect(contains(out, "-std=c++20") && contains(out, "-fno-rtti") && contains(out, "-IC:/p/include")) << std::format("{}", out);
+        expect(contains(out, "-include") && contains(out, "pch.h") && contains(out, "-isystem") && contains(out, "C:/deps"));
+        expect(contains(out, "-Wno-unused") && contains(out, "-mavx2") && contains(out, "-fms-runtime-lib=static"));
+        expect(!contains_prefix(out, "-fmodule-output") && !contains_prefix(out, "-fmodule-file"));
+        expect(std::ranges::count(out, std::string { "-fno-aligned-allocation" }) == 1);
+        expect(contains(out, "-fms-compatibility-version=19.44"));
+    };
+
+    "P5: clang++ for the MSVC ABI"_test = [] {
+        auto facts = msvc_facts(s::Family::clang);
+        facts.toolchain.driver = "C:/LLVM/bin/clang++.exe";
+        const std::vector<std::string> arguments { "C:/LLVM/bin/clang++.exe", "-std=c++23", "-fmodule-file=std=D:/w/pcm.cache/std.pcm",
+            "-fprebuilt-module-path=D:/w/pcm.cache", "-O0", "-g", "-c", "D:/w/src/greet.cppm", "-o", "D:/w/obj/greet.m.o" };
+        const auto out = n::translate_gnu(n::GnuInput { arguments, "D:/w/src/greet.cppm", "D:/w", &facts, true });
+        expect(contains(out, "--target=x86_64-pc-windows-msvc") && contains(out, "-Xmicrosoft-visualc-tools-root")) << std::format("{}", out);
+        expect(contains(out, "-fno-aligned-allocation") && !contains_prefix(out, "-fmodule-file") && !contains_prefix(out, "-fprebuilt"));
+        expect(out.back() == "c++-module");
     };
 
     "kit arguments and semantic subsets"_test = [] {
@@ -226,6 +282,63 @@ int main() {
         expect(std.file == "/kit/share/libc++/v1/std.cppm");
         expect(contains(std.arguments, "/kit/share/libc++/v1"));
         expect(plan.issues.empty());
+    };
+
+    "an MSVC plan injects the MSVC STL's modules and drops the ones a build compiled"_test = [] {
+        const std::string tools { "/VS/VC/Tools/MSVC/14.44.35207" };
+        s::Database database;
+        s::Set set;
+        set.name = "greet";
+        set.toolchain = "msvc";
+        auto unit = [&](std::string source, std::vector<std::string> arguments) {
+            s::TranslationUnit value;
+            value.source = std::move(source);
+            value.workDirectory = "/p/build";
+            value.arguments = std::move(arguments);
+            return value;
+        };
+        const std::string cl { tools + "/bin/Hostx64/x64/cl.exe" };
+        set.units.push_back(unit(tools + "/modules/std.ixx", { cl, "/std:c++latest", "/EHsc", "/MDd", "-interface", "-c", tools + "/modules/std.ixx" }));
+        set.units.push_back(unit("/p/src/greet.ixx", { cl, "/std:c++latest", "/EHsc", "/MDd", "-c", "/p/src/greet.ixx" }));
+        set.units.push_back(unit("/p/src/main.cpp", { cl, "/std:c++latest", "/EHsc", "/MDd", "-c", "/p/src/main.cpp" }));
+        database.sets.push_back(set);
+        auto msvc = msvc_facts(s::Family::msvc);
+        msvc.toolchain.stdlib->moduleMetadata = tools + "/modules/modules.json";
+        std::map<std::string, ToolchainFacts, std::less<>> facts { { "msvc", msvc } };
+        const std::map<std::string, std::string> sources {
+            { tools + "/modules/std.ixx", "module;\n#include <vector>\nexport module std;\n" },
+            { "/p/src/greet.ixx", "export module greet;\nimport std;\n" },
+            { "/p/src/main.cpp", "import greet;\nimport std;\nint main() {}\n" },
+        };
+        n::PlanInput input;
+        input.database = &database;
+        input.facts = &facts;
+        input.engineDriverDirectory = "/payload/clangd/bin";
+        input.scanner = [&](std::string_view path) {
+            const auto it = sources.find(std::string { path });
+            return it == sources.end() ? p::ScanResult {} : p::scan_source(it->second);
+        };
+        input.metadataReader = [&](std::string_view manifest) {
+            expect(manifest == tools + "/modules/modules.json");
+            auto entries = s::parse_module_metadata(nlohmann::json::parse(R"({"version":1,"revision":0,"library":"microsoft/STL","module-sources":["std.ixx","std.compat.ixx"]})"),
+                                                    tools + "/modules");
+            return entries ? *entries : std::vector<s::ModuleEntry> {};
+        };
+        const auto plan = n::plan_engine(input);
+        expect(plan.issues.empty()) << (plan.issues.empty() ? "" : plan.issues.front().message);
+        expect(plan.stdUnits == 2u);
+        int stdEntries { 0 };
+        for (const auto& entry : plan.entries) {
+            expect(entry.arguments.front() == "/payload/clangd/bin/clang++") << entry.arguments.front();
+            if (entry.file.ends_with("std.ixx")) {
+                ++stdEntries;
+                expect(contains(entry.arguments, "-Wno-include-angled-in-module-purview") && contains(entry.arguments, "-fno-aligned-allocation"));
+                expect(!contains(entry.arguments, "-interface"));
+                expect(entry.arguments[entry.arguments.size() - 3] == "-x" && entry.arguments[entry.arguments.size() - 2] == "c++-module");
+            }
+            if (entry.file == "/p/src/greet.ixx") expect(contains(entry.arguments, "c++-module"));
+        }
+        expect(stdEntries == 1) << "the build's std.ixx unit is replaced by the injected one";
     };
 
     return report();
