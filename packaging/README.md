@@ -61,7 +61,7 @@ CI runs exactly these steps (`.github/workflows/ci.yml`, job `payload`); the
 downloads are cached in `.payload-cache`.
 
 ```bash
-mcpp build                                   # --target x86_64-windows-gnu | --target aarch64-macos
+mcpp build --profile release                 # --target x86_64-windows-gnu | --target aarch64-macos
 python3 packaging/scripts/trim_clangd.py --platform linux-x64 --out work/clangd --cache .payload-cache
 python3 packaging/scripts/build_kit.py   --platform linux-x64 --out work/kit --cache .payload-cache --work work/kit-build
 python3 packaging/scripts/assemble_payload.py --platform linux-x64 \
@@ -75,10 +75,10 @@ python3 packaging/scripts/assemble_payload.py --verify payload
 | `win32-x64` | any; CI uses Linux and cross-builds the server | nothing beyond Python |
 | `darwin-arm64` | macOS | cmake, ninja, and the Xcode command line tools (`lipo`, `strip`, `codesign`) |
 
-The server is built with the **dev** profile. Optimized builds over
-openkal-windows and openkal-macos misbehaved at startup (design §12.9, K7); the
-fixes are released upstream, and payloads move to the release profile once the
-runtime that carries them has been verified on every platform.
+The server is built with the **release** profile. Optimized builds over
+openkal-windows and openkal-macos misbehaved at startup until
+openkal-llvm-runtime 0.9.5 (design §12.9, K7 and K13), and CI runs the unit
+tests in both profiles on every host.
 
 To run the VS Code extension against a local payload, put it at
 `editors/vscode/payload` or point `LSP_MCPP_PAYLOAD` at it.
@@ -103,8 +103,9 @@ user's machine:
 
 ## Sizes
 
-Measured on the CI payloads of commit `70279c2`, in MiB. The server is a dev
-build with debug information; `gz` is the payload directory compressed.
+Measured on the CI payloads of commit `70279c2`, in MiB, when the server was
+still a dev build with debug information; a release server is 2.5 MB on macOS
+and 2.9 MB on Windows. `gz` is the payload directory compressed.
 
 | Platform | Server | clangd | Kit | Total | gz | Kit gz | Files |
 |---|---|---|---|---|---|---|---|
