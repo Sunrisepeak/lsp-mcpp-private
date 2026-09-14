@@ -391,13 +391,27 @@ jobs:
       - name: Install and compile
         working-directory: editors/vscode
         run: npm ci && npm run compile
-      - name: End-to-end tests
-        working-directory: editors/vscode
-        run: |
-          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a npm test; else npm test; fi
+      # Packaged first (W6.3): the suites below test the installed VSIX, not
+      # the development folder, so the package has to exist before they run.
       - name: Package the VSIX
         working-directory: editors/vscode
         run: npx --no-install vsce package --target ${{ matrix.platform }} --out lsp-mcpp-${{ matrix.platform }}.vsix
+      - name: End-to-end tests (VSIX form)
+        working-directory: editors/vscode
+        env:
+          LSP_MCPP_E2E_VSIX: ${{ github.workspace }}/editors/vscode/lsp-mcpp-${{ matrix.platform }}.vsix
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a npm test; else npm test; fi
+      # Conflicting-extension detection (W6.4/U10): a separate scenario, its
+      # own pair of stub extensions, and its own workspace-unchanged
+      # allowance for .vscode/settings.json (see test/runTest.ts).
+      - name: End-to-end tests (conflicts scenario)
+        working-directory: editors/vscode
+        env:
+          LSP_MCPP_E2E_VSIX: ${{ github.workspace }}/editors/vscode/lsp-mcpp-${{ matrix.platform }}.vsix
+          LSP_MCPP_E2E_SCENARIO: conflicts
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a npm test; else npm test; fi
       - uses: actions/upload-artifact@v4
         with:
           name: vsix-${{ matrix.platform }}

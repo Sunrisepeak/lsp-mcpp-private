@@ -25,6 +25,7 @@ When a C++ file is open, the language status area shows one item, for example `C
 | C++ Modules: Show Module Graph | Modules, the files that provide them, and who imports them |
 | C++ Modules: Restart Language Server | Restart the server and clangd |
 | C++ Modules: Show Logs | Open the log |
+| C++ Modules: Install Command Line Tools | Run `xcode-select --install` (macOS only) |
 
 ## Settings
 
@@ -40,6 +41,10 @@ All settings are optional.
 ## Other C++ extensions
 
 If the Microsoft C/C++ extension or the clangd extension also serves C++ files, results appear twice. The extension asks once whether to turn their language features off for the workspace; nothing changes without your answer.
+
+## macOS Command Line Tools
+
+If the macOS SDK cannot be found, the language status item turns into a warning and the extension offers, once per machine, to run `xcode-select --install`. Declining changes nothing and is not asked again; the offer is also available any time as **C++ Modules: Install Command Line Tools**.
 
 ## Restricted Mode
 

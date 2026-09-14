@@ -143,13 +143,37 @@ suite('C++ modules through lsp-mcpp', function () {
         }
     });
 
-    test('the extension showed no notifications', async () => {
-        assert.strictEqual(await api.conflictCheck(), 'skipped-test-mode');
-        const count = api.notificationCount();
-        if (count < 0) {
-            console.log('notifications could not be counted in this VS Code build; the conflict question was skipped');
+    test('the extension showed no notifications or other unsolicited UI', async () => {
+        // No conflicting extension is installed in this suite (see the
+        // "conflicts" scenario for that), so the real check runs and finds
+        // nothing to ask about.
+        assert.strictEqual(await api.conflictCheck(), 'none-found');
+        assert.strictEqual(api.promptShownCount('conflict'), 0);
+        assert.strictEqual(api.promptShownCount('commandLineTools'), 0);
+
+        // createLanguageStatusItem is the one piece of UI this extension
+        // always shows (design 16.2); everything else must stay at zero.
+        // A negative count means the counter itself could not be installed
+        // in this VS Code build, which is reported rather than asserted on.
+        const counters: [string, number][] = [
+            ['notificationCount', api.notificationCount()],
+            ['statusBarItemCount', api.statusBarItemCount()],
+            ['outputChannelShowCount', api.outputChannelShowCount()],
+            ['webviewPanelCount', api.webviewPanelCount()],
+            ['showTextDocumentCount', api.showTextDocumentCount()],
+        ];
+        for (const [name, count] of counters) {
+            if (count < 0) {
+                console.log(`${name} could not be counted in this VS Code build`);
+            } else {
+                assert.strictEqual(count, 0, `${name} was ${count}`);
+            }
+        }
+        const languageStatusItemCount = api.languageStatusItemCount();
+        if (languageStatusItemCount < 0) {
+            console.log('languageStatusItemCount could not be counted in this VS Code build');
         } else {
-            assert.strictEqual(count, 0, `${count} notification(s) were shown`);
+            assert.strictEqual(languageStatusItemCount, 1, `languageStatusItemCount was ${languageStatusItemCount}`);
         }
     });
 });

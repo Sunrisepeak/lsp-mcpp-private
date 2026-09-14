@@ -2,10 +2,17 @@
 // Ask once per workspace whether to turn their language features off here.
 
 import * as vscode from 'vscode';
+import { DISABLE, KEEP } from './conflictAnswers';
+import { askOnce } from './prompt';
+
+// Re-exported so the rest of this file, and existing importers of the
+// answers from here (the conflicts scenario's test suite), have one place
+// to get them; see conflictAnswers.ts for why they do not simply live here.
+export { DISABLE, KEEP };
 
 export const CONFLICT_ANSWER_KEY = 'lspMcpp.conflictAnswer';
 
-export type ConflictCheck = 'skipped-test-mode' | 'skipped-setting' | 'already-answered' | 'none-found' | 'asked';
+export type ConflictCheck = 'skipped-setting' | 'already-answered' | 'none-found' | 'asked';
 
 interface Conflict {
     extensionId: string;
@@ -20,9 +27,6 @@ const CANDIDATES: readonly Conflict[] = [
     { extensionId: 'llvm-vs-code-extensions.vscode-clangd', displayName: 'clangd', section: 'clangd', key: 'enable', disabledValue: false },
 ];
 
-const DISABLE = 'Disable in this workspace';
-const KEEP = 'Keep both';
-
 function activeConflicts(): Conflict[] {
     return CANDIDATES.filter((candidate) => {
         // getExtension answers only for installed extensions that are enabled.
@@ -34,10 +38,10 @@ function activeConflicts(): Conflict[] {
     });
 }
 
+// In test mode this still runs every real check (installed extensions,
+// settings, the workspaceState guard); only the final question is
+// substituted, through askOnce -- see src/prompt.ts for why and how.
 export async function checkConflicts(context: vscode.ExtensionContext, log: (line: string) => void): Promise<ConflictCheck> {
-    if (process.env.LSP_MCPP_TEST === '1') {
-        return 'skipped-test-mode';
-    }
     if (!vscode.workspace.getConfiguration('lspMcpp').get<boolean>('detectConflicts', true)) {
         return 'skipped-setting';
     }
@@ -51,7 +55,8 @@ export async function checkConflicts(context: vscode.ExtensionContext, log: (lin
 
     const names = conflicts.map((conflict) => conflict.displayName).join(' and ');
     const verb = conflicts.length === 1 ? 'also provides' : 'also provide';
-    const answer = await vscode.window.showInformationMessage(
+    const answer = await askOnce(
+        'conflict',
         `${names} ${verb} language features for C++ files, so results appear twice. Turn off their language features in this workspace?`,
         DISABLE,
         KEEP,

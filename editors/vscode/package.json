@@ -83,6 +83,11 @@
         "command": "lspMcpp.showLogs",
         "title": "Show Logs",
         "category": "C++ Modules"
+      },
+      {
+        "command": "lspMcpp.installCommandLineTools",
+        "title": "Install Command Line Tools",
+        "category": "C++ Modules"
       }
     ],
     "configuration": {
