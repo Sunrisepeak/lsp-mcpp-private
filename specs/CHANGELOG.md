@@ -6,7 +6,7 @@ All changes to the specifications in this directory. Each specification is versi
 
 ### 2026-09-14
 
-- Rule identifiers `S<n>-<section>-<ordinal>` on every requirement of S1, S2 and S4, and `conformance/traceability.json` mapping each to its evidence (README, "Rule identifiers and traceability"). No normative change.
+- Rule identifiers `S<n>-<section>-<ordinal>` on every requirement of S1 to S4 (S3 added the same day), and `conformance/traceability.json` mapping each to its evidence (README, "Rule identifiers and traceability"). No normative change.
 
 ## S1 — C++ Build Database: IDE Profile
 
@@ -50,6 +50,7 @@ First public draft, derived from the design draft of 2026-09-13.
 - Module features mapped onto standard LSP messages, with diagnostic codes `unresolved-module`, `ambiguous-module` and `partition-outside-module`.
 - Revision 2026-09-14: `cxxModules/status` gains optional `notices`, facts that reduce no feature; issue code `module-build-failed`.
 - Revision 2026-09-14: a server managing more than one workspace root sends one `cxxModules/status` notification per root, told apart by the already-existing `project.root` (usable plan W9.1).
+- Revision 2026-09-14: `project.root` is the workspace folder's URI exactly as the client sent it, not a canonical form of its path, so a client can match it to its own folder; issue code `model-stale`.
 
 ## S4 — Semantic Kit
 

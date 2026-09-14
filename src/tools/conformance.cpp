@@ -537,36 +537,42 @@ public:
             };
             // usable plan W9.4: error is as settled a state as ready or degraded (a corrupt
             // payload, for instance, does not become anything else once reported).
-            const bool ok { client_.wait_for([&] {
-                const std::string state { state_of(current()) };
+            const auto settled = [](const Json& status) {
+                const std::string state { state_of(status) };
                 return state == "ready" || state == "degraded" || state == "error";
-            }, timeout_) };
+            };
+            const auto matches = [&](const Json& snapshot) {
+                bool matched { settled(snapshot) };
+                if (auto source = check.find("source"); source != check.end()) {
+                    matched = matched && snapshot.value("project", Json::object()).value("source", std::string {}) == source->get<std::string>();
+                }
+                if (auto profile = check.find("profile-kind"); profile != check.end()) {
+                    matched = matched && snapshot.value("profile", Json::object()).value("kind", std::string {}) == profile->get<std::string>();
+                }
+                if (auto state = check.find("state"); state != check.end()) matched = matched && state_of(snapshot) == state->get<std::string>();
+                if (auto level = check.find("level"); level != check.end()) {
+                    matched = matched && snapshot.value("project", Json::object()).value("level", 0) == level->get<int>();
+                }
+                if (auto issueCode = check.find("issue-code"); issueCode != check.end()) {
+                    const std::string wantedCommand { check.value("issue-command", std::string {}) };
+                    const std::string wantedMessage { check.value("issue-message", std::string {}) };   // a part of the message
+                    matched = matched && std::ranges::any_of(snapshot.value("issues", Json::array()), [&](const Json& issue) {
+                        if (issue.value("code", std::string {}) != issueCode->get<std::string>()) return false;
+                        if (!wantedMessage.empty() && !issue.value("message", std::string {}).contains(wantedMessage)) return false;
+                        return wantedCommand.empty() || issue.value("command", Json::object()).value("command", std::string {}) == wantedCommand;
+                    });
+                }
+                if (auto compiler = check.find("profile-compiler"); compiler != check.end()) {
+                    matched = matched && snapshot.value("profile", Json::object()).value("compiler", std::string {}).starts_with(compiler->get<std::string>());
+                }
+                return matched;
+            };
+            (void)client_.wait_for([&] { return settled(current()); }, timeout_);
+            // A server coalesces changes that keep the state (S3 4), so the rest of a settled
+            // status may follow a moment later: a mismatch gets a few seconds more, not the whole timeout.
+            if (!matches(current())) (void)client_.wait_for([&] { return matches(current()); }, std::min(timeout_, std::chrono::seconds { 3 }));
             const Json snapshot = current();   // `Json x { y }` would wrap y in a one-element array; `=` copies it
-            std::string detail { lsp::dump(snapshot) };
-            bool matches { ok };
-            if (auto source = check.find("source"); source != check.end()) {
-                matches = matches && snapshot.value("project", Json::object()).value("source", std::string {}) == source->get<std::string>();
-            }
-            if (auto profile = check.find("profile-kind"); profile != check.end()) {
-                matches = matches && snapshot.value("profile", Json::object()).value("kind", std::string {}) == profile->get<std::string>();
-            }
-            if (auto state = check.find("state"); state != check.end()) matches = matches && state_of(snapshot) == state->get<std::string>();
-            if (auto level = check.find("level"); level != check.end()) {
-                matches = matches && snapshot.value("project", Json::object()).value("level", 0) == level->get<int>();
-            }
-            if (auto issueCode = check.find("issue-code"); issueCode != check.end()) {
-                const std::string wantedCommand { check.value("issue-command", std::string {}) };
-                const std::string wantedMessage { check.value("issue-message", std::string {}) };   // a part of the message
-                matches = matches && std::ranges::any_of(snapshot.value("issues", Json::array()), [&](const Json& issue) {
-                    if (issue.value("code", std::string {}) != issueCode->get<std::string>()) return false;
-                    if (!wantedMessage.empty() && !issue.value("message", std::string {}).contains(wantedMessage)) return false;
-                    return wantedCommand.empty() || issue.value("command", Json::object()).value("command", std::string {}) == wantedCommand;
-                });
-            }
-            if (auto compiler = check.find("profile-compiler"); compiler != check.end()) {
-                matches = matches && snapshot.value("profile", Json::object()).value("compiler", std::string {}).starts_with(compiler->get<std::string>());
-            }
-            return { matches, detail };
+            return { matches(snapshot), lsp::dump(snapshot) };
         }
         if (kind == "responds") {
             // An answer of any kind, an empty one included, within the check's time: a file the engine

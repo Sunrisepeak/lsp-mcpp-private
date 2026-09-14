@@ -49,8 +49,8 @@ interface ServerCxxModulesCapabilities {
 
 Rules:
 
-- A server **MUST NOT** send `cxxModules/status` unless the client declared `status: true`.
-- A client **MUST NOT** send a `cxxModules/` request unless the server declared `cxxModules` in its capabilities.
+- A server **MUST NOT** send `cxxModules/status` unless the client declared `status: true`. <a id="S3-3-1"></a><sup>S3-3-1</sup>
+- A client **MUST NOT** send a `cxxModules/` request unless the server declared `cxxModules` in its capabilities. <a id="S3-3-2"></a><sup>S3-3-2</sup>
 - `version` is the highest protocol version the sender implements. Both sides use the lower of the two versions.
 - `databaseSpec` is a space-separated list of comparisons (`>=`, `>`, `<=`, `<`, `=`) against semantic versions, all of which must hold.
 
@@ -62,7 +62,7 @@ Direction: server → client.
 interface CxxModulesStatusParams {
   state: "starting" | "loading" | "preparing" | "ready" | "degraded" | "error";
   project: {
-    root: DocumentUri;
+    root: DocumentUri;             // the workspace folder's URI exactly as the client sent it
     source: "mcpp" | "cmake" | "build-database" | "compile-commands" | "inferred";
     level?: 1 | 2 | 3 | 4;        // S1 conformance level of the project model
   };
@@ -82,7 +82,9 @@ interface SemanticProfile {
 
 interface CxxModulesIssue {
   code: "unresolved-module" | "ambiguous-module" | "engine-timeout" | "engine-crashed"
-      | "toolchain-not-found" | "sdk-missing" | "untrusted-workspace" | string;
+      | "toolchain-not-found" | "sdk-missing" | "untrusted-workspace" | "module-build-failed"
+      | "model-stale"               // the producer failed to answer again; the last model is kept (S2 5)
+      | string;
   message: string;
   command?: Command;               // an optional action that fixes the issue
 }
@@ -99,9 +101,9 @@ States:
 | `degraded` | Some features are reduced, for example an inferred model or an engine timeout. `issues` says why. |
 | `error` | Only syntactic features remain. `issues` says why. |
 
-A server **MUST** send the notification whenever any field changes, **SHOULD** coalesce changes that occur within a short interval, and **MUST** send at least one notification after `initialized`. `project.source` names where the model came from: an mcpp project, a CMake project, an S1 database, a `compile_commands.json`, or inference from sources alone. `profile.kind` is `semantic-kit` when the server analyzes the project with an [S4](s4-semantic-kit.md) semantic kit because no suitable compiler was found.
+A server **MUST** send the notification whenever any field changes, **SHOULD** coalesce changes that occur within a short interval, and **MUST** send at least one notification after `initialized`. `project.source` names where the model came from: an mcpp project, a CMake project, an S1 database, a `compile_commands.json`, or inference from sources alone. `profile.kind` is `semantic-kit` when the server analyzes the project with an [S4](s4-semantic-kit.md) semantic kit because no suitable compiler was found. <a id="S3-4-1"></a><a id="S3-4-2"></a><a id="S3-4-3"></a><sup>S3-4-1, S3-4-2, S3-4-3</sup>
 
-A server that manages more than one workspace root (multiple `workspaceFolders`, or folders added or removed later through `workspace/didChangeWorkspaceFolders`) **MUST** send one notification per root, each with that root's own `project.root`, rather than one notification describing all of them; a client that presents status per folder tells them apart by it. This is a backward-compatible addition: `project.root` already existed in protocol version 1, and a single-root server's one notification already satisfied "at least one notification" above. A request that names a document (for example `cxxModules/setContext`) is answered by the root that owns it; `cxxModules/graph` and a bare-name `cxxModules/moduleInfo` name no document and so, until a later protocol version adds a way to select one, are answered by the first root.
+A server that manages more than one workspace root (multiple `workspaceFolders`, or folders added or removed later through `workspace/didChangeWorkspaceFolders`) **MUST** send one notification per root, each with that root's own `project.root`, rather than one notification describing all of them; a client that presents status per folder tells them apart by it. This is a backward-compatible addition: `project.root` already existed in protocol version 1, and a single-root server's one notification already satisfied "at least one notification" above. A request that names a document (for example `cxxModules/setContext`) is answered by the root that owns it; `cxxModules/graph` and a bare-name `cxxModules/moduleInfo` name no document and so, until a later protocol version adds a way to select one, are answered by the first root. <a id="S3-4-4"></a><sup>S3-4-4</sup>
 
 ## 5. Requests
 
@@ -187,7 +189,7 @@ After answering, the server rewrites the engine's input for the new context and 
 | Unresolved and ambiguous modules, import of another module's partition | `textDocument/publishDiagnostics` | the server's module index, with `source` `"lsp-mcpp"` |
 | Changes to build descriptions | `workspace/didChangeWatchedFiles`, registered dynamically by the server | the editor watches the files |
 
-Diagnostics produced from the module index use these `code` values: `unresolved-module`, `ambiguous-module` and `partition-outside-module`. A server **SHOULD** name the semantic profile in the `source` of diagnostics it forwards from the semantic engine, for example `"lsp-mcpp · gcc 16"`, so that a user can tell which compiler's semantics a diagnostic reflects.
+Diagnostics produced from the module index use these `code` values: `unresolved-module`, `ambiguous-module` and `partition-outside-module`. A server **SHOULD** name the semantic profile in the `source` of diagnostics it forwards from the semantic engine, for example `"lsp-mcpp · gcc 16"`, so that a user can tell which compiler's semantics a diagnostic reflects. <a id="S3-6-1"></a><sup>S3-6-1</sup>
 
 ## 7. Versioning
 

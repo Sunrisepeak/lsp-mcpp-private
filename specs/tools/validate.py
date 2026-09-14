@@ -291,7 +291,7 @@ for mock in sorted((repository / "conformance" / "fixtures").glob("*/mcpp-mock.j
 # 8. traceability (usable plan W10.2): every requirement keyword carries a rule identifier S<n>-<section>-<ordinal>,
 #    and conformance/traceability.json names evidence for each: a check above, a unit test, a conformance check, a
 #    line of a script that enforces the rule, or the reason no automated evidence can exist.
-TRACED_SPECS = {"S1": "s1-build-database.md", "S2": "s2-discovery.md", "S4": "s4-semantic-kit.md"}
+TRACED_SPECS = {"S1": "s1-build-database.md", "S2": "s2-discovery.md", "S3": "s3-lsp-extensions.md", "S4": "s4-semantic-kit.md"}
 KEYWORD = re.compile(r"\b(MUST NOT|MUST|SHALL NOT|SHALL|SHOULD NOT|SHOULD|REQUIRED|RECOMMENDED)\b")
 HEADING = re.compile(r"^#{2,4}\s+(\d+(?:\.\d+)*)\.?\s")
 RULE_ID = re.compile(r'<a id="(S\d-[\d.]+-\d+)"></a>')

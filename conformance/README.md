@@ -109,7 +109,7 @@ always has been.
 
 | Kind | Passes when |
 |---|---|
-| `status` | `cxxModules/status` reaches `ready`, `degraded` or `error` and matches `source`, `profile-kind`, `state`, `level`, `issue-code` (with `issue-command`, that issue's command; with `issue-message`, a part of its message) when given, and a `profile-compiler` prefix; `"folder"` picks one root's own status in a multi-root fixture (usable plan W9.1), absent picks whichever root's arrived most recently |
+| `status` | `cxxModules/status` reaches `ready`, `degraded` or `error` and matches `source`, `profile-kind`, `state`, `level`, `issue-code` (with `issue-command`, that issue's command; with `issue-message`, a part of its message) when given, and a `profile-compiler` prefix (a settled status that does not match yet is looked at again for up to three seconds, since a server coalesces changes that keep its state); `"folder"` picks one root's own status in a multi-root fixture (usable plan W9.1), absent picks whichever root's arrived most recently |
 | `workspace-unchanged` | no file under the workspace was added, changed or removed after the prepare steps |
 | `responds` | a request (`method`, default `textDocument/definition`) at `at` is answered, empty answers included, within the check's time |
 | `module-cache-reused` | every file clangd published for `module` (default `std`) before the server started is still there unchanged, and none was added (SC4); passes on a cold start unless `--expect-warm` |

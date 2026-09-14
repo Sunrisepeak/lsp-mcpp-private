@@ -45,12 +45,24 @@ function errorText(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
+// S3 3: cxxModules/ requests go only to a server that declared `experimental.cxxModules`.
+export function declaresModules(capabilities: { experimental?: unknown } | undefined): boolean {
+    const experimental = capabilities?.experimental;
+    return typeof experimental === 'object' && experimental !== null && 'cxxModules' in experimental;
+}
+
+const NO_MODULE_REQUESTS = 'The language server does not offer C++ module requests.';
+
 async function selectContext(access: ServerAccess): Promise<void> {
     const title = 'C++ Modules: Select Context';
     const client = access.runningClient();
     const editor = vscode.window.activeTextEditor;
     if (!client) {
         await vscode.window.showQuickPick([{ label: 'The C++ Modules language server is not running.' }], { title });
+        return;
+    }
+    if (!declaresModules(client.initializeResult?.capabilities)) {
+        await vscode.window.showQuickPick([{ label: NO_MODULE_REQUESTS }], { title });
         return;
     }
     if (!editor || !CPP_LANGUAGES.includes(editor.document.languageId)) {
@@ -123,6 +135,8 @@ async function showModuleGraph(access: ServerAccess): Promise<void> {
     let content: string;
     if (!client) {
         content = '# C++ Module Graph\n\nThe C++ Modules language server is not running. Run **C++ Modules: Show Logs** for details.\n';
+    } else if (!declaresModules(client.initializeResult?.capabilities)) {
+        content = `# C++ Module Graph\n\n${NO_MODULE_REQUESTS}\n`;
     } else {
         try {
             const graph = await client.sendRequest<ModuleGraph>('cxxModules/graph', {});

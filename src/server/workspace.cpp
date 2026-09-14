@@ -70,6 +70,9 @@ bool is_build_file(std::string_view name) {
     return std::ranges::find(BUILD_FILES, name) != BUILD_FILES.end() || name.ends_with(".cmake");
 }
 
+// Changes to cxxModules/status that keep its state are sent at most this often (S3 4).
+constexpr std::chrono::milliseconds STATUS_COALESCE { 250 };
+
 // Requests a person waits for are answered without the engine after this long; the rest wait for the configured timeout.
 bool is_interactive(std::string_view method) {
     static constexpr std::array<std::string_view, 9> INTERACTIVE { "textDocument/definition", "textDocument/declaration", "textDocument/hover",
@@ -259,7 +262,10 @@ struct WorkspaceRoot::Impl {
     std::optional<Clock::time_point> sdkCheckAt;
 
     State lastState { State::starting };
-    std::string lastStatus;
+    std::string lastStatus;                  // the last cxxModules/status sent, serialized
+    State lastSentState { State::starting };
+    std::optional<Clock::time_point> lastStatusSentAt;
+    std::optional<Clock::time_point> statusFlushAt;   // a coalesced change goes out then
 
     Impl(std::string root_, std::string key_, SessionOptions options_, PayloadPaths payload_, bool payloadCorrupt_,
         bool kitEnabled_, std::string compilerOverride_, std::shared_ptr<EventChannel> events_)
@@ -384,6 +390,7 @@ struct WorkspaceRoot::Impl {
         consider(restartAt);
         consider(loadGiveUpAt);
         consider(sdkCheckAt);
+        consider(statusFlushAt);
         for (const auto& [module, at] : primeDeadlines) consider(at);
         return deadline;
     }
@@ -1240,8 +1247,21 @@ struct WorkspaceRoot::Impl {
             params["progress"] = Json { { "done", done }, { "total", total } };
         }
         std::string serialized { lsp::dump(params) };
-        if (serialized == lastStatus) return;
+        if (serialized == lastStatus) {
+            statusFlushAt.reset();
+            return;
+        }
+        // S3 4: a new state goes out at once; other changes within STATUS_COALESCE of the last
+        // notification (module counts while many modules build) go out together when it has passed.
+        const auto now = Clock::now();
+        if (lastStatusSentAt && state == lastSentState && now - *lastStatusSentAt < STATUS_COALESCE) {
+            if (!statusFlushAt) statusFlushAt = *lastStatusSentAt + STATUS_COALESCE;
+            return;
+        }
+        statusFlushAt.reset();
         lastStatus = std::move(serialized);
+        lastSentState = state;
+        lastStatusSentAt = now;
         notify_client("cxxModules/status", std::move(params));
     }
 
@@ -1291,6 +1311,10 @@ struct WorkspaceRoot::Impl {
             start_model_load();
         }
         if (replanAt && *replanAt <= now) replan();
+        if (statusFlushAt && *statusFlushAt <= now) {
+            statusFlushAt.reset();
+            update_status();
+        }
         if (restartAt && *restartAt <= now) {
             restartAt.reset();
             restart_engine("recovering from an exit");

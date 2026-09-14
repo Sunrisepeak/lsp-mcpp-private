@@ -418,18 +418,32 @@ jobs:
                 --fixture conformance/fixtures/inferred-discover --timeout 180'
       - name: The extension in the same kind of container
         if: runner.os == 'Linux'
-        timeout-minutes: 30
+        timeout-minutes: 40
         run: |
-          # Non-interactive: libgtk-3-0 brings tzdata, whose configuration otherwise waits for a timezone answer.
-          docker run --rm -e DEBIAN_FRONTEND=noninteractive -v "$PWD:/w" -v "$RUNNER_TEMP:/t" -w /w/editors/vscode node:22-bookworm-slim bash -c '
+          # Each phase is timed and bounded, so a stall names itself: this step sat silent for the
+          # whole job timeout twice, in package configuration. Non-interactive: libgtk-3-0's
+          # dependencies would otherwise ask. PKGSYSTEM_ENABLE_FSYNC=0: shared-mime-info's
+          # update-mime-database syncs every file it writes, which on a container's overlay file
+          # system can take longer than the job; dpkg's own syncs are skipped the same way.
+          docker run --rm -e DEBIAN_FRONTEND=noninteractive -e PKGSYSTEM_ENABLE_FSYNC=0 -v "$PWD:/w" -v "$RUNNER_TEMP:/t" -w /w/editors/vscode \
+              node:22-bookworm-slim bash -c '
             set -euo pipefail
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends xvfb xauth ca-certificates libnss3 libatk1.0-0 libatk-bridge2.0-0 \
-                libgtk-3-0 libgbm1 libasound2 libxss1 libxkbfile1 libsecret-1-0 > /dev/null
+            phase() { echo "[$(date +%T)] $*"; }
+            phase "apt-get update"
+            timeout -k 30s 5m apt-get update -qq
+            phase "apt-get install"
+            if ! timeout -k 30s 15m apt-get install -y -q --no-install-recommends -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-unsafe-io \
+                xvfb xauth ca-certificates libnss3 libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 libgbm1 libasound2 libxss1 libxkbfile1 \
+                libsecret-1-0 > /t/apt.log 2>&1; then
+              tail -60 /t/apt.log; echo "::error::the packages the extension host needs did not install"; exit 1
+            fi
+            phase "no compiler on PATH"
             for tool in c++ g++ gcc cc clang++ clang; do
               if command -v "$tool"; then echo "::error::$tool is on PATH"; exit 1; fi
             done
-            LSP_MCPP_E2E_VSIX=/t/lsp-mcpp.vsix xvfb-run -a npm test'
+            phase "npm test"
+            LSP_MCPP_E2E_VSIX=/t/lsp-mcpp.vsix timeout -k 30s 20m xvfb-run -a npm test
+            phase "done"'
       - name: Visual Studio hidden and no compiler on PATH
         if: runner.os == 'Windows'
         run: |
