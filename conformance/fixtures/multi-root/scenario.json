@@ -1,0 +1,63 @@
+{
+  "name": "multi-root",
+  "description": "usable plan W9.1: two workspace folders (inferred's own content and mcpp-llvm's own content, copied verbatim), each getting its own project model and clangd process; a request routes to the root with the longest matching prefix of its document's path, and cxxModules/status is sent once per root, told apart by project.root.",
+  "folders": ["inferred", "mcpp-llvm"],
+  "server-arguments": ["--no-discover"],
+  "checks": [
+    {
+      "id": "S1-inferred",
+      "kind": "status",
+      "folder": "inferred",
+      "source": "inferred",
+      "profile-kind": "semantic-kit",
+      "state": "ready"
+    },
+    {
+      "id": "S1-mcpp",
+      "kind": "status",
+      "folder": "mcpp-llvm",
+      "source": "mcpp",
+      "profile-kind": "build-toolchain",
+      "profile-compiler": "clang",
+      "state": "ready"
+    },
+    {
+      "id": "C1-inferred",
+      "kind": "definition",
+      "file": "inferred/src/main.cpp",
+      "at": [4, 31],
+      "expect": "inferred/src/greet/greet.cppm"
+    },
+    {
+      "id": "C1-mcpp",
+      "kind": "definition",
+      "file": "mcpp-llvm/src/main.cpp",
+      "at": [4, 31],
+      "expect": "mcpp-llvm/src/greet/greet.cppm"
+    },
+    {
+      "id": "C2-inferred-hover",
+      "kind": "hover-contains",
+      "file": "inferred/src/main.cpp",
+      "at": [4, 31],
+      "expect": "greet"
+    },
+    {
+      "id": "C2-mcpp-hover",
+      "kind": "hover-contains",
+      "file": "mcpp-llvm/src/main.cpp",
+      "at": [4, 31],
+      "expect": "greet"
+    },
+    {
+      "id": "C3-inferred-diag",
+      "kind": "diagnostics-empty",
+      "file": "inferred/src/main.cpp"
+    },
+    {
+      "id": "C3-mcpp-diag",
+      "kind": "diagnostics-empty",
+      "file": "mcpp-llvm/src/main.cpp"
+    }
+  ]
+}

@@ -10,6 +10,7 @@ import lspmcpp.platform.fs;
 import lspmcpp.platform.env;
 import lspmcpp.platform.dirs;
 import lspmcpp.platform.process;
+import lspmcpp.base.sha256;
 import lspmcpp.engine.clangd;
 
 namespace lspmcpp::server {
@@ -80,6 +81,18 @@ PayloadPaths resolve_payload(const PayloadRequest& requested) {
                     paths.kit = base::join_path(paths.directory, kit->value("path", std::string { "kit" }));
                 }
                 paths.platform = document.value("platform", paths.platform);
+                // usable plan W9.4: "files": { "clangd/bin/clangd": {"size":N,"sha256":"..."}, ... },
+                // written by assemble_payload.py. Absent in an older payload; nothing is checked then.
+                if (auto files = document.find("files"); files != document.end() && files->is_object()) {
+                    for (const auto& entry : files->items()) {
+                        if (!entry.value().is_object()) continue;
+                        PayloadFileIntegrity integrity;
+                        integrity.size = entry.value().value("size", std::uint64_t { 0 });
+                        integrity.sha256 = entry.value().value("sha256", std::string {});
+                        if (integrity.sha256.empty()) continue;
+                        paths.files.emplace(entry.key(), std::move(integrity));
+                    }
+                }
             }
         }
         if (paths.clangd.empty()) paths.clangd = base::join_path(paths.directory, "clangd/bin/clangd" + suffix);
@@ -128,6 +141,90 @@ std::string macos_sdk_path() {
         }
         return {};
     }
+}
+
+namespace {
+
+// A block at a time, so a ~90MB clangd executable is never held in memory whole (mirroring
+// src/tools/conformance.cpp's own digest()).
+std::optional<std::string> file_sha256(std::string_view path) {
+    std::ifstream stream { std::filesystem::path { path }, std::ios::binary };
+    if (!stream) return std::nullopt;
+    base::Sha256 hasher;
+    std::vector<char> block(std::size_t { 1 } << 16);
+    while (stream.read(block.data(), static_cast<std::streamsize>(block.size())) || stream.gcount() > 0) {
+        hasher.update(std::string_view { block.data(), static_cast<std::size_t>(stream.gcount()) });
+    }
+    return hasher.finish();
+}
+
+struct IntegrityCacheEntry {
+    std::uint64_t size { 0 };
+    std::int64_t modified { 0 };
+    std::string sha256;
+};
+
+std::map<std::string, IntegrityCacheEntry> read_integrity_cache(std::string_view cacheFile) {
+    std::map<std::string, IntegrityCacheEntry> cache;
+    auto text = platform::fs::read_file(cacheFile);
+    if (!text) return cache;
+    nlohmann::json document = nlohmann::json::parse(*text, nullptr, false);
+    if (document.is_discarded() || !document.is_object()) return cache;
+    for (const auto& entry : document.items()) {
+        if (!entry.value().is_object()) continue;
+        cache.emplace(entry.key(), IntegrityCacheEntry { entry.value().value("size", std::uint64_t { 0 }),
+                                                          entry.value().value("modified", std::int64_t { 0 }),
+                                                          entry.value().value("sha256", std::string {}) });
+    }
+    return cache;
+}
+
+void write_integrity_cache(std::string_view cacheFile, const std::map<std::string, IntegrityCacheEntry>& cache) {
+    nlohmann::json document = nlohmann::json::object();
+    for (const auto& [path, entry] : cache) {
+        document[path] = nlohmann::json { { "size", entry.size }, { "modified", entry.modified }, { "sha256", entry.sha256 } };
+    }
+    (void)platform::fs::write_file_atomic(cacheFile, document.dump());
+}
+
+} // namespace
+
+std::vector<PayloadIntegrityIssue> verify_payload_integrity(const PayloadPaths& payload, std::string_view cacheFile) {
+    std::vector<PayloadIntegrityIssue> issues;
+    if (payload.files.empty()) return issues;
+    auto cache = read_integrity_cache(cacheFile);
+    bool cacheChanged { false };
+    for (const auto& [relative, expected] : payload.files) {
+        const std::string path { base::join_path(payload.directory, relative) };
+        const auto stamp = platform::fs::stamp(path);
+        if (!stamp) {
+            issues.push_back(PayloadIntegrityIssue { relative, "is missing" });
+            continue;
+        }
+        if (stamp->size != expected.size) {
+            issues.push_back(PayloadIntegrityIssue { relative, std::format("is {} bytes, expected {}", stamp->size, expected.size) });
+            continue;
+        }
+        std::string actual;
+        if (const auto cached = cache.find(path);
+            cached != cache.end() && cached->second.size == stamp->size && cached->second.modified == stamp->modified) {
+            actual = cached->second.sha256;
+        } else {
+            auto computed = file_sha256(path);
+            if (!computed) {
+                issues.push_back(PayloadIntegrityIssue { relative, "could not be read" });
+                continue;
+            }
+            actual = *computed;
+            cache[path] = IntegrityCacheEntry { stamp->size, stamp->modified, actual };
+            cacheChanged = true;
+        }
+        if (actual != expected.sha256) {
+            issues.push_back(PayloadIntegrityIssue { relative, "does not match the payload manifest" });
+        }
+    }
+    if (cacheChanged) write_integrity_cache(cacheFile, cache);
+    return issues;
 }
 
 } // namespace lspmcpp::server

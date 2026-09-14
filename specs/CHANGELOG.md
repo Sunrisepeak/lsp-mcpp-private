@@ -49,6 +49,7 @@ First public draft, derived from the design draft of 2026-09-13.
 - `cxxModules/status` notification; `cxxModules/graph`, `cxxModules/moduleInfo`, `cxxModules/contexts` and `cxxModules/setContext` requests.
 - Module features mapped onto standard LSP messages, with diagnostic codes `unresolved-module`, `ambiguous-module` and `partition-outside-module`.
 - Revision 2026-09-14: `cxxModules/status` gains optional `notices`, facts that reduce no feature; issue code `module-build-failed`.
+- Revision 2026-09-14: a server managing more than one workspace root sends one `cxxModules/status` notification per root, told apart by the already-existing `project.root` (usable plan W9.1).
 
 ## S4 — Semantic Kit
 

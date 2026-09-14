@@ -937,8 +937,8 @@
  ],
  "S2-5-2": [
   {
-   "script": "src/server/session.cpp",
-   "contains": "void schedule_reload_() { reloadAt_ = Clock::now() + std::chrono::milliseconds { 1500 }; }"
+   "script": "src/server/workspace.cpp",
+   "contains": "void schedule_reload() { reloadAt = Clock::now() + std::chrono::milliseconds { 1500 }; }"
   }
  ]
 }

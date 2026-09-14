@@ -52,6 +52,7 @@ struct Options {
     std::optional<double> navigationBudget;   // seconds from initialize to the first navigation that answers; more fails the run
     std::string cacheDirectory;       // the server's cache; empty: a fresh one beside the workspace
     std::string measureFile;          // where the checks' timings are written as JSON
+    bool noDynamicWatch { false };    // usable plan W9.3: do not advertise didChangeWatchedFiles.dynamicRegistration
 };
 
 std::string absolute(std::string_view path) {
@@ -75,14 +76,18 @@ void copy_tree(const std::string& from, const std::string& to) {
 struct Expansion {
     std::string workspace;
     std::string runnerDirectory;
+    std::string payload;   // usable plan W9.4: the --payload this runner itself was given, if any
 };
 
 // "{exe}" is the executable suffix; "{env:NAME|fallback}" is a variable or the fallback;
-// "{workspace}" is the fixture's scratch copy; "{runner-dir}" is where this program lives.
+// "{workspace}" is the fixture's scratch copy; "{runner-dir}" is where this program lives;
+// "{payload}" is the runner's own --payload (usable plan W9.4's payload-corrupt fixture copies
+// and mutates it, then points server-arguments' own --payload at the mutated copy).
 std::string expand(std::string word, const Expansion& expansion = {}) {
     word = base::replace_all(word, "{exe}", lspmcpp::os::EXECUTABLE_SUFFIX);
     word = base::replace_all(word, "{workspace}", expansion.workspace);
     word = base::replace_all(word, "{runner-dir}", expansion.runnerDirectory);
+    word = base::replace_all(word, "{payload}", expansion.payload);
     for (std::size_t at { word.find("{env:") }; at != std::string::npos; at = word.find("{env:", at)) {
         const std::size_t close { word.find('}', at) };
         if (close == std::string::npos) break;
@@ -228,7 +233,10 @@ private:
 public:
     std::map<std::string, Json> diagnostics;     // uri -> latest diagnostics
     std::map<std::string, int> diagnosticsCount; // uri -> publishes received
-    Json status;
+    Json status;                                 // the latest cxxModules/status, whichever root sent it
+    // usable plan W9.1: a multi-root session sends one cxxModules/status per root, each naming its
+    // own project.root; `status` alone cannot tell them apart, so every root's latest is kept too.
+    std::map<std::string, Json> statusByRoot;    // project.root (a DocumentUri) -> latest status
     std::vector<std::string> statusHistory;
     std::optional<Clock::time_point> firstReady;         // the first status in state ready
     std::optional<Clock::time_point> firstDiagnostics;   // the first diagnostics published once the server is ready or degraded
@@ -335,6 +343,7 @@ public:
                 if (!firstDiagnostics && (state == "ready" || state == "degraded")) firstDiagnostics = Clock::now();
             } else if (method == "cxxModules/status") {
                 status = message["params"];
+                statusByRoot[status.value("project", Json::object()).value("root", std::string {})] = status;
                 statusHistory.push_back(status.value("state", std::string {}));
                 if (!firstReady && statusHistory.back() == "ready") firstReady = Clock::now();
                 if (verbose_) say("  status: {}", lsp::dump(status));
@@ -475,18 +484,42 @@ public:
         // A check may bring its own unsaved buffer.
         if (auto text = check.find("text"); text != check.end()) open(file, text->get<std::string>());
         if (kind == "status") {
+            // usable plan W9.1: "folder" selects one root's own status in a multi-root fixture
+            // (relative to the fixture root, like a check's own "file"); absent, this checks
+            // whatever cxxModules/status arrived most recently, the way a single-root fixture,
+            // which only ever gets the one root's, always has.
+            const auto folder = check.find("folder");
+            const std::string rootUri { folder != check.end() ? uri(folder->get<std::string>()) : std::string {} };
+            auto current = [&]() -> Json {
+                if (rootUri.empty()) return client_.status;
+                const auto it = client_.statusByRoot.find(rootUri);
+                return it == client_.statusByRoot.end() ? Json {} : it->second;
+            };
+            // usable plan W9.4: error is as settled a state as ready or degraded (a corrupt
+            // payload, for instance, does not become anything else once reported).
             const bool ok { client_.wait_for([&] {
-                const std::string state { state_of(client_.status) };
-                return state == "ready" || state == "degraded";
+                const std::string state { state_of(current()) };
+                return state == "ready" || state == "degraded" || state == "error";
             }, timeout_) };
-            std::string detail { lsp::dump(client_.status) };
+            const Json snapshot = current();   // `Json x { y }` would wrap y in a one-element array; `=` copies it
+            std::string detail { lsp::dump(snapshot) };
             bool matches { ok };
-            if (auto source = check.find("source"); source != check.end()) matches = matches && client_.status["project"].value("source", std::string {}) == source->get<std::string>();
-            if (auto profile = check.find("profile-kind"); profile != check.end()) matches = matches && client_.status["profile"].value("kind", std::string {}) == profile->get<std::string>();
-            if (auto state = check.find("state"); state != check.end()) matches = matches && state_of(client_.status) == state->get<std::string>();
-            if (auto level = check.find("level"); level != check.end()) matches = matches && client_.status["project"].value("level", 0) == level->get<int>();
+            if (auto source = check.find("source"); source != check.end()) {
+                matches = matches && snapshot.value("project", Json::object()).value("source", std::string {}) == source->get<std::string>();
+            }
+            if (auto profile = check.find("profile-kind"); profile != check.end()) {
+                matches = matches && snapshot.value("profile", Json::object()).value("kind", std::string {}) == profile->get<std::string>();
+            }
+            if (auto state = check.find("state"); state != check.end()) matches = matches && state_of(snapshot) == state->get<std::string>();
+            if (auto level = check.find("level"); level != check.end()) {
+                matches = matches && snapshot.value("project", Json::object()).value("level", 0) == level->get<int>();
+            }
+            if (auto issueCode = check.find("issue-code"); issueCode != check.end()) {
+                matches = matches && std::ranges::any_of(snapshot.value("issues", Json::array()),
+                    [&](const Json& issue) { return issue.value("code", std::string {}) == issueCode->get<std::string>(); });
+            }
             if (auto compiler = check.find("profile-compiler"); compiler != check.end()) {
-                matches = matches && client_.status["profile"].value("compiler", std::string {}).starts_with(compiler->get<std::string>());
+                matches = matches && snapshot.value("profile", Json::object()).value("compiler", std::string {}).starts_with(compiler->get<std::string>());
             }
             return { matches, detail };
         }
@@ -529,6 +562,16 @@ public:
         if (kind == "open") {
             open(file);
             return { true, file };
+        }
+        if (kind == "write-file") {
+            // usable plan W9.3: writes a file directly, the way an editor's own file system watcher
+            // (or, without one, this server's own polling fallback) would notice it, without the
+            // runner opening it as a document. `content` defaults to a fresh module interface.
+            const std::string content { check.value("content", std::format("export module {};\n", check.value("module", std::string { "probe" }))) };
+            const std::string path { base::join_path(workspace_, file) };
+            (void)fs::create_directories(base::parent_path(path));
+            const auto written = fs::write_file(path, content);
+            return { written.has_value(), written ? file : written.error().message };
         }
         if (kind == "diagnostics-empty") {
             open(file);
@@ -634,14 +677,31 @@ public:
                 });
             return { ok, lsp::dump(result).substr(0, 160) };
         }
-        if (kind == "module-graph-contains") {
+        if (kind == "set-context") {
+            // usable plan W9.2: cxxModules/setContext (S3 5.4), then a hover that should have
+            // changed once the engine reloads under the new context's arguments.
+            open(file);
+            const std::string context { check.value("context", std::string {}) };
+            auto set = client_.request("cxxModules/setContext",
+                Json { { "textDocument", Json { { "uri", uri(file) } } }, { "context", context } }, timeout_);
+            if (!set) return { false, std::format("no response to setContext({})", context) };
             const std::string expected { check.value("expect", std::string {}) };
-            auto result = client_.request("cxxModules/graph", Json::object(), timeout_);
-            bool ok { false };
-            if (result && result->is_object()) {
-                for (const auto& module : result->value("modules", Json::array())) ok = ok || module.value("name", std::string {}) == expected;
-            }
-            return { ok, result ? lsp::dump(*result).substr(0, 160) : std::string { "no response" } };
+            auto [ok, result] = retry("textDocument/hover",
+                [&] { return Json { { "textDocument", Json { { "uri", uri(file) } } }, { "position", position(check.at("at")) } }; },
+                [&](const Json& value) { return hover_text(value).find(expected) != std::string::npos; });
+            std::string text { hover_text(result) };
+            return { ok, text.substr(0, std::min<std::size_t>(text.size(), 160)) };
+        }
+        if (kind == "module-graph-contains") {
+            // Retries within the check's own timeout (a check's "timeout" field, e.g. usable plan
+            // W9.3's watch-polling fixture, bounds how long a change may take to reach the graph).
+            const std::string expected { check.value("expect", std::string {}) };
+            auto [ok, result] = retry("cxxModules/graph", [] { return Json::object(); }, [&](const Json& value) {
+                if (!value.is_object()) return false;
+                return std::ranges::any_of(value.value("modules", Json::array()),
+                    [&](const Json& module) { return module.value("name", std::string {}) == expected; });
+            });
+            return { ok, result.is_object() ? lsp::dump(result).substr(0, 160) : std::string { "no response" } };
         }
         return { false, std::format("unknown check kind {}", kind) };
     }
@@ -675,7 +735,7 @@ int run(const Options& options) {
     }
     say("fixture {} in {}{}", name, workspace, alreadyPrepared ? " (prepared before)" : "");
 
-    Expansion expansion { workspace, base::parent_path(absolute(lspmcpp::platform::env::arguments().front())) };
+    Expansion expansion { workspace, base::parent_path(absolute(lspmcpp::platform::env::arguments().front())), options.payload };
     std::optional<std::vector<std::string>> prepareEnvironment;
     if (scenario.value("prepare-environment", std::string {}) == "msvc") {
         if (options.msvcEnvironment.empty()) {
@@ -713,11 +773,25 @@ int run(const Options& options) {
                                  { "documentSymbol", Json { { "hierarchicalDocumentSymbolSupport", true } } },
                                  { "completion", Json { { "completionItem", Json { { "snippetSupport", false } } } } },
                                  { "publishDiagnostics", Json { { "relatedInformation", true } } } } },
-        { "workspace", Json { { "didChangeWatchedFiles", Json { { "dynamicRegistration", true } } }, { "configuration", true } } },
+        // usable plan W9.3: --no-dynamic-watch exercises the polling fallback the same way a
+        // client with no didChangeWatchedFiles support would.
+        { "workspace", Json { { "didChangeWatchedFiles", Json { { "dynamicRegistration", !options.noDynamicWatch } } }, { "configuration", true } } },
         { "experimental", Json { { "cxxModules", Json { { "version", 1 }, { "status", true }, { "graph", true }, { "contexts", true } } } } },
     };
+    // usable plan W9.1: a fixture with several roots names them, relative to the fixture's own
+    // root, in "folders"; a check names a file or a folder the same way, relative to that root,
+    // regardless of how many workspace folders the fixture actually declares.
+    Json workspaceFolders = Json::array();
+    if (const auto folders = scenario.find("folders"); folders != scenario.end() && folders->is_array() && !folders->empty()) {
+        for (const auto& folder : *folders) {
+            const std::string relative { folder.get<std::string>() };
+            workspaceFolders.push_back(Json { { "uri", base::path_to_uri(base::join_path(workspace, relative)) }, { "name", relative } });
+        }
+    } else {
+        workspaceFolders.push_back(Json { { "uri", base::path_to_uri(workspace) }, { "name", name } });
+    }
     auto initialized = client.request("initialize", Json { { "processId", nullptr }, { "rootUri", base::path_to_uri(workspace) },
-        { "workspaceFolders", Json::array({ Json { { "uri", base::path_to_uri(workspace) }, { "name", name } } }) },
+        { "workspaceFolders", workspaceFolders },
         { "capabilities", capabilities } }, std::chrono::seconds { 120 });
     if (!initialized || !initialized->is_object()) {
         say("FAIL initialize: no result");
@@ -807,6 +881,7 @@ int main(int argc, char* argv[]) {
     (void)runCommand.option("measure").takes_value().help("File the checks' timings are written to, as JSON");
     (void)runCommand.option("expect-warm").help("module-cache-reused checks fail unless an earlier run left module files in --cache-dir");
     (void)runCommand.option("navigation-budget").takes_value().help("Seconds the first navigation may take from initialize; more fails the run");
+    (void)runCommand.option("no-dynamic-watch").help("Do not advertise didChangeWatchedFiles.dynamicRegistration, exercising the polling fallback");
     (void)runCommand.action([&](const cmdline::ParsedArgs& args) {
         Options options;
         options.server = absolute(args.value("server").value_or(""));
@@ -822,6 +897,7 @@ int main(int argc, char* argv[]) {
         options.cacheDirectory = args.value("cache-dir") ? absolute(*args.value("cache-dir")) : std::string {};
         options.measureFile = args.value("measure") ? absolute(*args.value("measure")) : std::string {};
         options.expectWarm = args.is_flag_set("expect-warm");
+        options.noDynamicWatch = args.is_flag_set("no-dynamic-watch");
         if (auto budget = args.value("navigation-budget")) {
             try {
                 options.navigationBudget = std::stod(*budget);

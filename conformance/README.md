@@ -45,8 +45,12 @@ checks fail at once with that reason instead of each waiting out its timeout.
 | `self-lsp-mcpp` | This repository at a fixed commit: `std` from the openkal-llvm-runtime package, read from mcpp's std build record (nightly, W8) |
 | `self-mcpp` | The mcpp repository at a fixed commit, about 170 modules (nightly, W8) |
 | `timing` | Startup timing (usable plan W7): the `inferred` project opened and navigated at once; run cold, then warm with the same workspace and cache |
+| `s1-two-sets` | A workspace carrying its own S1 build database (`--database`, usable plan W9.2): two sets compile the same file under `-DVARIANT=1` and `-DVARIANT=2`; `cxxModules/setContext` switches which one answers |
+| `watch-polling` | Run with `--no-dynamic-watch` (usable plan W9.3): a new module interface written straight into the workspace must still reach the module graph within seconds, through the polling fallback rather than a client-driven `workspace/didChangeWatchedFiles` |
+| `payload-corrupt` | Its `prepare` step copies the payload the runner was given and truncates clangd in the copy (usable plan W9.4); `server-arguments` then points `--payload` at that broken copy, and status must reach `error` with issue `payload-corrupt` |
+| `multi-root` | Two workspace folders (usable plan W9.1): an `inferred` root and an mcpp-built `mcpp-llvm` root, each getting its own project model and clangd, each `cxxModules/status` telling them apart by `project.root` |
 
-On Windows every server runs without a developer environment, as it does when an editor starts it. Fixtures whose own build needs one declare `"prepare-environment": "msvc"`, and the runner is given the environment with `--msvc-env FILE` (`NAME=value` lines, the output of `set` after `vcvars64.bat`); only the prepare steps see it.
+On Windows every server runs without a developer environment, as it does when an editor starts it. Fixtures whose own build needs one declare `"prepare-environment": "msvc"`, and the runner is given the environment with `--msvc-env FILE` (`NAME=value` lines, the output of `set` after `vcvars64.bat`); only the prepare steps see it. `--no-dynamic-watch` makes the runner declare no `workspace.didChangeWatchedFiles.dynamicRegistration` support at all, the way an editor without it would, exercising the server's own polling fallback (usable plan W9.3) instead of dynamic registration.
 
 ## Startup timing
 
@@ -82,15 +86,27 @@ CI runs the pair on every host with budgets of 15 and 5 seconds and uploads the 
 ```
 
 In `prepare` and `server-arguments`, `{exe}` expands to the platform executable suffix,
-`{env:NAME|fallback}` to an environment variable, `{workspace}` to the fixture's scratch copy and
-`{runner-dir}` to the directory of the runner executable. Positions are `[line, character]`,
-zero-based, UTF-16. A check with `"text"` opens its file with that unsaved content;
-a check with `"optional": true` reports `SKIP` instead of failing, and `"timeout": SECONDS`
-waits less than the run's `--timeout`.
+`{env:NAME|fallback}` to an environment variable, `{workspace}` to the fixture's scratch copy,
+`{runner-dir}` to the directory of the runner executable, and `{payload}` to the runner's own
+`--payload` directory (usable plan W9.4: a fixture's `prepare` step can copy and mutate it, then
+point `server-arguments`' own `--payload` at the mutated copy — a later `--payload` wins). Positions
+are `[line, character]`, zero-based, UTF-16. A check with `"text"` opens its file with that unsaved
+content; a check with `"optional": true` reports `SKIP` instead of failing, and `"timeout": SECONDS`
+waits less than the run's `--timeout`. `"file"` and `"folder"` on a check, like every other path a
+scenario names, are relative to the fixture's own root, never to a specific workspace folder.
+
+A fixture with more than one workspace folder (usable plan W9.1) names them, relative to its own
+root, in a top-level `"folders"` array; without one, the fixture's root is the only folder, as it
+always has been.
+
+```json
+{ "name": "multi-root", "folders": ["inferred", "mcpp-llvm"], "checks": [
+  { "id": "S1", "kind": "status", "folder": "mcpp-llvm", "state": "ready" } ] }
+```
 
 | Kind | Passes when |
 |---|---|
-| `status` | `cxxModules/status` reaches `ready` or `degraded` and matches `source`, `profile-kind`, `state`, `level` when given, and a `profile-compiler` prefix |
+| `status` | `cxxModules/status` reaches `ready`, `degraded` or `error` and matches `source`, `profile-kind`, `state`, `level`, `issue-code` when given, and a `profile-compiler` prefix; `"folder"` picks one root's own status in a multi-root fixture (usable plan W9.1), absent picks whichever root's arrived most recently |
 | `workspace-unchanged` | no file under the workspace was added, changed or removed after the prepare steps |
 | `module-cache-reused` | every file clangd published for `module` (default `std`) before the server started is still there unchanged, and none was added (SC4); passes on a cold start unless `--expect-warm` |
 | `diagnostics-empty` | the file's diagnostics, after the engine has published them, contain no errors |
@@ -101,7 +117,9 @@ waits less than the run's `--timeout`.
 | `completion-contains` | a completion label starts with `expect`; `insert: [line, text]` adds a line first, `edit` changes another open buffer without saving it |
 | `references-span` | the references include every path in `expect` |
 | `document-symbol-contains` | the outline has a top-level symbol named `expect` |
-| `module-graph-contains` | `cxxModules/graph` lists module `expect` |
+| `module-graph-contains` | `cxxModules/graph` lists module `expect`; retries within the check's own timeout, so it doubles as "a change reaches the graph within N seconds" (usable plan W9.3's `watch-polling`) |
+| `set-context` | sends `cxxModules/setContext` with `"context"` (usable plan W9.2), then a hover at `"at"` contains `expect`, retried the same way as `hover-contains` |
+| `write-file` | writes `"content"` (default: a fresh `export module <module>;`) to `"file"` directly, the way a file system watcher — or, without one, the server's own polling fallback — would notice it, without the runner opening it as a document (usable plan W9.3) |
 
 The check identifiers C1–C9 follow experiment E6 in
 `.agents/docs/2026-09-13-cxx-modules-lsp-experiments.md`; M-checks cover the

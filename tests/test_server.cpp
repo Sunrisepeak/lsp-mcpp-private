@@ -2,11 +2,19 @@
 import std;
 import nlohmann.json;
 import lspmcpp.testing;
+import lspmcpp.base.error;
+import lspmcpp.base.path;
+import lspmcpp.base.sha256;
 import lspmcpp.base.text;
 import lspmcpp.base.uri;
+import lspmcpp.platform.fs;
+import lspmcpp.platform.dirs;
 import lspmcpp.index.modules;
 import lspmcpp.server.documents;
 import lspmcpp.server.router;
+import lspmcpp.server.payload;
+import lspmcpp.server.workspace;
+import lspmcpp.engine;
 import lspmcpp.engine.clangd;
 import lspmcpp.server.primer;
 
@@ -14,8 +22,44 @@ using Json = nlohmann::json;
 using lspmcpp::base::Position;
 namespace idx = lspmcpp::index;
 namespace srv = lspmcpp::server;
+namespace eng = lspmcpp::engine;
 
 namespace {
+
+// usable plan W9.5: a fake that satisfies the lspmcpp.engine interface without a clangd process,
+// recording what the session (or anything else coded only against the interface) does to it.
+class FakeEngine : public eng::Engine {
+public:
+    int starts { 0 };
+    bool running_ { false };
+    eng::EngineConfig lastConfig;
+    std::vector<std::string> pushedDatabases;
+    std::vector<Json> sent;
+    eng::EngineCapabilities capabilitiesToReport;
+    MessageHandler onMessage;
+    ClosedHandler onClosed;
+
+    lspmcpp::base::Result<void> start(const eng::EngineConfig& config, MessageHandler message, ClosedHandler closed, LogHandler) override {
+        ++starts;
+        running_ = true;
+        lastConfig = config;
+        onMessage = std::move(message);
+        onClosed = std::move(closed);
+        return {};
+    }
+    lspmcpp::base::Result<void> push_database(std::string_view compileCommandsJson) override {
+        pushedDatabases.emplace_back(compileCommandsJson);
+        return {};
+    }
+    lspmcpp::base::Result<void> send(const Json& message) override {
+        sent.push_back(message);
+        return {};
+    }
+    void stop(std::chrono::milliseconds) override { running_ = false; }
+    bool running() const override { return running_; }
+    const eng::EngineConfig& config() const override { return lastConfig; }
+    eng::EngineCapabilities capabilities() const override { return capabilitiesToReport; }
+};
 
 idx::ModuleIndex fixture_index() {
     idx::ModuleIndex index;
@@ -243,6 +287,162 @@ int main() {
         const auto next = primer.start_ready();
         expect(fatal(next.size() == 1u));
         expect(next.front()->name == "z-root") << next.front()->name;
+    };
+
+    "the clangd capability table is keyed by version"_test = [] {
+        const auto pinned = lspmcpp::engine::capabilities_for_clangd_version("23.1.0");
+        expect(pinned.experimentalModulesSupport && pinned.useDirtyHeaders && pinned.persistentModuleCache && pinned.msvcStlNeedsNoAlignedAllocation);
+        const auto other = lspmcpp::engine::capabilities_for_clangd_version("22.1.8");
+        expect(!other.experimentalModulesSupport && !other.useDirtyHeaders && !other.persistentModuleCache && !other.msvcStlNeedsNoAlignedAllocation)
+            << "an unrecognized version assumes none of the optional behaviour, not the pinned one's";
+    };
+
+    "a fake engine satisfies the lspmcpp.engine interface with no clangd process"_test = [] {
+        // usable plan W9.5: anything coded only against eng::Engine (the session, and this test)
+        // works the same with this fake as with lspmcpp.engine.clangd::Clangd.
+        FakeEngine fake;
+        expect(!fake.running());
+        eng::EngineConfig config;
+        config.executable = "/payload/clangd/bin/clangd";
+        config.version = "23.1.0";
+        config.databaseDirectory = "/cache/contexts/default/cdb";
+        bool closed { false };
+        std::vector<Json> received;
+        const auto started = fake.start(
+            config, [&](Json message) { received.push_back(std::move(message)); }, [&] { closed = true; }, [](std::string_view) {});
+        expect(started.has_value() && fake.running() && fake.starts == 1);
+        expect(fake.config().version == "23.1.0" && fake.config().databaseDirectory == "/cache/contexts/default/cdb");
+        expect(fake.capabilities().experimentalModulesSupport == false) << "a fresh fake reports no capability until the test sets one";
+        fake.capabilitiesToReport = eng::capabilities_for_clangd_version("23.1.0");
+        expect(fake.capabilities().useDirtyHeaders);
+
+        expect(fake.push_database("[]").has_value());
+        expect(fake.pushedDatabases == std::vector<std::string> { "[]" });
+        expect(fake.send(Json { { "method", "initialized" } }).has_value());
+        expect(fake.sent.size() == 1u && fake.sent.front()["method"] == "initialized");
+
+        // The handlers given to start() work like a real connection's: the "engine" can call back in.
+        fake.onMessage(Json { { "method", "textDocument/publishDiagnostics" } });
+        expect(received.size() == 1u && received.front()["method"] == "textDocument/publishDiagnostics");
+        fake.onClosed();
+        expect(closed);
+
+        fake.stop(std::chrono::milliseconds { 0 });
+        expect(!fake.running());
+    };
+
+    "payload integrity checks size and sha256, and caches the hash"_test = [] {
+        // usable plan W9.4.
+        namespace fs = lspmcpp::platform::fs;
+        const std::string root { lspmcpp::base::join_path(lspmcpp::platform::dirs::temp_directory(),
+            std::format("lsp-mcpp-test-payload-{}", std::chrono::steady_clock::now().time_since_epoch().count())) };
+        (void)fs::create_directories(root);
+        const std::string clangdPath { lspmcpp::base::join_path(root, "clangd") };
+        const std::string kitJsonPath { lspmcpp::base::join_path(root, "kit.json") };
+        const std::string content { "pretend-clangd-bytes" };
+        const std::string kitContent { "{\"name\":\"k\"}" };
+        (void)fs::write_file(clangdPath, content);
+        (void)fs::write_file(kitJsonPath, kitContent);
+        const std::string cacheFile { lspmcpp::base::join_path(root, "cache.json") };
+
+        srv::PayloadPaths payload;
+        payload.directory = root;
+        payload.files.emplace("clangd", srv::PayloadFileIntegrity { content.size(), lspmcpp::base::sha256_hex(content) });
+        payload.files.emplace("kit.json", srv::PayloadFileIntegrity { kitContent.size(), lspmcpp::base::sha256_hex(kitContent) });
+
+        expect(srv::verify_payload_integrity(payload, cacheFile).empty()) << "both files match their manifest entry";
+        expect(fs::is_regular_file(cacheFile)) << "a hash was computed and cached";
+
+        // A no-op payload.files: nothing to check, regardless of what is on disk.
+        srv::PayloadPaths empty;
+        empty.directory = root;
+        expect(srv::verify_payload_integrity(empty, cacheFile).empty());
+
+        // Truncated: the size check alone catches it, no need to hash.
+        srv::PayloadPaths truncated { payload };
+        truncated.files.at("clangd").size = content.size() + 1;
+        {
+            const auto issues = srv::verify_payload_integrity(truncated, cacheFile);
+            expect(fatal(issues.size() == 1u));
+            expect(issues.front().path == "clangd" && issues.front().reason.find("expected") != std::string::npos) << issues.front().reason;
+        }
+
+        // Same size, wrong sha256 (a manifest that does not describe this file).
+        srv::PayloadPaths wrongHash { payload };
+        wrongHash.files.at("clangd").sha256 = std::string(64, '0');
+        {
+            const auto issues = srv::verify_payload_integrity(wrongHash, cacheFile);
+            expect(fatal(issues.size() == 1u));
+            expect(issues.front().path == "clangd");
+        }
+
+        // Missing entirely.
+        srv::PayloadPaths missing { payload };
+        missing.files.emplace("nonexistent", srv::PayloadFileIntegrity { 1, "x" });
+        {
+            const auto issues = srv::verify_payload_integrity(missing, cacheFile);
+            expect(fatal(issues.size() == 1u));
+            expect(issues.front().path == "nonexistent" && issues.front().reason == "is missing");
+        }
+
+        // The cache is trusted while size and modification time have not changed: tampering the
+        // cached hash for an unmodified file (same stamp) changes the verdict, proving the second
+        // call reused it instead of re-hashing the untouched file.
+        expect(srv::verify_payload_integrity(payload, cacheFile).empty());
+        auto tampered = fs::read_file(cacheFile);
+        expect(fatal(tampered.has_value()));
+        Json cacheJson = Json::parse(*tampered);
+        cacheJson[clangdPath]["sha256"] = std::string(64, 'f');
+        (void)fs::write_file(cacheFile, cacheJson.dump());
+        {
+            const auto issues = srv::verify_payload_integrity(payload, cacheFile);
+            expect(fatal(issues.size() == 1u)) << "the tampered cache entry was trusted, not recomputed";
+            expect(issues.front().path == "clangd");
+        }
+
+        fs::remove_all(root);
+    };
+
+    "engine request keys round-trip and tell roots apart"_test = [] {
+        // usable plan W9.1: the session parses this back out of a client response's id to find
+        // which root's engine to forward it to, and to discard a stale generation.
+        // `Json id { 42 }` would wrap the plain integer in a one-element array; `=` keeps it a
+        // scalar, matching the plain integer ids clangd itself sends.
+        const Json id = 42;
+        const std::string key { srv::make_engine_request_key("/work/root-a", 3, id) };
+        std::string rootKey;
+        int generation { 0 };
+        Json parsedId;
+        expect(srv::parse_engine_request_key(key, rootKey, generation, parsedId));
+        expect(rootKey == "/work/root-a" && generation == 3 && parsedId == id);
+
+        // A different root or generation makes a different key, so the session's lookup cannot
+        // confuse one root's in-flight request with another's, or an old engine with the current one.
+        expect(srv::make_engine_request_key("/work/root-b", 3, id) != key);
+        expect(srv::make_engine_request_key("/work/root-a", 4, id) != key);
+
+        // Not a value this function ever produced: parsed as not-a-key rather than misread.
+        expect(!srv::parse_engine_request_key("not-a-key", rootKey, generation, parsedId));
+        expect(!srv::parse_engine_request_key("e:onlyonecolon", rootKey, generation, parsedId));
+
+        // A string id, and a root key that itself contains ':' (every Windows path does, right
+        // after its drive letter): the root key is length-prefixed rather than split on ':', so it
+        // round-trips exactly regardless of what it contains.
+        // `Json("s:5")` (parentheses): `Json { "s:5" }` would, like the integer above, wrap the
+        // string in a one-element array instead of holding it as the one string value.
+        const Json stringId("s:5");
+        const std::string key2 { srv::make_engine_request_key("/work/a:b", 1, stringId) };
+        expect(srv::parse_engine_request_key(key2, rootKey, generation, parsedId));
+        expect(rootKey == "/work/a:b" && generation == 1 && parsedId == stringId);
+    };
+
+    "build files, interactive methods and state names"_test = [] {
+        expect(srv::is_build_file("mcpp.toml") && srv::is_build_file("CMakeLists.txt") && srv::is_build_file("x.cmake"));
+        expect(!srv::is_build_file("main.cpp") && !srv::is_build_file("greet.cppm"));
+        expect(srv::is_interactive("textDocument/hover") && srv::is_interactive("textDocument/definition"));
+        expect(!srv::is_interactive("textDocument/didOpen") && !srv::is_interactive("workspace/symbol"));
+        expect(srv::to_string(srv::State::ready) == "ready" && srv::to_string(srv::State::error) == "error");
+        expect(srv::to_string(srv::State::degraded) == "degraded" && srv::to_string(srv::State::preparing) == "preparing");
     };
 
     return report();

@@ -392,6 +392,66 @@ int main() {
         expect(!contains(arguments, "-DFROM_ARGUMENTS") && !contains(arguments, "-std=c++20"));
     };
 
+    "a kit plan excludes std when the macOS SDK is missing"_test = [] {
+        // usable plan W5.4 / experiment E15: without the SDK a kit that needs it cannot build std;
+        // the importing unit leaves the engine database with an sdk-missing issue instead of being
+        // sent to clangd, where it would never answer. A unit that does not need std is unaffected.
+        s::Database database;
+        s::Set set;
+        set.name = "inferred";
+        auto unit = [](std::string source, std::vector<std::string> arguments) {
+            s::TranslationUnit value;
+            value.source = std::move(source);
+            value.workDirectory = "/w";
+            value.arguments = std::move(arguments);
+            return value;
+        };
+        set.units.push_back(unit("/w/uses-std.cpp", { "clang++", "-std=c++23", "-c", "/w/uses-std.cpp" }));
+        set.units.push_back(unit("/w/plain.cpp", { "clang++", "-std=c++23", "-c", "/w/plain.cpp" }));
+        database.sets.push_back(set);
+        s::Kit kit;
+        kit.target = "arm64-apple-macos11";
+        kit.moduleMetadata = "/kit/lib/libc++.modules.json";
+        kit.systemIncludeDirectories = { "/kit/include/c++/v1" };
+        kit.requirements = { "macos-sdk" };
+        const std::map<std::string, std::string> sources {
+            { "/w/uses-std.cpp", "import std;\nint main() {}\n" },
+            { "/w/plain.cpp", "int f() { return 0; }\n" },
+        };
+        n::PlanInput input;
+        input.database = &database;
+        input.kit = &kit;
+        input.macosSdk.clear();   // not found: this test does not need a macOS machine to prove it
+        input.engineDriverDirectory = "/payload/clangd/bin";
+        input.scanner = [&](std::string_view path) {
+            const auto it = sources.find(std::string { path });
+            return it == sources.end() ? p::ScanResult {} : p::scan_source(it->second);
+        };
+        input.metadataReader = [](std::string_view) {
+            return std::vector<s::ModuleEntry> { { "std", "/kit/share/libc++/v1/std.cppm", true, { "/kit/share/libc++/v1" }, {} } };
+        };
+        const auto plan = n::plan_engine(input);
+        std::set<std::string> files;
+        for (const auto& entry : plan.entries) files.insert(entry.file);
+        expect(!files.contains("/w/uses-std.cpp")) << "left out: it cannot build without the SDK";
+        expect(files.contains("/w/plain.cpp")) << "unaffected: it does not need std";
+        expect(plan.excludedFiles.size() == 1u && plan.excludedFiles.front() == "/w/uses-std.cpp");
+        expect(plan.stdUnits == 0u) << "std itself is not injected: nothing would import it successfully";
+        const auto has_issue = [&](std::string_view code) {
+            return std::ranges::any_of(plan.issues, [&](const n::PlanIssue& issue) { return issue.code == code; });
+        };
+        expect(has_issue("sdk-missing"));
+
+        // Once the SDK is available, the same workspace builds std normally.
+        input.macosSdk = "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk";
+        const auto withSdk = n::plan_engine(input);
+        std::set<std::string> filesWithSdk;
+        for (const auto& entry : withSdk.entries) filesWithSdk.insert(entry.file);
+        expect(filesWithSdk.contains("/w/uses-std.cpp") && filesWithSdk.contains("/w/plain.cpp"));
+        expect(withSdk.stdUnits == 1u);
+        expect(std::ranges::none_of(withSdk.issues, [](const n::PlanIssue& issue) { return issue.code == "sdk-missing"; }));
+    };
+
     "prime units and module hints"_test = [] {
         const std::map<std::string, std::string> sources {
             { "/p/src/main.cpp", "import std;\nimport app;\nint main() {}\n" },
