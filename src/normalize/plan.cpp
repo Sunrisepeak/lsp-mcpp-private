@@ -188,11 +188,24 @@ EnginePlan plan_engine(const PlanInput& input) {
         plan.issues.push_back(PlanIssue { "ambiguous-module", std::format("module {} has {} providers; using {}", name, indices.size(),
             base::file_name(candidates[indices.front()].source)), candidates[indices[1]].source, name });
     }
+    // usable plan W5.4: a semantic kit that requires the macOS SDK cannot build std without
+    // one. Rather than send such a unit to clangd and wait out a request that never answers
+    // (experiment E15), it leaves the engine database now, the same way a module clangd
+    // reported it could not build does (step 3 above reuses that mechanism too).
+    const bool sdkBlocksStd { input.kit != nullptr && spec::requires_macos_sdk(*input.kit) && input.macosSdk.empty() };
     bool anyStd { false };
     std::set<std::string> reported;
     for (std::size_t i { 0 }; i < candidates.size(); ++i) {
         for (const auto& name : candidates[i].required) {
             if (is_std_module(name)) anyStd = true;
+            if (sdkBlocksStd && candidates[i].usesKit && is_std_module(name)) {
+                excluded[i] = true;
+                if (reported.insert("sdk-missing\n" + name).second) {
+                    plan.issues.push_back(PlanIssue { "sdk-missing",
+                        "the macOS SDK was not found; files that import the standard library cannot be built", candidates[i].source, name });
+                }
+                continue;
+            }
             if (const auto failed = input.failedModules.find(name); failed != input.failedModules.end()) {
                 excluded[i] = true;
                 if (reported.insert(candidates[i].source + "\n" + name).second) {
@@ -293,7 +306,9 @@ EnginePlan plan_engine(const PlanInput& input) {
     }
 
     // 5. Standard library units, once for the context, with the arguments of a representative unit.
-    if (anyStd && templateIndex && !stdEntries.empty()) {
+    //    Skipped when the SDK that a kit's std needs is missing (above): the units are excluded, so
+    //    nothing imports std successfully, and clangd would otherwise still try to background-index it.
+    if (anyStd && templateIndex && !stdEntries.empty() && !(sdkBlocksStd && candidates[*templateIndex].usesKit)) {
         const auto& representative = candidates[*templateIndex];
         std::vector<std::string> base { representative.arguments };
         for (std::size_t k { 0 }; k + 1 < base.size();) {

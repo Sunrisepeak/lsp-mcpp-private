@@ -188,6 +188,7 @@ private:
     std::optional<Clock::time_point> replanAt_;
     std::optional<Clock::time_point> restartAt_;
     std::optional<Clock::time_point> loadGiveUpAt_;
+    std::optional<Clock::time_point> sdkCheckAt_;   // usable plan W5.4: re-checks a missing macOS SDK
 
     State lastState_ { State::starting };
     std::string lastStatus_;
@@ -344,6 +345,7 @@ private:
         consider(replanAt_);
         consider(restartAt_);
         consider(loadGiveUpAt_);
+        consider(sdkCheckAt_);
         for (const auto& [module, at] : primeDeadlines_) consider(at);
         return deadline;
     }
@@ -475,7 +477,12 @@ private:
         if (kitEnabled_ && !payload_.kit.empty()) {
             if (auto kit = spec::load_kit(payload_.kit)) {
                 kit_ = std::move(*kit);
-                if (spec::requires_macos_sdk(*kit_)) macosSdk_ = macos_sdk_path();
+                if (spec::requires_macos_sdk(*kit_)) {
+                    macosSdk_ = macos_sdk_path();
+                    // usable plan W5.4 / U7: keep looking every 30s so installing the Command Line
+                    // Tools while the server runs is picked up without a restart.
+                    if (macosSdk_.empty()) sdkCheckAt_ = Clock::now() + std::chrono::seconds { 30 };
+                }
                 log::info("semantic kit {} at {}", kit_->name, kit_->root);
             } else {
                 log::warning("semantic kit unusable: {}", kit.error().message);
@@ -1337,6 +1344,8 @@ private:
         if (!model_) return loading_ ? State::loading : State::starting;
         if (loading_) return State::loading;
         if ((!awaitingDiagnostics_.empty() || primer_.busy()) && engineAccepting_) return State::preparing;
+        // usable plan W5.4: degraded regardless of whether any open file happens to need std yet.
+        if (kit_ && spec::requires_macos_sdk(*kit_) && macosSdk_.empty()) return State::degraded;
         if (!engineIssues_.empty() || !model_->issues.empty() || !plan_.issues.empty()) return State::degraded;
         return State::ready;
     }
@@ -1349,10 +1358,10 @@ private:
             return;
         }
         Json issues = Json::array();
-        auto add = [&](std::string_view code, std::string_view message, std::string_view command) {
+        auto add = [&](std::string_view code, std::string_view message, std::string_view command, std::string_view title = "Fix") {
             if (issues.size() >= 20) return;
             Json issue { { "code", std::string { code } }, { "message", std::string { message } } };
-            if (!command.empty()) issue["command"] = Json { { "title", "Fix" }, { "command", std::string { command } } };
+            if (!command.empty()) issue["command"] = Json { { "title", std::string { title } }, { "command", std::string { command } } };
             issues.push_back(std::move(issue));
         };
         for (const auto& issue : engineIssues_) add(issue.code, issue.message, issue.command);
@@ -1360,10 +1369,14 @@ private:
             for (const auto& issue : model_->issues) add(issue.code, issue.message, "lspMcpp.showLogs");
         }
         for (const auto& issue : plan_.issues) {
+            // sdk-missing is reported once below, workspace-wide, with the fix command (W5.4).
+            if (issue.code == "sdk-missing") continue;
             add(issue.code, std::format("{} ({})", issue.message, base::file_name(issue.file)), "");
         }
         if (!options_.trusted) add("untrusted-workspace", "the workspace is not trusted: build tools and compilers are not run", "");
-        if (kit_ && spec::requires_macos_sdk(*kit_) && macosSdk_.empty()) add("sdk-missing", "the macOS SDK was not found; install the Command Line Tools", "");
+        if (kit_ && spec::requires_macos_sdk(*kit_) && macosSdk_.empty()) {
+            add("sdk-missing", "the macOS SDK was not found; install the Command Line Tools", "lspMcpp.installCommandLineTools", "Install Command Line Tools");
+        }
         Json notices = Json::array();
         if (model_) {
             for (const auto& notice : model_->notices) notices.push_back(Json { { "code", notice.code }, { "message", notice.message } });
@@ -1438,6 +1451,18 @@ private:
         if (restartAt_ && *restartAt_ <= now) {
             restartAt_.reset();
             restart_engine_("recovering from an exit");
+        }
+        if (sdkCheckAt_ && *sdkCheckAt_ <= now) {
+            sdkCheckAt_.reset();
+            if (kit_ && spec::requires_macos_sdk(*kit_) && macosSdk_.empty()) {
+                if (std::string found { macos_sdk_path() }; !found.empty()) {
+                    log::info("the macOS SDK appeared at {}; re-probing and refreshing the model", found);
+                    macosSdk_ = found;
+                    start_model_load_();   // re-probes toolchains and replans; no restart of the server itself
+                } else {
+                    sdkCheckAt_ = now + std::chrono::seconds { 30 };
+                }
+            }
         }
         if (loadGiveUpAt_ && *loadGiveUpAt_ <= now) {
             loadGiveUpAt_.reset();
