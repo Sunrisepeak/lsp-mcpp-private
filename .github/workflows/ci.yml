@@ -177,13 +177,13 @@ jobs:
         include:
           - platform: linux-x64
             os: ubuntu-24.04
-            fixtures: inferred untrusted mcpp-gcc mcpp-llvm mcpp-emit mcpp-emit-package-std mingw cmake-clang
+            fixtures: inferred untrusted mcpp-gcc mcpp-llvm mcpp-emit mcpp-emit-package-std mingw cmake-clang cmake-clang-bdb
           - platform: darwin-arm64
             os: macos-14
             fixtures: inferred untrusted mcpp-llvm
           - platform: win32-x64
             os: windows-2022
-            fixtures: inferred inferred-msvc untrusted mingw cmake-msvc cmake-msvc-std cmake-clangxx-msvc compdb-clangxx-msvc-std compdb-clang-cl-std mcpp-msvc mcpp-llvm-msvc
+            fixtures: inferred inferred-msvc untrusted mingw cmake-msvc cmake-msvc-bdb cmake-msvc-std cmake-clangxx-msvc compdb-clangxx-msvc-std compdb-clang-cl-std mcpp-msvc mcpp-llvm-msvc
     defaults:
       run:
         shell: bash
@@ -195,6 +195,42 @@ jobs:
           set -euo pipefail
           case " ${{ matrix.fixtures }} " in *" mcpp-gcc "*|*" mingw "*) mcpp toolchain install gcc 16.1.0 ;; esac
           if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -q && sudo apt-get install -y -q ninja-build; fi
+      # cmake-clang-bdb and cmake-msvc-bdb need CMake's build-database export,
+      # which only merges correctly from CMake 4.4 on (usable plan W4, E16);
+      # these hosts' own CMake is the 3.31.6 the runner images ship, so a
+      # matching official build is installed just for those two fixtures.
+      # It is deliberately NOT put first on PATH for the whole job: CMake
+      # rotates its experimental-feature UUIDs on its own schedule, and
+      # cmake-msvc-std already pins 3.31.6's CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
+      # UUID as its default, which differs under 4.4 (E1/E7-E11); each
+      # bdb fixture gets CMake 4.4.2 individually below instead.
+      - name: Cache CMake 4.4.2 (cmake-clang-bdb, cmake-msvc-bdb)
+        if: matrix.platform == 'linux-x64' || matrix.platform == 'win32-x64'
+        id: cmake-bdb-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/cmake-4.4.2
+          key: cmake-bdb-4.4.2-${{ runner.os }}
+      - name: Install CMake 4.4.2
+        if: (matrix.platform == 'linux-x64' || matrix.platform == 'win32-x64') && steps.cmake-bdb-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/cmake-4.4.2"
+          if [ "$RUNNER_OS" = Linux ]; then
+            curl -sfL https://github.com/Kitware/CMake/releases/download/v4.4.2/cmake-4.4.2-linux-x86_64.tar.gz -o "$RUNNER_TEMP/cmake-4.4.2.tar.gz"
+            tar -xzf "$RUNNER_TEMP/cmake-4.4.2.tar.gz" -C "$RUNNER_TEMP/cmake-4.4.2" --strip-components 1
+          else
+            curl -sfL https://github.com/Kitware/CMake/releases/download/v4.4.2/cmake-4.4.2-windows-x86_64.zip -o "$RUNNER_TEMP/cmake-4.4.2.zip"
+            # A bash step, so $RUNNER_TEMP (bash-expanded below) rather than
+            # pwsh's own $env:RUNNER_TEMP, which bash would try to expand itself.
+            pwsh -NoProfile -Command "Expand-Archive -Path '$RUNNER_TEMP/cmake-4.4.2.zip' -DestinationPath '$RUNNER_TEMP/cmake-4.4.2-zip' -Force"
+            mv "$RUNNER_TEMP"/cmake-4.4.2-zip/cmake-4.4.2-windows-x86_64/* "$RUNNER_TEMP/cmake-4.4.2/"
+          fi
+      - name: CMake 4.4.2 is there and reports its version
+        if: matrix.platform == 'linux-x64' || matrix.platform == 'win32-x64'
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = Windows ]; then "$RUNNER_TEMP/cmake-4.4.2/bin/cmake.exe" --version; else "$RUNNER_TEMP/cmake-4.4.2/bin/cmake" --version; fi
       # The MSVC fixtures build inside a developer environment; the server under test
       # runs without one, as it does when an editor starts it (usable plan D30).
       - name: The MSVC developer environment, for the fixtures' own builds
@@ -205,6 +241,12 @@ jobs:
           Set-Content -Path "$env:RUNNER_TEMP\capture-msvc.cmd" -Value "@call `"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul`r`n@set"
           cmd /d /c "$env:RUNNER_TEMP\capture-msvc.cmd" | Out-File -Encoding utf8 "$env:RUNNER_TEMP\msvc.env"
           Select-String -Path "$env:RUNNER_TEMP\msvc.env" -Pattern '^(VCToolsInstallDir|WindowsSDKVersion)='
+          # A second snapshot, only for cmake-msvc-bdb: the same developer
+          # environment with CMake 4.4.2 first on PATH, so that fixture's own
+          # prepare steps use it while every other MSVC fixture keeps using
+          # the runner's own CMake untouched.
+          $env:PATH = "$env:RUNNER_TEMP\cmake-4.4.2\bin;$env:PATH"
+          cmd /d /c "$env:RUNNER_TEMP\capture-msvc.cmd" | Out-File -Encoding utf8 "$env:RUNNER_TEMP\msvc-bdb.env"
       - uses: actions/download-artifact@v4
         with:
           name: payload-${{ matrix.platform }}
@@ -218,11 +260,25 @@ jobs:
           export CONFORMANCE_CLANGXX="${CONFORMANCE_CLANGXX/#\~/$HOME}"
           exe=''; extra=()
           if [ "$RUNNER_OS" = Windows ]; then exe='.exe'; extra=(--msvc-env "$RUNNER_TEMP/msvc.env"); fi
+          # cmake-clang-bdb and cmake-msvc-bdb are the only fixtures that need
+          # CMake 4.4.2 (see the steps above): a PATH prefix for the former, a
+          # developer environment captured with it first on PATH for the
+          # latter, so every other fixture keeps using the runner's own CMake.
+          run_fixture() {
+            local fixture="$1"; shift
+            local path_prefix=''
+            local -a fixture_extra=(${extra[@]+"${extra[@]}"})
+            case "$fixture" in
+              cmake-clang-bdb) path_prefix="$RUNNER_TEMP/cmake-4.4.2/bin:" ;;
+              cmake-msvc-bdb) fixture_extra=(--msvc-env "$RUNNER_TEMP/msvc-bdb.env") ;;
+            esac
+            PATH="$path_prefix$PATH" "tools/lsp-mcpp-conformance$exe" run --server "payload/bin/lsp-mcpp$exe" --payload payload \
+                ${fixture_extra[@]+"${fixture_extra[@]}"} --fixture "conformance/fixtures/$fixture" "$@"
+          }
           failed=''
           for fixture in ${{ matrix.fixtures }}; do
             echo "::group::$fixture"
-            if ! "tools/lsp-mcpp-conformance$exe" run --server "payload/bin/lsp-mcpp$exe" --payload payload ${extra[@]+"${extra[@]}"} \
-                   --fixture "conformance/fixtures/$fixture" --timeout 180; then
+            if ! run_fixture "$fixture" --timeout 180; then
               failed="$failed $fixture"
             fi
             echo "::endgroup::"
@@ -231,8 +287,7 @@ jobs:
             echo "::error::failed fixtures:$failed"
             # Rerun the first failure with the server's log, for the record.
             first=${failed# }; first=${first%% *}
-            "tools/lsp-mcpp-conformance$exe" run --server "payload/bin/lsp-mcpp$exe" --payload payload ${extra[@]+"${extra[@]}"} \
-                --fixture "conformance/fixtures/$first" --timeout 60 --verbose 2>&1 | tail -200 || true
+            run_fixture "$first" --timeout 60 --verbose 2>&1 | tail -200 || true
             exit 1
           fi
 
