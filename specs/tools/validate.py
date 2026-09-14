@@ -276,7 +276,22 @@ for md in sorted(root.glob("*.md")):
         check(f"link in {md.name}: {target}", (root / target).exists())
 
 
-# 7. the simulated producer data of conformance fixtures (mcpp-community/mcpp#636) is S1
+# 7. the simulated producer data of conformance fixtures (mcpp-community/mcpp#636) is S1, in the shape mcpp
+#    decided: level 2 (level 3 is the S1 library's), one set per package plus <package>:test and mcpp:std, and
+#    every set seeing every other, since the build resolves imports over one flat module graph
+def mcpp_contract(name, doc):
+    sets = doc["sets"]
+    names = [s["name"] for s in sets]
+    check(f"mcpp {name}: level 2, structured options left to the S1 library",
+          all("options" not in s["ide"] and all("options" not in tu["ide"] for tu in s["translation-units"]) for s in sets))
+    check(f"mcpp {name}: sets are packages, <package>:test and mcpp:std",
+          all(re.fullmatch(r"[^:]+(:test)?|mcpp:std", n) for n in names))
+    check(f"mcpp {name}: every set sees every other set",
+          all(sorted(s["visible-sets"]) == sorted(n for n in names if n != s["name"]) for s in sets))
+    std_sets = {s["name"] for s in sets for tu in s["translation-units"] if {"std", "std.compat"} & set(tu.get("provides", {}))}
+    check(f"mcpp {name}: the standard library modules are units of mcpp:std", std_sets == {"mcpp:std"})
+    check(f"mcpp {name}: <package>:test sets hold tests", all(s["ide"].get("kind") == "test" for s in sets if s["name"].endswith(":test")))
+
 for mock in sorted((repository / "conformance" / "fixtures").glob("*/mcpp-mock.json")):
     data = load(mock)
     if "database" not in data:
@@ -286,7 +301,10 @@ for mock in sorted((repository / "conformance" / "fixtures").glob("*/mcpp-mock.j
     database = json.loads(text)
     validate(f"S1 fixture data validates: {mock.parent.name}", s1, database)
     s1_semantics(mock.parent.name, database)
-    s1_level3(mock.parent.name, database)
+    mcpp_contract(mock.parent.name, database)
+# and so is the database of the S2 example, an mcpp.build-database envelope
+s1_semantics("s2-envelope.json", base_envelope["data"]["database"])
+mcpp_contract("s2-envelope.json", base_envelope["data"]["database"])
 
 # 8. traceability (usable plan W10.2): every requirement keyword carries a rule identifier S<n>-<section>-<ordinal>,
 #    and conformance/traceability.json names evidence for each: a check above, a unit test, a conformance check, a

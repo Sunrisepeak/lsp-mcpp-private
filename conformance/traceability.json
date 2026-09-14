@@ -358,12 +358,15 @@
    "validate": "S1 s1-level3-gcc.json: hello@dev options carry no BMI location arguments"
   },
   {
-   "validate": "S1 mcpp-emit: hello:bin:hello options carry no BMI location arguments"
+   "test": "tests/test_spec_options.cpp: GCC and Clang arguments structure into options; what only a build needs does not"
   }
  ],
  "S1-10-1": [
   {
    "validate": "S1 s1-level2-clang-two-sets.json: app@Debug visible-sets list the complete closure"
+  },
+  {
+   "validate": "mcpp mcpp-emit: every set sees every other set"
   }
  ],
  "S1-10-2": [

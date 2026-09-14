@@ -40,9 +40,12 @@
       },
       "sets": [
         {
-          "name": "hello@dev",
+          "name": "hello",
           "family-name": "hello",
-          "visible-sets": [],
+          "visible-sets": [
+            "hello:test",
+            "mcpp:std"
+          ],
           "baseline-arguments": [
             "-std=c++23",
             "-fmodules",
@@ -52,21 +55,7 @@
           "ide": {
             "toolchain": "gcc-16.1.0-x86_64-linux-gnu",
             "configuration": "dev",
-            "kind": "executable",
-            "options": {
-              "language-standard": "c++23",
-              "language-extensions": "none",
-              "macros": [],
-              "include-directories": {
-                "user": [],
-                "quote": [],
-                "system": [],
-                "after": []
-              },
-              "forced-includes": [],
-              "exceptions": true,
-              "rtti": true
-            }
+            "kind": "executable"
           },
           "translation-units": [
             {
@@ -151,6 +140,126 @@
               }
             }
           ]
+        },
+        {
+          "name": "hello:test",
+          "family-name": "hello",
+          "visible-sets": [
+            "hello",
+            "mcpp:std"
+          ],
+          "baseline-arguments": [
+            "-std=c++23",
+            "-fmodules",
+            "-O0",
+            "-g"
+          ],
+          "ide": {
+            "toolchain": "gcc-16.1.0-x86_64-linux-gnu",
+            "configuration": "dev",
+            "kind": "test"
+          },
+          "translation-units": [
+            {
+              "source": "tests/greet_test.cpp",
+              "work-directory": "/home/u/hello",
+              "arguments": [
+                "/opt/xpkgs/gcc/16.1.0/bin/g++",
+                "-std=c++23",
+                "-fmodules",
+                "-O0",
+                "-g",
+                "-c",
+                "tests/greet_test.cpp",
+                "-o",
+                "target/obj/greet_test.o"
+              ],
+              "local-arguments": [],
+              "object": "target/obj/greet_test.o",
+              "private": true,
+              "provides": {},
+              "requires": [
+                "hello.greet",
+                "std"
+              ],
+              "ide": {
+                "role": "non-module"
+              }
+            }
+          ]
+        },
+        {
+          "name": "mcpp:std",
+          "family-name": "mcpp",
+          "visible-sets": [
+            "hello",
+            "hello:test"
+          ],
+          "baseline-arguments": [
+            "-std=c++23",
+            "-fmodules",
+            "-O0",
+            "-g"
+          ],
+          "ide": {
+            "toolchain": "gcc-16.1.0-x86_64-linux-gnu",
+            "configuration": "dev",
+            "kind": "library"
+          },
+          "translation-units": [
+            {
+              "source": "/opt/xpkgs/gcc/16.1.0/include/c++/16.1.0/bits/std.cc",
+              "work-directory": "/home/u/.mcpp/build-cache/v1/std/gcc-16.1.0-x86_64-linux-gnu",
+              "arguments": [
+                "/opt/xpkgs/gcc/16.1.0/bin/g++",
+                "-std=c++23",
+                "-fmodules",
+                "-O0",
+                "-g",
+                "-c",
+                "/opt/xpkgs/gcc/16.1.0/include/c++/16.1.0/bits/std.cc",
+                "-o",
+                "/home/u/.mcpp/build-cache/v1/std/gcc-16.1.0-x86_64-linux-gnu/std.o"
+              ],
+              "local-arguments": [],
+              "object": "/home/u/.mcpp/build-cache/v1/std/gcc-16.1.0-x86_64-linux-gnu/std.o",
+              "private": false,
+              "provides": {
+                "std": "/home/u/.mcpp/build-cache/v1/std/gcc-16.1.0-x86_64-linux-gnu/gcm.cache/std.gcm"
+              },
+              "requires": [],
+              "ide": {
+                "role": "module-interface"
+              }
+            },
+            {
+              "source": "/opt/xpkgs/gcc/16.1.0/include/c++/16.1.0/bits/std.compat.cc",
+              "work-directory": "/home/u/.mcpp/build-cache/v1/std/gcc-16.1.0-x86_64-linux-gnu",
+              "arguments": [
+                "/opt/xpkgs/gcc/16.1.0/bin/g++",
+                "-std=c++23",
+                "-fmodules",
+                "-O0",
+                "-g",
+                "-c",
+                "/opt/xpkgs/gcc/16.1.0/include/c++/16.1.0/bits/std.compat.cc",
+                "-o",
+                "/home/u/.mcpp/build-cache/v1/std/gcc-16.1.0-x86_64-linux-gnu/std.compat.o"
+              ],
+              "local-arguments": [],
+              "object": "/home/u/.mcpp/build-cache/v1/std/gcc-16.1.0-x86_64-linux-gnu/std.compat.o",
+              "private": false,
+              "provides": {
+                "std.compat": "/home/u/.mcpp/build-cache/v1/std/gcc-16.1.0-x86_64-linux-gnu/gcm.cache/std.compat.gcm"
+              },
+              "requires": [
+                "std"
+              ],
+              "ide": {
+                "role": "module-interface"
+              }
+            }
+          ]
         }
       ]
     },
@@ -158,7 +267,8 @@
       "mcpp.toml",
       "mcpp.lock",
       "src/**/*.cppm",
-      "src/**/*.cpp"
+      "src/**/*.cpp",
+      "tests/**/*.cpp"
     ],
     "inputs-fingerprint": "fnv1a:5e1d4f0a9c3b2716"
   },

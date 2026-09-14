@@ -25,9 +25,11 @@
     },
     "sets": [
       {
-        "name": "hello:bin:hello",
+        "name": "hello",
         "family-name": "hello",
-        "visible-sets": [],
+        "visible-sets": [
+          "mcpp:std"
+        ],
         "baseline-arguments": [
           "-std=c++23",
           "-O0",
@@ -37,34 +39,6 @@
           "-isystem${env:HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1",
           "-isystem${env:HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/x86_64-unknown-linux-gnu/c++/v1"
         ],
-        "ide": {
-          "toolchain": "llvm-22.1.8-x86_64-unknown-linux-gnu",
-          "configuration": "dev",
-          "kind": "executable",
-          "options": {
-            "language-standard": "c++23",
-            "language-extensions": "none",
-            "macros": [],
-            "include-directories": {
-              "user": [],
-              "quote": [],
-              "system": [
-                "${env:HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1",
-                "${env:HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/x86_64-unknown-linux-gnu/c++/v1"
-              ],
-              "after": []
-            },
-            "forced-includes": [],
-            "exceptions": true,
-            "rtti": true,
-            "raw-semantic-arguments": {
-              "clang": [
-                "--no-default-config",
-                "-nostdinc++"
-              ]
-            }
-          }
-        },
         "translation-units": [
           {
             "source": "${root}/src/greet/detail.cppm",
@@ -156,7 +130,103 @@
               "role": "non-module"
             }
           }
-        ]
+        ],
+        "ide": {
+          "toolchain": "llvm-22.1.8-x86_64-unknown-linux-gnu",
+          "configuration": "dev",
+          "kind": "executable"
+        }
+      },
+      {
+        "name": "mcpp:std",
+        "family-name": "mcpp",
+        "visible-sets": [
+          "hello"
+        ],
+        "baseline-arguments": [
+          "-std=c++23",
+          "-O0",
+          "-g",
+          "--no-default-config",
+          "-nostdinc++",
+          "-isystem${env:HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1",
+          "-isystem${env:HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/x86_64-unknown-linux-gnu/c++/v1"
+        ],
+        "translation-units": [
+          {
+            "source": "${env:HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/share/libc++/v1/std.cppm",
+            "work-directory": "${root}",
+            "arguments": [
+              "${env:HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/bin/clang++",
+              "-std=c++23",
+              "-O0",
+              "-g",
+              "--no-default-config",
+              "-nostdinc++",
+              "-isystem${env:HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1",
+              "-isystem${env:HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/x86_64-unknown-linux-gnu/c++/v1",
+              "-Wno-reserved-module-identifier",
+              "-isystem${env:HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/share/libc++/v1",
+              "-c",
+              "${env:HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/share/libc++/v1/std.cppm",
+              "-o",
+              "${env:HOME}/.mcpp/build-cache/v1/std/mock/std.o"
+            ],
+            "local-arguments": [
+              "-Wno-reserved-module-identifier",
+              "-isystem${env:HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/share/libc++/v1"
+            ],
+            "object": "${env:HOME}/.mcpp/build-cache/v1/std/mock/std.o",
+            "private": false,
+            "provides": {
+              "std": ""
+            },
+            "requires": [],
+            "ide": {
+              "role": "module-interface"
+            }
+          },
+          {
+            "source": "${env:HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/share/libc++/v1/std.compat.cppm",
+            "work-directory": "${root}",
+            "arguments": [
+              "${env:HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/bin/clang++",
+              "-std=c++23",
+              "-O0",
+              "-g",
+              "--no-default-config",
+              "-nostdinc++",
+              "-isystem${env:HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/c++/v1",
+              "-isystem${env:HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/include/x86_64-unknown-linux-gnu/c++/v1",
+              "-Wno-reserved-module-identifier",
+              "-isystem${env:HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/share/libc++/v1",
+              "-c",
+              "${env:HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/share/libc++/v1/std.compat.cppm",
+              "-o",
+              "${env:HOME}/.mcpp/build-cache/v1/std/mock/std.compat.o"
+            ],
+            "local-arguments": [
+              "-Wno-reserved-module-identifier",
+              "-isystem${env:HOME}/.mcpp/registry/data/xpkgs/xim-x-llvm/22.1.8/share/libc++/v1"
+            ],
+            "object": "${env:HOME}/.mcpp/build-cache/v1/std/mock/std.compat.o",
+            "private": false,
+            "provides": {
+              "std.compat": ""
+            },
+            "requires": [
+              "std"
+            ],
+            "ide": {
+              "role": "module-interface"
+            }
+          }
+        ],
+        "ide": {
+          "toolchain": "llvm-22.1.8-x86_64-unknown-linux-gnu",
+          "configuration": "dev",
+          "kind": "library"
+        }
       }
     ]
   },

@@ -154,6 +154,8 @@ A set is, approximately, all translation units of one build target in one config
 | `translation-units` | TranslationUnit[] | MUST | The units of the set (section 8). <a id="S1-7-6"></a><sup>S1-7-6</sup> |
 | `ide` | object | level 2 MUST | Set-level profile data (section 7.1). <a id="S1-7-7"></a><sup>S1-7-7</sup> |
 
+How units are grouped into sets follows how the build resolves imports. A build that resolves every import against one flat module graph, in which any module of the project, of its dependencies and of the standard library can be imported from any unit, may group units per package rather than per target: for example one set for a package, one for its tests and one for the standard library modules the build compiles (mcpp writes `<package>`, `<package>:test` and `mcpp:std`). The `visible-sets` of each such set then lists every other set. That is the complete visibility closure of such a build (section 10); a narrower list would describe a rule the build does not apply.
+
 ### 7.1 Set-level `ide` object
 
 | Field | Type | Requirement | Description |
@@ -222,6 +224,8 @@ Rules:
 2. The effective options of a unit are the set's `options` merged with the unit's `options`: objects merge key by key recursively; arrays concatenate with the set's elements first; scalars take the unit's value.
 3. A producer **MUST NOT** place BMI location arguments (a module mapper, `-fmodule-file=`, `/reference` and similar) in `options`. <a id="S1-9-4"></a><sup>S1-9-4</sup>
 
+Structuring can be left to the reader. A consumer, or a library it uses, that parses `arguments` by `toolchain.family` as rule 1 requires can complete a level 2 document to level 3: a set's `options` from its `baseline-arguments`, or, without those, from the arguments all of its units share; a unit's delta from its `local-arguments`, or from what its arguments add to the set's. Options derived this way restate `arguments` and add nothing to them, so a consumer that derives them may keep compiling `arguments`; rule 1 concerns the options a producer states. A producer may therefore write level 2 and rely on such a library, as mcpp does.
+
 ## 10. Module name resolution
 
 For a translation unit `T` in set `S`, each module name `N` in `T.requires` resolves by the first step that finds a provider:
@@ -249,6 +253,8 @@ Constraints:
 | 2 | IDE | Level 1, plus `ide.profile-version`, `ide.toolchains`, `ide.toolchain` on every set and `ide.role` on every unit (`unknown` is allowed). Standard library modules resolve by section 10. **Every translation unit of the project** is in the document, so that it can replace `compile_commands.json`. |
 | 3 | Structured | Level 2, plus `ide.options` on every set, and an `ide.options` delta on every unit whose local arguments differ from the set's. |
 | 4 | Live | Level 3, plus a discovery command ([S2](s2-discovery.md)), and an atomic rewrite of the database whenever the build description changes. |
+
+A level describes what a document contains, not who wrote each part: a level 2 document that a consumer completes as section 9 describes is a level 3 project model for that consumer.
 
 ### 11.2 Consumers
 
@@ -284,7 +290,7 @@ So that tools that do not implement this profile keep working, producers and con
 
 ## 15. Complete example
 
-The mcpp example project below is built with GCC 16. It has module `hello.greet` with partition `:detail` and the entry point `main.cpp`. The document conforms to level 3. Paths are shortened.
+The example project below is built with GCC 16. It has module `hello.greet` with partition `:detail` and the entry point `main.cpp`. The document conforms to level 3, as a producer that states `ide.options` writes it; mcpp writes level 2 for the same project, with a set per package (section 7), as the S2 single-document example shows. Paths are shortened.
 
 ```json
 {
@@ -292,7 +298,7 @@ The mcpp example project below is built with GCC 16. It has module `hello.greet`
   "revision": 0,
   "ide": {
     "profile-version": "0.2.0",
-    "generator": { "name": "mcpp", "version": "2026.9.13.1" },
+    "generator": { "name": "example-producer", "version": "1.0.0" },
     "toolchains": {
       "gcc-16.1.0-x86_64-linux-gnu": {
         "family": "gcc",

@@ -509,7 +509,7 @@
 |---|---|---|
 | W1 | 完成：两种标准库清单形状；显式传入 Visual Studio 工具集与 Windows SDK；cl 模式的 `.cppm` 副本；MSVC STL 上下文关闭对齐分配；模块构建失败时降级（`module-build-failed`）；交互请求 10 秒应答 | windows-2022 上服务端不带开发者环境运行：`cmake-msvc`、`cmake-msvc-std`、`cmake-clangxx-msvc`、`cmake-clang-cl`、`compdb-clangxx-msvc-std`、`compdb-clang-cl-std`、`mcpp-msvc`、`mcpp-llvm-msvc` |
 | W2 | 完成；工具集没有 `std` 模块时状态带提示 `msvc-without-std-module`，不降级 | `inferred-msvc`；单元测试 |
-| W3 | 消费端与 S2 0.2 单文档模式完成，生产方由模拟数据验证 | `mcpp-emit`、`mcpp-emit-package-std`（等级 3，工作区不变）、`mcpp-emit-broken`、`mcpp-emit-watch` |
+| W3 | 消费端与 S2 0.2 单文档模式完成，生产方由模拟数据验证；模拟数据按 mcpp 在 #636 的答复输出等级 2、按包划分集合，服务端用 S1 库补全到等级 3 | `mcpp-emit`（含 `hello:test` 跨集合导入）、`mcpp-emit-package-std`（等级 3，工作区不变）、`mcpp-emit-broken`、`mcpp-emit-watch`；`validate.py` 的 mcpp 契约检查 |
 | W4 | 完成：CMake 4.4.2 的开关 UUID 表，私有配置构建 `build_database.json` | `cmake-clang-bdb`（Linux）、`cmake-msvc-bdb`（Windows） |
 | W5 | 完成，三个干净机器任务每次提交运行 | Linux：`ubuntu:24.04` 容器中的 `inferred-discover` 与容器中的端到端测试；Windows：隐藏 Visual Studio 后同样两项；macOS：移走 Command Line Tools 与 Xcode 后的 `inferred-no-sdk` 与“只询问一次”的端到端测试 |
 | W6 | 完成：VSIX 形态、界面计数、工作区不变、冲突处理 | 三个主机的 VS Code 端到端任务 |
@@ -524,6 +524,8 @@
 
 | 方案 | 实际 | 原因 |
 |---|---|---|
+| W3 方案第 1 条：`database` 是完整的 S1 等级 3 文档 | mcpp 只输出等级 2，不写 `ide.options`；服务端加载时用 S1 库 `lspmcpp.spec.options` 把参数结构化为 options，模型达到等级 3。推导出的 options 标为派生，只是参数的重述，引擎仍编译 `arguments` | mcpp 维护者在 #636 的答复：等级 3 交给 S1 库，结构化规则只维护一份 |
+| W3 隐含的集合划分：按构建目标，`visible-sets` 只列依赖 | 每个包一个集合，另有 `<包>:test` 与 `mcpp:std`；每个集合的 `visible-sets` 列出其余所有集合 | 同上：mcpp 在一张扁平的模块图上解析 import，写得更窄就描述了一条构建并不执行的规则 |
 | W1.3：cl.exe 与 clang-cl 的命令以 clangd 的 cl 驱动模式交给引擎 | MSVC 家族的命令统一翻译为 GNU 模式的 clang++ 命令，显式传入工具集、SDK 与 `-fms-compatibility-version` | cl 模式下 `/clang:` 参数排在输入之后，`.ixx` 无法标为模块单元；clangd 的 CommandMangler 还会丢掉未知的 `-x`（E7） |
 | W3 退出标准：使用 mcpp 正式发布的版本 | 生产方由 `lsp-mcpp-mock-mcpp` 模拟；`mcpp-gcc`、`mcpp-llvm`、`mcpp-msvc`、`mcpp-llvm-msvc` 仍经真实 mcpp 的 `--configure-only` 得到等级 2，状态带提示 `producer-writes-project` | 本轮目标要求先用模拟数据；mcpp#636 尚未实现 |
 | W5.1：Linux 干净机器全部在 `ubuntu:24.04` 容器中运行 | 一致性夹具在 `ubuntu:24.04`；端到端测试在 `node:22-bookworm-slim`，同样不带编译器（任务中断言） | 端到端测试需要 Node；apt 安装图形库时 shared-mime-info 的 `update-mime-database` 逐个文件同步写盘，容器内曾卡满整个任务时限，关闭同步后 15 秒装完 |
@@ -532,7 +534,7 @@
 | W7.3：CI 温启动门槛 2 秒 | 5 秒，三个主机相同；冷启动仍为 15 秒 | CI 机器（3–4 个虚拟核心）nightly 三次温启动中位数 Linux 1.96 秒、macOS 1.85 秒、Windows 2.88 秒；重建 `std` 这一严重退化由 SC4 断言拦截 |
 | W8：`std` 由 mcpp 以翻译单元输出（W3 之后） | 过渡方案：服务端沿编译数据库中的 `std.pcm` 找到 `build.ninja` 与 mcpp std 构建缓存中的 `std-module.json`（schema 1），把记录的 `std`、`std.compat` 源文件与命令作为单元加入 | 方案要求实施前确认可行性；本地确认 mcpp 2026.9.14.1 写出该记录 |
 | 第 7 节：夹具默认检查超时从 180 秒降到 60 秒 | CI 仍传 `--timeout 180`，需要更短时限的检查在场景中写 `"timeout"` | 超时只影响失败时的等待；Windows 上构建 `std` 的夹具首个检查接近 20 秒 |
-| 第 9 节第 9 条：W1 完成后向 LLVM 报告 `align_val_t` 回归 | 不再需要：上游已有 llvm/llvm-project#218152，由 #219151 修复并随 clang 23.1.1 发布；CI 探测确认 23.1.0 出错、23.1.1 与 22.1.8 通过（run 34843950329），详细记录在 mcpp-community/mcpp#640（`upstream-bug`）。负载升级到 23.1.1 后，关闭对齐分配的绕过只保留给 23.1.0（issue #2） | 提交前检索上游时发现已报告并修复 |
+| 第 9 节第 9 条：W1 完成后向 LLVM 报告 `align_val_t` 回归 | 不再需要：上游已有 llvm/llvm-project#218152，由 #219151 修复并随 clang 23.1.1 发布；CI 探测确认 23.1.0 出错、23.1.1 与 22.1.8 通过（run 34843950329），详细记录在 mcpp-community/mcpp#640（`upstream-bug`）。负载升级到 23.1.1 后，关闭对齐分配的绕过只保留给 23.1.0（issue #2）。短期决定走路线 1：负载继续使用 clangd/clangd 发布的 23.1.0 并保留绕过，因为 clangd/clangd 没有 23.1.1 发布，LLVM 官方 23.1.1 的 Linux clangd 需要 GLIBC 2.34 | 提交前检索上游时发现已报告并修复 |
 
 ### 10.3 方案之外补充的内容
 
@@ -546,6 +548,7 @@
 | 扩展显示提示项 | 语言状态项的悬停在没有问题项时显示第一条提示（`notices`），此前提示不显示 | 代码 `editors/vscode/src/status.ts` |
 | 一致性运行器的补全检查 | 带 `insert` 的补全检查用 `split_lines` 切分一个临时字符串，切出的视图悬空，插入后的文本偶尔含 NUL 并被截断；clangd 对错乱的缓冲区作答，检查一直重试到超时。self-lsp-mcpp 的 C6 因此时而耗时数分钟，先前记录的“冷启动约 5 分钟”包含这一部分 | self-lsp-mcpp 连续四次冷启动 C6 在 0.1–0.2 秒内通过 |
 | mcpp#636 契约补充 | 失败时的信封、`watch` 的语义与“不写监视中的文件”、重复运行的耗时、路径写法一致、`requires` 的准确性、依赖包 `std` 的临时读取方式，以及用 `mcpp-emit` 夹具验收真实 mcpp 的做法 | mcpp-community/mcpp#636 的评论 |
+| S1 库补全等级 3 | `lspmcpp.spec.options` 把 GCC/Clang 与 cl.exe/clang-cl 两种方言的参数结构化为 SemanticOptions：构建专用的参数（输出、依赖文件、优化、调试信息、警告、BMI 位置）丢弃，没有结构化形式的按原顺序放进 `raw-semantic-arguments`；集合的 options 取自 `baseline-arguments`，没有时取所有单元共有的参数，单元差量取自 `local-arguments` 或它比集合多出的参数。生产方写出的数据库（S1 文档与 mcpp）在加载时补全；S1 第 7、9、11.1 节增加说明性文字 | `tests/test_spec_options.cpp`；`mcpp-emit` 状态检查断言等级 3 |
 | macOS 开发者工具占位程序 | 没有 Command Line Tools 时，`/usr/bin` 下的 clang++、c++、xcrun 会弹出安装对话框；发现流程与 SDK 检查改为只看文件系统 | macOS 干净机器任务 |
 
 ### 10.4 测量
@@ -575,7 +578,8 @@
 | openkal-musl | #34：Windows 上 mmap 模拟按整页分配（K14：musl mallocng 使用单独映射的大块内存直到页尾，按字节分配时越界写入） | 0.13.5 |
 | openkal-llvm-runtime | #21：带上 openkal-musl 0.13.5 | 0.9.6 |
 | mcpp-index | #424、#425：收录上述两个版本 | — |
-| mcpp | #636：`emit build-database` 功能需求，尚未实现 | — |
+| mcpp | #636：`emit build-database` 功能需求，尚未实现；维护者答复三点（只输出等级 2、`visible-sets` 列出其余所有集合、按包划分集合），issue 正文与模拟数据已按答复修订 | — |
+| mcpp | #640：clangd 23.1.0 在 MSVC STL 上的 `align_val_t` 回归，标签 `upstream-bug` | — |
 
 此前各轮的上游改动（K1–K13）见设计文档第 12.9 节；只记录、未修复的事项与暂缓工作集中在 issue #2。
 

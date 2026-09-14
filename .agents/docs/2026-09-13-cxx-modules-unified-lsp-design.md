@@ -194,7 +194,7 @@ lsp-mcpp 采用的做法：
 | SC3 | 有编译器与构建系统的工程，首次打开时弹窗数、常驻状态栏项、自动打开的面板都为零 | 端到端测试断言 |
 | SC4 | 温启动不重新构建 std 模块 | clangd 日志与计时 |
 | SC5 | 未保存的模块接口修改在防抖间隔后反映到导入方 | 探针 C7 |
-| SC6 | mcpp 输出等级 3 的 S1 文档；CMake 构建数据库经适配达到等级 2 | Schema 校验 + 一致性测试 |
+| SC6 | mcpp 输出等级 2 的 S1 文档，经 S1 库补全为等级 3；CMake 构建数据库经适配达到等级 2 | Schema 校验 + 一致性测试 |
 | SC7 | lsp-mcpp 仓库与 mcpp 仓库在 VS Code 中可完整导航 | 自举与大工程基准 |
 | SC8 | 服务端全部平台的二进制由一台 Linux 主机交叉构建，并在各平台原生通过测试 | CI |
 
@@ -464,7 +464,7 @@ flowchart TB
   clangd["clangd 23.1（内置负载）"]
   payload["语义工具包（内置负载）"]
   subgraph producers["数据来源"]
-    mcpp["mcpp<br/>S1 等级 3/4"]
+    mcpp["mcpp<br/>S1 等级 2，S1 库补全为 3"]
     cmake["CMake<br/>构建数据库或 CDB"]
     compdb["其他构建系统<br/>CDB + 扫描"]
     loose["仅源码<br/>推断"]
@@ -722,7 +722,7 @@ starting ──> loading ──> preparing ──> ready
 | 优先级 | 识别依据 | 数据来源 | 目标等级 |
 |---|---|---|---|
 | 1 | 用户设置指定的 S1 文档 | 通用 | 按文档 |
-| 2 | `mcpp.toml` | mcpp：`mcpp emit build-database`，旧版本回退到编译数据库 + 扫描 | 3，发现命令就绪后 4 |
+| 2 | `mcpp.toml` | mcpp：`mcpp emit build-database`，旧版本回退到编译数据库 + 扫描 | mcpp 输出 2，S1 库补全为 3；发现命令就绪后 4 |
 | 3 | `CMakeLists.txt` 且已有构建目录 | CMake：构建数据库，否则编译数据库 + `.modmap` + `.ddi` | 2 |
 | 4 | `CMakeLists.txt` 无构建目录 | CMake 私有配置：在缓存目录配置一次，只在受信任工作区执行 | 2 |
 | 5 | 工作区内的 `compile_commands.json` | 通用：编译数据库 + 扫描 | 1–2 |
@@ -742,12 +742,14 @@ mcpp emit build-database [--toolchain SPEC] [--target TRIPLE] [--format json|jso
 | `SourceUnit.providesInterface`（三态） | `ide.role`，未知时为 `unknown` |
 | `BmiTraits` 计算出的 BMI 路径 | `provides` 中的路径值 |
 | 工具链指纹的编译器、版本、驱动、target、标准库 | `ide.toolchains.<id>` |
-| `stdmod` 定位到的 std 源与清单 | `toolchain.stdlib.module-metadata` |
-| 包级与单元级编译参数 | `baseline-arguments`、`local-arguments`、`ide.options` |
-| workspace 成员与依赖关系 | 多个 set 与 `visible-sets` |
+| `stdmod` 定位到的 std 源与清单 | `mcpp:std` 集合中的 `std`、`std.compat` 翻译单元；`toolchain.stdlib.module-metadata` |
+| 包级与单元级编译参数 | `baseline-arguments`、`local-arguments`；`ide.options` 不由 mcpp 写出，由 S1 库从参数结构化得到 |
+| workspace 成员与依赖关系 | 每个包一个 set，另有 `<包>:test` 与 `mcpp:std`，不按 target 划分；每个 set 的 `visible-sets` 列出其余所有 set |
 | 目标类型 | `set.ide.kind` |
 
 `--format jsonl` 实现 S2 发现协议。
+
+上表按 mcpp 维护者在 mcpp-community/mcpp#636 中的答复（2026-09-14）修订：mcpp 只输出等级 2，等级 3 交给 S1 库（`lspmcpp.spec.options`，推导出的 options 是参数的重述，引擎仍编译 `arguments`）；mcpp 在一张扁平的模块图上解析 import，`visible-sets` 写得比这更窄就描述了一条构建并不执行的规则；集合按包划分。S1 第 7、9、11.1 节为此增加了说明性文字。单文档模式（`--format json`）见 S2 0.2 与第一版可用方案 W3。
 
 ### 14.3 工具链探测
 

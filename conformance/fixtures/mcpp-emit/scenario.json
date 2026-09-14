@@ -1,6 +1,6 @@
 {
   "name": "mcpp-emit",
-  "description": "mcpp answering `emit build-database --format json` (mcpp-community/mcpp#636), simulated by lsp-mcpp-mock-mcpp from recorded data: the model is S1 level 3, and nothing is configured or written in the project.",
+  "description": "mcpp answering `emit build-database --format json` (mcpp-community/mcpp#636), simulated by lsp-mcpp-mock-mcpp from recorded data in the shape mcpp decided: a level 2 database with one set for the package, one for its tests (hello:test) and one for the standard library modules mcpp builds (mcpp:std), each seeing every other. The S1 library completes the model to level 3; nothing is configured or written in the project.",
   "server-arguments": [
     "--mcpp",
     "{runner-dir}/lsp-mcpp-mock-mcpp{exe}"
@@ -110,6 +110,16 @@
         "src/main.cpp",
         "src/greet/greet.cppm"
       ]
+    },
+    {
+      "id": "C10-test",
+      "kind": "definition",
+      "file": "tests/greet_test.cpp",
+      "at": [
+        4,
+        20
+      ],
+      "expect": "src/greet/greet.cppm"
     },
     {
       "id": "W1",

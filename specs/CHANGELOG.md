@@ -16,6 +16,10 @@ Revision:
 
 - `stdlib.module-metadata` may name the MSVC STL's own `modules.json` shape (`library`, `module-sources`).
 - The standard library modules may be provided by translation units of a set every requiring set sees, for example a dependency package's `std.cppm`; `stdlib` is then optional, and units win over a manifest listing the same module.
+- Informative, from mcpp's answers on mcpp-community/mcpp#636 (no normative change):
+  - a build that resolves imports against one flat module graph may group units per package (`<package>`, `<package>:test`, and a set for the standard library modules such as `mcpp:std`), and each set's `visible-sets` then lists every other set (section 7);
+  - a consumer, or a library it uses, may complete a level 2 document to level 3 by structuring `arguments`, and the options it derives restate the arguments rather than replace them, so a producer may write level 2 (sections 9 and 11.1);
+  - the level 3 example (section 15, `examples/s1-level3-gcc.json`) names a neutral `example-producer` as its generator, since mcpp writes level 2.
 
 First public draft, derived from the design draft of 2026-09-13.
 
@@ -29,7 +33,13 @@ First public draft, derived from the design draft of 2026-09-13.
 
 ## S2 — Build Database Discovery Protocol
 
-### 0.2.0 — 2026-09-14 (Draft)
+### 0.2.0 — 2026-09-14 (Draft), revised 2026-09-14
+
+Revision:
+
+- Example `examples/s2-envelope.json` carries the database in the shape mcpp settled on in mcpp-community/mcpp#636: level 2, sets `hello`, `hello:test` and `mcpp:std`, each seeing every other. No normative change.
+
+First draft of 0.2.0:
 
 - Single-document mode (section 3.4): one envelope on standard output with the database inline, advertised through the producer's `--protocol-version`; the producer writes nothing into the workspace. It matches mcpp's machine-output protocol version 1 and mcpp-community/mcpp#636.
 - Schema `envelope` definition and example `examples/s2-envelope.json`.
