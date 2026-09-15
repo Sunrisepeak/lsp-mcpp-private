@@ -207,6 +207,287 @@
       "expect": "src/greet/greet.cpp"
     },
     {
+      "id": "Q1-symbol",
+      "kind": "mcp",
+      "tool": "cxx_symbol",
+      "arguments": {
+        "name": "hello::greet"
+      },
+      "expect": [
+        {
+          "path": "/symbols/0/module",
+          "equals": "hello.greet"
+        },
+        {
+          "path": "/symbols/0/declaration/file",
+          "equals": "src/greet/greet.cppm"
+        },
+        {
+          "path": "/symbols/0/definition/file",
+          "equals": "src/greet/greet.cpp"
+        },
+        {
+          "path": "/symbols/0/signature",
+          "contains": "greet(std::string_view"
+        },
+        {
+          "path": "/symbols/0/id",
+          "exists": true
+        }
+      ]
+    },
+    {
+      "id": "Q1-position",
+      "kind": "mcp",
+      "tool": "cxx_symbol",
+      "arguments": {
+        "file": "src/main.cpp",
+        "line": 5,
+        "column": 31
+      },
+      "expect": [
+        {
+          "path": "/symbols/0/qualifiedName",
+          "equals": "hello::greet"
+        },
+        {
+          "path": "/symbols/0/definition/line",
+          "equals": 7
+        }
+      ]
+    },
+    {
+      "id": "Q1-not-found",
+      "kind": "mcp",
+      "tool": "cxx_symbol",
+      "arguments": {
+        "name": "no_symbol_is_named_this"
+      },
+      "is-error": true,
+      "retry": false,
+      "expect": [
+        {
+          "path": "/error/code",
+          "equals": "not-found"
+        }
+      ]
+    },
+    {
+      "id": "Q2-references-importers",
+      "kind": "mcp",
+      "tool": "cxx_references",
+      "arguments": {
+        "name": "hello::greet"
+      },
+      "expect": [
+        {
+          "path": "/groups/*/file",
+          "equals": "src/main.cpp"
+        },
+        {
+          "path": "/groups/*/file",
+          "equals": "tests/greet_test.cpp"
+        },
+        {
+          "path": "/groups/*/file",
+          "equals": "src/greet/greet.cpp"
+        },
+        {
+          "path": "/scope/complete",
+          "equals": true
+        }
+      ]
+    },
+    {
+      "id": "Q2-callers-partition",
+      "kind": "mcp",
+      "tool": "cxx_references",
+      "arguments": {
+        "name": "hello::decorate",
+        "direction": "callers"
+      },
+      "expect": [
+        {
+          "path": "/calls/*/symbol/qualifiedName",
+          "equals": "hello::greet"
+        },
+        {
+          "path": "/calls/0/sites/0/file",
+          "equals": "src/greet/greet.cpp"
+        }
+      ]
+    },
+    {
+      "id": "Q2-callees",
+      "kind": "mcp",
+      "tool": "cxx_references",
+      "arguments": {
+        "name": "hello::greet",
+        "direction": "callees"
+      },
+      "expect": [
+        {
+          "path": "/calls/*/symbol/qualifiedName",
+          "equals": "hello::detail::bump"
+        },
+        {
+          "path": "/calls/*/symbol/qualifiedName",
+          "equals": "hello::decorate"
+        }
+      ]
+    },
+    {
+      "id": "Q3-outline",
+      "kind": "mcp",
+      "tool": "cxx_outline",
+      "arguments": {
+        "file": "src/greet/greet.cpp"
+      },
+      "expect": [
+        {
+          "path": "/module",
+          "equals": "hello.greet"
+        },
+        {
+          "path": "/symbols/*/children/*/name",
+          "equals": "greet"
+        }
+      ]
+    },
+    {
+      "id": "Q4-module",
+      "kind": "mcp",
+      "tool": "cxx_module",
+      "arguments": {
+        "name": "hello.greet"
+      },
+      "expect": [
+        {
+          "path": "/partitions",
+          "contains": "hello.greet:counter"
+        },
+        {
+          "path": "/exportedPartitions",
+          "contains": "hello.greet:format"
+        },
+        {
+          "path": "/importingFiles",
+          "contains": "src/main.cpp"
+        },
+        {
+          "path": "/units",
+          "contains": {
+            "file": "src/greet/format.cpp",
+            "role": "module-implementation"
+          }
+        }
+      ]
+    },
+    {
+      "id": "Q5-build-context",
+      "kind": "mcp",
+      "tool": "cxx_build_context",
+      "arguments": {
+        "file": "src/greet/greet.cpp"
+      },
+      "expect": [
+        {
+          "path": "/module",
+          "equals": "hello.greet"
+        },
+        {
+          "path": "/sets/0/role",
+          "equals": "module-implementation"
+        },
+        {
+          "path": "/projectSource",
+          "equals": "mcpp"
+        },
+        {
+          "path": "/semanticSource",
+          "equals": "build-toolchain"
+        },
+        {
+          "path": "/inModel",
+          "equals": true
+        }
+      ]
+    },
+    {
+      "id": "Q6-diagnostics",
+      "kind": "mcp",
+      "tool": "cxx_diagnostics",
+      "arguments": {
+        "files": [
+          "src/main.cpp",
+          "src/greet/greet.cpp"
+        ]
+      },
+      "expect": [
+        {
+          "path": "/files/0/complete",
+          "equals": true
+        },
+        {
+          "path": "/files/1/complete",
+          "equals": true
+        },
+        {
+          "path": "/counts/error",
+          "equals": 0
+        }
+      ]
+    },
+    {
+      "id": "Q7-tools",
+      "kind": "mcp",
+      "method": "tools/list",
+      "retry": false,
+      "expect": [
+        {
+          "path": "/tools/*/name",
+          "equals": "cxx_symbol"
+        },
+        {
+          "path": "/tools/*/annotations/readOnlyHint",
+          "equals": true
+        }
+      ]
+    },
+    {
+      "id": "Q8-cli-symbol",
+      "kind": "cli",
+      "args": [
+        "query",
+        "symbol",
+        "hello::count"
+      ],
+      "expect": [
+        {
+          "path": "/symbols/0/definition/file",
+          "equals": "src/greet/greet.cpp"
+        },
+        {
+          "path": "/symbols/0/module",
+          "equals": "hello.greet"
+        }
+      ]
+    },
+    {
+      "id": "Q8-cli-diagnostics",
+      "kind": "cli",
+      "args": [
+        "diagnostics",
+        "src/main.cpp"
+      ],
+      "expect": [
+        {
+          "path": "/files/0/complete",
+          "equals": true
+        }
+      ]
+    },
+    {
       "id": "W1",
       "kind": "workspace-unchanged"
     }

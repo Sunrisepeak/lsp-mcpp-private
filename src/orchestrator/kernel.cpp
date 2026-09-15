@@ -23,9 +23,13 @@ namespace log = base::log;
 // (markdown hover, hierarchical outlines, related information on diagnostics) and progress reports.
 Json initialize_params(const std::string& root) {
     const std::string uri { base::path_to_uri(root) };
+    // Every symbol kind of LSP 3.17; without them clangd reports a struct as a class.
+    Json symbolKinds = Json::array();
+    for (int kind { 1 }; kind <= 26; ++kind) symbolKinds.push_back(kind);
+    const Json symbolKind { { "valueSet", symbolKinds } };
     Json textDocument {
         { "hover", Json { { "contentFormat", Json::array({ "markdown", "plaintext" }) } } },
-        { "documentSymbol", Json { { "hierarchicalDocumentSymbolSupport", true } } },
+        { "documentSymbol", Json { { "hierarchicalDocumentSymbolSupport", true }, { "symbolKind", symbolKind } } },
         { "publishDiagnostics", Json { { "relatedInformation", true } } },
         { "definition", Json { { "linkSupport", false } } },
         { "references", Json::object() },
@@ -34,7 +38,7 @@ Json initialize_params(const std::string& root) {
         { "completion", Json { { "completionItem", Json { { "snippetSupport", false } } } } },
     };
     Json workspace {
-        { "symbol", Json::object() },
+        { "symbol", Json { { "symbolKind", symbolKind } } },
         { "didChangeWatchedFiles", Json { { "dynamicRegistration", false } } },
         { "workspaceFolders", true },
         { "configuration", false },

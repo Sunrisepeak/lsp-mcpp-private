@@ -12,7 +12,7 @@ namespace mcppls::lsp {
 Connection::~Connection() { stop(std::chrono::milliseconds { 500 }); }
 
 base::Result<std::unique_ptr<Connection>> Connection::start(platform::SpawnOptions options, MessageHandler onMessage,
-                                                            ClosedHandler onClosed, ErrorLineHandler onErrorLine) {
+                                                            ClosedHandler onClosed, ErrorLineHandler onErrorLine, Framing framing) {
     options.pipeInput = true;
     options.pipeOutput = true;
     options.pipeError = static_cast<bool>(onErrorLine);
@@ -21,12 +21,28 @@ base::Result<std::unique_ptr<Connection>> Connection::start(platform::SpawnOptio
 
     auto connection = std::make_unique<Connection>();
     connection->process_ = std::move(*process);
+    connection->framing_ = framing;
     Connection* self { connection.get() };
-    connection->reader_ = std::jthread { [self, onMessage = std::move(onMessage), onClosed = std::move(onClosed)] {
+    connection->reader_ = std::jthread { [self, framing, onMessage = std::move(onMessage), onClosed = std::move(onClosed)] {
         FrameReader reader;
+        std::string pending;
         while (true) {
             auto chunk = self->process_.read_output();
             if (!chunk || chunk->empty()) break;
+            if (framing == Framing::lines) {
+                pending += *chunk;
+                for (std::size_t newline { pending.find('\n') }; newline != std::string::npos; newline = pending.find('\n')) {
+                    std::string_view line { std::string_view { pending }.substr(0, newline) };
+                    if (line.ends_with('\r')) line.remove_suffix(1);
+                    if (!line.empty()) {
+                        Json message = Json::parse(line, nullptr, false);
+                        if (message.is_discarded()) base::log::warning("dropped a line from a child that is not JSON");
+                        else onMessage(std::move(message));
+                    }
+                    pending.erase(0, newline + 1);
+                }
+                continue;
+            }
             reader.feed(*chunk);
             while (auto message = reader.next()) {
                 if (!*message) {
@@ -62,7 +78,7 @@ base::Result<std::unique_ptr<Connection>> Connection::start(platform::SpawnOptio
 
 base::Result<void> Connection::send(const Json& message) {
     if (closed_.load()) return base::fail("connection-closed", "the peer has exited");
-    return process_.write(encode_frame(message));
+    return process_.write(framing_ == Framing::lines ? dump(message) + "\n" : encode_frame(message));
 }
 
 void Connection::stop(std::chrono::milliseconds grace) {

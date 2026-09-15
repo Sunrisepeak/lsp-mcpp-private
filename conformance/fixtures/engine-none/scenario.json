@@ -11,6 +11,13 @@
     { "id": "M4-import-completion", "kind": "completion-contains", "file": "src/scratch.cpp", "text": "import hel", "at": [0, 10], "expect": "hello.greet" },
     { "id": "M5-unresolved", "kind": "diagnostic-code", "file": "src/unresolved.cpp", "text": "import missing.module;\nint f();\n", "expect": "unresolved-module" },
     { "id": "M6-graph", "kind": "module-graph-contains", "expect": "hello.greet:detail" },
+    { "id": "Q4-module", "kind": "mcp", "tool": "cxx_module", "arguments": { "name": "hello.greet" },
+      "expect": [{ "path": "/partitions", "contains": "hello.greet:detail" }, { "path": "/importingFiles", "contains": "src/main.cpp" }] },
+    { "id": "Q1-module-symbol", "kind": "mcp", "tool": "cxx_symbol", "arguments": { "name": "hello.greet" }, "expect": [{ "path": "/symbols/0/kind", "equals": "module" }] },
+    { "id": "Q2-unavailable", "kind": "mcp", "tool": "cxx_references", "arguments": { "name": "hello::greet" }, "is-error": true, "retry": false,
+      "expect": [{ "path": "/error/code", "equals": "unavailable" }] },
+    { "id": "Q6-diagnostics", "kind": "mcp", "tool": "cxx_diagnostics", "arguments": { "files": ["src/main.cpp"] }, "expect": [{ "path": "/files/0/complete", "equals": true }] },
+    { "id": "Q8-cli-module", "kind": "cli", "args": ["query", "module", "--file", "src/greet/detail.cppm"], "expect": [{ "path": "/name", "equals": "hello.greet" }] },
     { "id": "R1-elsewhere", "kind": "responds", "file": "src/main.cpp", "at": [4, 10], "timeout": 5 }
   ]
 }

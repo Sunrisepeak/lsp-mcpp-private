@@ -404,6 +404,135 @@ public:
     }
 };
 
+// An MCP client of `mcppls mcp` (S5 6): JSON-RPC messages one per line.
+class McpClient {
+private:
+    std::unique_ptr<lsp::Connection> connection_;
+    std::shared_ptr<mcppls::platform::Channel<Json>> inbox_ { std::make_shared<mcppls::platform::Channel<Json>>() };
+    std::int64_t nextId_ { 1 };
+
+public:
+    base::Result<void> start(const Options& options, const std::vector<std::string>& serverArguments, const std::string& workspace,
+                             const std::string& cacheDirectory) {
+        mcppls::platform::SpawnOptions spawn;
+        spawn.program = options.server;
+        spawn.arguments = { "mcp", "--root", workspace };
+        if (!options.payload.empty()) spawn.arguments.insert(spawn.arguments.end(), { "--payload", options.payload });
+        if (!options.clangd.empty()) spawn.arguments.insert(spawn.arguments.end(), { "--clangd", options.clangd });
+        if (!options.kit.empty()) spawn.arguments.insert(spawn.arguments.end(), { "--kit", options.kit });
+        spawn.arguments.insert(spawn.arguments.end(), serverArguments.begin(), serverArguments.end());
+        spawn.workDirectory = workspace;
+        auto environment = mcppls::platform::env::variables();
+        environment.push_back("MCPPLS_CACHE_DIR=" + cacheDirectory);
+        spawn.environment = std::move(environment);
+        const bool verbose { options.verbose };
+        auto inbox = inbox_;
+        auto connection = lsp::Connection::start(
+            std::move(spawn), [inbox](Json message) { inbox->push(std::move(message)); }, [inbox] { inbox->close(); },
+            [verbose](std::string_view line) {
+                if (verbose) say("  mcp: {}", line);
+            },
+            lsp::Framing::lines);
+        if (!connection) return std::unexpected { connection.error() };
+        connection_ = std::move(*connection);
+        const auto initialized = request("initialize", Json { { "protocolVersion", "2025-06-18" }, { "capabilities", Json::object() },
+                                                              { "clientInfo", Json { { "name", "mcppls-conformance" }, { "version", std::string { base::VERSION } } } } },
+                                         std::chrono::seconds { 60 }, {});
+        if (!initialized || !initialized->contains("result")) return base::fail("mcp-initialize", "mcppls mcp did not answer initialize");
+        (void)connection_->send(Json { { "jsonrpc", "2.0" }, { "method", "notifications/initialized" } });
+        return {};
+    }
+
+    // The whole response, or nullopt; `idle` runs while waiting, so the language server's own output keeps being read.
+    std::optional<Json> request(std::string_view method, Json params, std::chrono::seconds timeout, const std::function<void()>& idle) {
+        const std::int64_t id { nextId_++ };
+        if (!connection_->send(Json { { "jsonrpc", "2.0" }, { "id", id }, { "method", std::string { method } }, { "params", std::move(params) } })) return std::nullopt;
+        const auto deadline = Clock::now() + timeout;
+        while (Clock::now() < deadline) {
+            auto message = inbox_->pop_until(std::min(deadline, Clock::now() + std::chrono::milliseconds { 200 }));
+            if (message && message->value("id", Json {}) == Json(id)) return message;
+            if (!message && inbox_->closed() && inbox_->size() == 0) return std::nullopt;
+            if (idle) idle();
+        }
+        return std::nullopt;
+    }
+
+    void stop() {
+        if (connection_) connection_->stop(std::chrono::seconds { 10 });
+    }
+};
+
+// The values a JSON pointer names; a "*" segment names every element of an array or member of an object.
+void select(const Json& value, std::span<const std::string> segments, std::vector<const Json*>& out) {
+    if (segments.empty()) {
+        out.push_back(&value);
+        return;
+    }
+    const std::string& segment { segments.front() };
+    const auto rest = segments.subspan(1);
+    if (segment == "*") {
+        if (value.is_array() || value.is_object()) {
+            for (const auto& item : value) select(item, rest, out);
+        }
+        return;
+    }
+    if (value.is_object()) {
+        if (const auto found = value.find(segment); found != value.end()) select(*found, rest, out);
+    } else if (value.is_array() && !segment.empty() && std::ranges::all_of(segment, [](char c) { return c >= '0' && c <= '9'; })) {
+        const std::size_t index { static_cast<std::size_t>(std::stoul(segment)) };
+        if (index < value.size()) select(value[index], rest, out);
+    }
+}
+
+std::vector<const Json*> select(const Json& value, std::string_view pointer) {
+    std::vector<std::string> segments;
+    for (auto segment : base::split(pointer, '/')) segments.emplace_back(segment);
+    if (!segments.empty() && segments.front().empty()) segments.erase(segments.begin());
+    std::vector<const Json*> out;
+    select(value, segments, out);
+    return out;
+}
+
+// Whether `candidate` has every member `expected` has, recursively (arrays and scalars compare equal).
+bool includes(const Json& candidate, const Json& expected) {
+    if (!expected.is_object()) return candidate == expected;
+    if (!candidate.is_object()) return false;
+    return std::ranges::all_of(expected.items(), [&](const auto& item) { return candidate.contains(item.key()) && includes(candidate[item.key()], item.value()); });
+}
+
+// A fixture's expectations of a JSON result (conformance/README.md, S5 checks): each names a pointer and
+// one of equals, contains, min-items, exists or absent, and holds when any value the pointer names satisfies it.
+std::pair<bool, std::string> expectations_hold(const Json& value, const Json& expectations) {
+    for (const auto& expectation : expectations) {
+        const std::string pointer { expectation.value("path", std::string {}) };
+        const auto matches = select(value, pointer);
+        bool held { false };
+        if (expectation.contains("absent")) {
+            held = matches.empty();
+        } else if (expectation.contains("exists")) {
+            held = !matches.empty();
+        } else if (expectation.contains("equals")) {
+            held = std::ranges::any_of(matches, [&](const Json* match) { return *match == expectation["equals"]; });
+        } else if (expectation.contains("contains")) {
+            const Json& wanted = expectation["contains"];
+            held = std::ranges::any_of(matches, [&](const Json* match) {
+                if (match->is_string() && wanted.is_string()) return match->get<std::string>().find(wanted.get<std::string>()) != std::string::npos;
+                if (match->is_array()) return std::ranges::any_of(*match, [&](const Json& item) { return includes(item, wanted); });
+                return false;
+            });
+        } else if (expectation.contains("min-items")) {
+            const std::size_t wanted { expectation.value("min-items", std::size_t { 1 }) };
+            held = std::ranges::any_of(matches, [&](const Json* match) { return (match->is_array() || match->is_object()) && match->size() >= wanted; });
+        }
+        if (!held) {
+            std::string found { matches.empty() ? std::string { "nothing" } : lsp::dump(*matches.front()) };
+            if (found.size() > 160) found = found.substr(0, 160) + "...";
+            return { false, std::format("{} does not hold ({} found at {})", lsp::dump(expectation), found, pointer) };
+        }
+    }
+    return { true, {} };
+}
+
 std::string state_of(const Json& status) { return status.is_object() ? status.value("state", std::string {}) : std::string {}; }
 
 std::vector<std::string> location_uris(const Json& result) {
@@ -461,8 +590,26 @@ private:
     std::string cacheDirectory_;                                // the server's cache
     bool expectWarm_ { false };
     std::map<std::string, std::map<std::string, std::string>> moduleFilesBefore_;   // module -> its published files before the server started
+    std::unique_ptr<McpClient> mcp_;                            // started by the first mcp check
+    std::string mcpFailure_;
+
+    McpClient* mcp_client() {
+        if (mcp_ || !mcpFailure_.empty()) return mcp_.get();
+        auto client = std::make_unique<McpClient>();
+        // The agent's own server beside the editor's: it shares the cache directory as a guest (overall design 6.3).
+        if (auto started = client->start(options_, serverArguments_, workspace_, cacheDirectory_); !started) {
+            mcpFailure_ = started.error().message;
+            return nullptr;
+        }
+        mcp_ = std::move(client);
+        return mcp_.get();
+    }
 
 public:
+    void finish() {
+        if (mcp_) mcp_->stop();
+    }
+
     Scenario(Client& client, const Options& options, std::vector<std::string> serverArguments, std::string workspace, std::chrono::seconds timeout,
              std::map<std::string, std::string> prepared, std::string cacheDirectory, bool expectWarm,
              std::map<std::string, std::map<std::string, std::string>> moduleFilesBefore)
@@ -618,6 +765,63 @@ public:
             const Json snapshot = second.status;
             second.stop();
             return { found, lsp::dump(snapshot) };
+        }
+        if (kind == "mcp") {
+            // S5 6: a tool call (or, with "method", any request) to `mcppls mcp`, repeated until its result
+            // meets the expectations or the check's time is up; "is-error" expects a tool error instead.
+            McpClient* mcp { mcp_client() };
+            if (mcp == nullptr) return { false, "cannot start mcppls mcp: " + mcpFailure_ };
+            const std::string method { check.value("method", std::string { "tools/call" }) };
+            const Json params = method == "tools/call" ? Json { { "name", check.value("tool", std::string {}) }, { "arguments", check.value("arguments", Json::object()) } }
+                                                       : check.value("params", Json::object());
+            const bool expectError { check.value("is-error", false) };
+            const auto deadline = Clock::now() + timeout_;
+            std::string why { "no answer" };
+            do {
+                const auto remaining = std::chrono::duration_cast<std::chrono::seconds>(deadline - Clock::now());
+                const auto response = mcp->request(method, params, std::max(std::chrono::seconds { 1 }, remaining), [this] { client_.drain(std::chrono::milliseconds { 0 }); });
+                if (!response) break;
+                Json value = response->value("result", Json {});
+                bool isError { false };
+                if (method == "tools/call") {
+                    isError = value.value("isError", false);
+                    const Json content = value.value("content", Json::array());
+                    value = value.contains("structuredContent") ? value["structuredContent"]
+                                                                : Json::parse(content.empty() ? std::string { "null" } : content[0].value("text", std::string { "null" }), nullptr, false);
+                }
+                auto [held, detail] = expectations_hold(value, check.value("expect", Json::array()));
+                if (held && isError == expectError) return { true, lsp::dump(value).substr(0, 160) };
+                why = isError != expectError ? std::format("isError is {}: {}", isError, lsp::dump(value).substr(0, 300)) : detail;
+                if (!check.value("retry", true)) break;
+                client_.drain(std::chrono::milliseconds { 1000 });
+            } while (Clock::now() < deadline);
+            return { false, why };
+        }
+        if (kind == "cli") {
+            // S5 7: a command of the query entries, run to completion in the workspace; its standard output is
+            // one JSON document meeting the expectations, and it exits with "exit" (0 unless given).
+            mcppls::platform::SpawnOptions spawn;
+            spawn.program = options_.server;
+            for (const auto& argument : check.value("args", Json::array())) spawn.arguments.push_back(argument.get<std::string>());
+            if (!options_.payload.empty()) spawn.arguments.insert(spawn.arguments.end(), { "--payload", options_.payload });
+            if (!options_.clangd.empty()) spawn.arguments.insert(spawn.arguments.end(), { "--clangd", options_.clangd });
+            if (!options_.kit.empty()) spawn.arguments.insert(spawn.arguments.end(), { "--kit", options_.kit });
+            spawn.arguments.insert(spawn.arguments.end(), serverArguments_.begin(), serverArguments_.end());
+            spawn.workDirectory = workspace_;
+            auto environment = mcppls::platform::env::variables();
+            environment.push_back("MCPPLS_CACHE_DIR=" + cacheDirectory_);
+            spawn.environment = std::move(environment);
+            auto running = std::async(std::launch::async, [spawn, timeout = timeout_]() mutable { return mcppls::platform::run(std::move(spawn), timeout); });
+            while (running.wait_for(std::chrono::milliseconds { 200 }) != std::future_status::ready) client_.drain(std::chrono::milliseconds { 0 });
+            auto result = running.get();
+            if (!result) return { false, result.error().message };
+            if (result->timedOut) return { false, "the command did not finish in time" };
+            const int wantedExit { check.value("exit", 0) };
+            if (result->exitCode != wantedExit) return { false, std::format("exit {} instead of {}: {}", result->exitCode, wantedExit, (result->output + result->error).substr(0, 300)) };
+            const Json value = Json::parse(result->output, nullptr, false);
+            if (value.is_discarded()) return { false, "the output is not JSON: " + result->output.substr(0, 200) };
+            auto [held, detail] = expectations_hold(value, check.value("expect", Json::array()));
+            return { held, held ? lsp::dump(value).substr(0, 160) : detail };
         }
         if (kind == "responds") {
             // An answer of any kind, an empty one included, within the check's time: a file the engine
@@ -960,6 +1164,7 @@ int run(const Options& options) {
         measured.push_back(Json { { "id", id }, { "kind", check.value("kind", std::string {}) }, { "ok", ok }, { "seconds", seconds },
                                   { "since-start", std::chrono::duration<double>(Clock::now() - begin).count() } });
     }
+    runner.finish();
     client.stop();
     Json firstNavigation = nullptr;
     for (const auto& check : measured) {

@@ -201,12 +201,41 @@ SearchScope open_search_scope(View& view, const std::string& path, Clock::time_p
     return scope;
 }
 
+// A definition in another unit of the module (an implementation unit) is known to the engine only
+// once that unit is built: the module's own units are opened, and the declaration asked for it.
+void find_definition(View& view, Symbol& symbol, Clock::time_point deadline) {
+    if (symbol.definition || !symbol.declaration) return;
+    const std::string declared { view.path_of(symbol.declaration->file) };
+    const std::string declaredIn { view.module_of(declared) };
+    if (declaredIn.empty()) return;
+    const std::string primary { declaredIn.substr(0, declaredIn.find(':')) };
+    const auto& index = view.kernel().workspace().module_index();
+    std::vector<std::string> units;
+    for (const auto& file : index.files()) {
+        const auto* scan = index.scan_of(file);
+        if (scan != nullptr && scan->declaration && scan->declaration->module == primary && units.size() < SEARCH_BUDGET) units.push_back(file);
+    }
+    for (const auto& unit : units) view.open(unit);
+    const auto remaining = std::max(std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()), std::chrono::milliseconds { 0 });
+    (void)view.kernel().wait_until([&] { return std::ranges::all_of(units, [&](const std::string& unit) { return diagnostics_fresh(view, unit).first; }); },
+                                   remaining);
+    auto result = view.request("textDocument/definition",
+                               Json { { "textDocument", view.text_document(declared) },
+                                      { "position", view.lsp_position(declared, symbol.declaration->line, symbol.declaration->column) } },
+                               deadline);
+    if (!result) return;
+    const Json first = result->is_array() ? (result->empty() ? Json {} : (*result)[0]) : *result;
+    auto location = view.location(first);
+    if (location && !(location->file == symbol.declaration->file && location->line == symbol.declaration->line)) symbol.definition = std::move(*location);
+}
+
 Outcome<Symbol> symbol_at(View& view, const std::string& path, int line, int column, Clock::time_point deadline) {
     const Json position = view.lsp_position(path, line, column);
     const auto info = symbol_info(view, path, position, deadline);
     if (!info) return std::unexpected { not_found(std::format("no symbol at {}:{}:{}", view.display(path), line, column)) };
     Symbol symbol;
     apply_symbol_info(view, symbol, *info);
+    find_definition(view, symbol, deadline);
     if (!symbol.declaration && !symbol.definition) symbol.declaration = spec::location_in(view.text_of(path), view.display(path), spec::lsp_position(view.text_of(path), line, column));
     describe(view, symbol, deadline);
     finish(view, symbol);
@@ -388,6 +417,7 @@ Outcome<Symbols> find_symbols(View& view, const SymbolTarget& target, Limit limi
         } else if (view.has_core_engine()) {
             if (const auto info = symbol_info(view, candidate.path, candidate.range.value("start", Json::object()), deadline)) apply_symbol_info(view, symbol, *info);
             if (!symbol.declaration && !symbol.definition) symbol.declaration = at;
+            find_definition(view, symbol, deadline);
             if (doDescribe) describe(view, symbol, deadline);
         } else {
             symbol.declaration = at;
