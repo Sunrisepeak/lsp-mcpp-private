@@ -1,0 +1,37 @@
+[package]
+name        = "mcppls-model"
+version     = "0.1.0"
+description = "Reference model gateway for mcppls: a child process that speaks a line protocol and calls an OpenAI-compatible or Anthropic endpoint"
+license     = "Apache-2.0"
+authors     = ["mcpp community"]
+
+[build]
+sources = ["src/**/*.cppm", "src/**/*.cpp"]
+
+[targets.mcppls-model]
+kind = "bin"
+main = "src/main.cpp"
+
+[toolchain]
+default = "llvm@22.1.8"
+
+# Experiment X3 (see README.md "Build form"): the toolchain's normal C library,
+# not openkal-llvm-runtime. The gateway builds natively on each host (it is not
+# cross-built from Linux like the server), so openkal's cross-compile benefit
+# does not apply here, and this keeps the gateway off openkal's documented
+# release-profile defects on Windows and macOS (argv truncated / no stdout on
+# Windows, segfault on macOS — see cpp-module-toolchain-pitfalls in .agents),
+# which would land squarely on a stdio line-protocol tool that reads argv.
+[dependencies]
+cmdline = "0.0.2"
+
+[dependencies.nlohmann]
+json = "3.12.0"
+
+# Used directly, not through mcpplibs.llmapi: llmapi's OpenAI/Anthropic classes
+# hardcode HTTPS (tinyhttps rejects any non-https URL before opening a socket),
+# which cannot reach the plain-HTTP local endpoints the protocol targets
+# (`--endpoint http://127.0.0.1:11434/v1`) or this package's own offline tests.
+# See README.md "Build form" / PROTOCOL.md "Transport" for the full story.
+[dependencies.mcpplibs]
+tinyhttps = "0.2.8"
