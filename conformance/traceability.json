@@ -1051,5 +1051,26 @@
   {
    "test": "tests/test_spec.cpp: kit examples load and bad kits are refused"
   }
+ ],
+ "S3-4-5": [
+  {
+   "check": "inferred/S1"
+  },
+  {
+   "check": "engine-none/S1"
+  }
+ ],
+ "S3-4-6": [
+  {
+   "check": "engine-none/S1"
+  },
+  {
+   "check": "inferred/S1"
+  }
+ ],
+ "S3-4-7": [
+  {
+   "manual": "The VS Code extension shows whatever engine names the status carries (editors/vscode/src/status.ts); it matches no name."
+  }
  ]
 }

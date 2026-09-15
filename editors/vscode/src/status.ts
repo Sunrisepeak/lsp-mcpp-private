@@ -32,7 +32,10 @@ export interface CxxModulesStatus {
         level?: number;
     };
     profile: SemanticProfile;
-    engine: { name: 'clangd'; version: string };
+    // The core semantic engine; "none" when a root has none (S3 4, S3-4-6).
+    engine: { name: string; version: string };
+    // Every engine serving the root, mcppls's own module engine included (S3-4-5).
+    engines?: { name: string; version: string; role: string; state: string }[];
     progress?: { done: number; total: number };
     issues?: ModuleIssue[];
     // Facts worth showing that reduce no feature, e.g. a Visual Studio without the std module (S3 4).
@@ -137,8 +140,10 @@ export class StatusController implements vscode.Disposable {
                 ? `${status.project.source} · level ${status.project.level}`
                 : status.project.source);
         }
-        if (status.engine) {
-            details.push(`${status.engine.name} ${status.engine.version}`);
+        if (status.engines && status.engines.length > 0) {
+            details.push(status.engines.map((engine) => `${engine.name} ${engine.version}`.trim()).join(' + '));
+        } else if (status.engine) {
+            details.push(`${status.engine.name} ${status.engine.version}`.trim());
         }
         const issues = status.issues ?? [];
         if ((status.state === 'degraded' || status.state === 'error') && issues.length > 0) {

@@ -57,6 +57,11 @@ First draft of 0.2.0:
 
 ## S3 — Language Server Protocol Extensions for C++ Modules
 
+### 2026-09-15 (protocol version 1, backward compatible)
+
+- `cxxModules/status`: `engine.name` is any engine name, `"none"` when a root has no core semantic engine; the optional `engines` lists every engine serving the root with its role and state (section 4, S3-4-5). Clients already reading `engine` keep working.
+
+
 ### Protocol version 1 — 2026-09-14 (Draft)
 
 - Capability negotiation through `experimental.cxxModules`.

@@ -22,8 +22,9 @@ export interface PayloadManifest {
     files?: Record<string, { size: number; sha256: string }>;
 }
 
-// 1: the first layout; 2 adds `files`, which the server itself checks. The extension reads neither.
-export const SUPPORTED_PAYLOAD_VERSIONS: readonly number[] = [1, 2];
+// 1: the first layout; 2 adds `files`, which the server itself checks; 3 adds `engines`, which the
+// server reads to pick each engine's executable and matching kit. The extension reads none of them.
+export const SUPPORTED_PAYLOAD_VERSIONS: readonly number[] = [1, 2, 3];
 
 export interface ServerLaunch {
     executable: string;

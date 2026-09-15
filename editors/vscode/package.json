@@ -112,6 +112,19 @@
           "default": "auto",
           "description": "Whether the built-in standard library kit may be used."
         },
+        "mcppls.engine": {
+          "type": "string",
+          "enum": [
+            "clangd",
+            "none"
+          ],
+          "enumDescriptions": [
+            "The built-in clangd provides C++ semantics; mcppls's own engine answers module-level requests.",
+            "No core engine: only mcppls's own module-level features (module navigation, import completion, module diagnostics)."
+          ],
+          "default": "clangd",
+          "description": "The core semantic engine. mcppls's own module engine always runs beside it."
+        },
         "mcppls.detectConflicts": {
           "type": "boolean",
           "default": true,

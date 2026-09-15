@@ -222,7 +222,7 @@ private:
         }
 
         // usable plan W9.4: resolved and checked once, before any root trusts either with anything.
-        payload_ = engine::resolve_payload(engine::PayloadRequest { options_.payloadDirectory, options_.clangd, options_.kit });
+        payload_ = engine::resolve_payload(engine::PayloadRequest { options_.payloadDirectory, options_.clangd, options_.kit, options_.engine });
         {
             const std::string integrityCache { base::join_path(platform::dirs::cache_directory(), "payload-integrity.json") };
             for (const auto& problem : engine::verify_payload_integrity(payload_, integrityCache)) {

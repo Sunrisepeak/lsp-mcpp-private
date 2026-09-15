@@ -36,7 +36,8 @@ import fetch  # noqa: E402  (same directory)
 PLATFORMS = ("linux-x64", "win32-x64", "darwin-arm64")
 # 2: "files" (usable plan W9.4) records size and sha256 of clangd and the kit manifest, so the
 # server can tell a corrupt or tampered payload from a working one at startup.
-PAYLOAD_VERSION = 2
+# 3 (overall design 5.6) adds `engines`: each engine's executable, version and the kit that matches it.
+PAYLOAD_VERSION = 3
 # Payload-relative paths of the files the server checks at startup; see verify()'s "files" handling
 # and mcppls.server.payload.verify_payload_integrity.
 INTEGRITY_FILES = ("clangd/bin/clangd{exe}", "kit/kit.json")
@@ -152,6 +153,13 @@ def verify(payload_dir):
 
     major = str(manifest.get("clangd", {}).get("version", "0")).split(".")[0]
     need_file(f"clangd/lib/clang/{major}/include/stddef.h", "clang builtin headers")
+
+    engines = manifest.get("engines") or {}
+    clangd_engine = engines.get("clangd") or {}
+    if clangd_engine.get("path") != f"clangd/bin/clangd{exe}" or clangd_engine.get("version") != manifest.get("clangd", {}).get("version"):
+        problems.append(f"engines.clangd is {clangd_engine!r}, expected the clangd part's path and version")
+    if (clangd_engine.get("kit") or {}) != (manifest.get("kit") or {}):
+        problems.append("engines.clangd.kit differs from the kit part")
 
     kit_entry = manifest.get("kit") or {}
     if kit_entry.get("path") != "kit":
@@ -272,6 +280,9 @@ def assemble(args):
         "server": {"version": args.server_version or server_version_from_manifest(), "path": f"bin/mcppls{exe}"},
         "clangd": {"version": lock["clangd-version"], "path": f"clangd/bin/clangd{exe}"},
         "kit": {"name": kit["name"], "path": "kit"},
+        "engines": {
+            "clangd": {"version": lock["clangd-version"], "path": f"clangd/bin/clangd{exe}", "kit": {"name": kit["name"], "path": "kit"}},
+        },
         "files": files,
     }
     with open(os.path.join(out, "payload.json"), "w", encoding="utf-8") as f:

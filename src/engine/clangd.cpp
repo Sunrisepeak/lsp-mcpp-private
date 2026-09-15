@@ -124,6 +124,11 @@ public:
         if (primer_.busy()) std::tie(status.prepared, status.toPrepare) = primer_.progress();
         status.issues = issues_;
         status.state = unavailable_ ? "unavailable" : status.preparing ? "preparing" : accepting_ ? "ready" : "starting";
+        // overall design 5.6: a clangd outside the traits table runs with every compensation on, and says so.
+        if (!unavailable_ && !traits_.tested && !options_.version.empty()) {
+            status.notices.push_back(Issue { "engine-version-untested",
+                std::format("clangd {} has not been run through this server's conformance suite; every workaround for clangd 23.1 stays on", options_.version), "" });
+        }
         return status;
     }
 

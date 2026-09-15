@@ -19,7 +19,8 @@ struct PayloadPaths {
     std::string directory;     // empty when no payload is used
     std::string clangd;        // absolute executable path, or empty
     std::string clangdVersion;
-    std::string kit;           // kit root directory, or empty
+    std::string kit;           // the kit root that matches the core engine (S4-4-5), or empty
+    std::string kitNotice;     // why the payload's kit was not taken: its libc++ is not the engine's version
     std::string platform;
     // Path relative to `directory` -> expected size/sha256. Empty when payload.json declares none
     // (an older payload, or no payload at all): nothing is checked.
@@ -30,11 +31,13 @@ struct PayloadRequest {
     std::string payloadDirectory;   // --payload
     std::string clangd;             // --clangd
     std::string kit;                // --kit
+    std::string engine { "clangd" };   // the core engine, whose version decides the kit; none: any kit
 };
 
-// Explicit paths win; then the payload named or enclosing this executable
-// (payload.json, else the conventional layout); then clangd on PATH and a kit
-// installed by xlings (design 15.3).
+// Explicit paths win; then the payload named or enclosing this executable (payload.json's
+// `engines`, or its parts in versions 1 and 2, else the conventional layout); then clangd on PATH.
+// The kit is the one whose libc++ is the core engine's version (overall design 5.6): the payload's,
+// else that version installed by xlings.
 PayloadPaths resolve_payload(const PayloadRequest& request);
 // The macOS SDK path for kits that need one, or empty.
 std::string macos_sdk_path();

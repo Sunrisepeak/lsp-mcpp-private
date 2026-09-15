@@ -212,6 +212,8 @@ class ServerHost implements vscode.Disposable {
             initializationOptions: {
                 compiler: compiler.length > 0 ? compiler : null,
                 semanticKit: configuration.get<string>('semanticKit') === 'off' ? 'off' : 'auto',
+                // overall design 5.6: the core semantic engine; mcppls's own module engine always runs.
+                engine: configuration.get<string>('engine') === 'none' ? 'none' : 'clangd',
             },
             errorHandler: {
                 error: () => ({ action: ErrorAction.Continue, handled: true }),
@@ -428,7 +430,8 @@ export function activate(context: vscode.ExtensionContext): TestApi {
 
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration((event) => {
-            if (event.affectsConfiguration('mcppls.compiler') || event.affectsConfiguration('mcppls.semanticKit')) {
+            if (event.affectsConfiguration('mcppls.compiler') || event.affectsConfiguration('mcppls.semanticKit')
+                || event.affectsConfiguration('mcppls.engine')) {
                 void host.restart();
             }
         }),

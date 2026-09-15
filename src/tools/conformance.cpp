@@ -452,6 +452,8 @@ Json position(const Json& at) { return Json { { "line", at.at(0) }, { "character
 class Scenario {
 private:
     Client& client_;
+    const Options& options_;
+    std::vector<std::string> serverArguments_;
     std::string workspace_;
     std::map<std::string, std::pair<std::string, int>> open_;   // relative path -> (text, version)
     std::chrono::seconds timeout_;
@@ -461,9 +463,10 @@ private:
     std::map<std::string, std::map<std::string, std::string>> moduleFilesBefore_;   // module -> its published files before the server started
 
 public:
-    Scenario(Client& client, std::string workspace, std::chrono::seconds timeout, std::map<std::string, std::string> prepared,
-             std::string cacheDirectory, bool expectWarm, std::map<std::string, std::map<std::string, std::string>> moduleFilesBefore)
-        : client_ { client }, workspace_ { std::move(workspace) }, timeout_ { timeout }, prepared_ { std::move(prepared) },
+    Scenario(Client& client, const Options& options, std::vector<std::string> serverArguments, std::string workspace, std::chrono::seconds timeout,
+             std::map<std::string, std::string> prepared, std::string cacheDirectory, bool expectWarm,
+             std::map<std::string, std::map<std::string, std::string>> moduleFilesBefore)
+        : client_ { client }, options_ { options }, serverArguments_ { std::move(serverArguments) }, workspace_ { std::move(workspace) }, timeout_ { timeout }, prepared_ { std::move(prepared) },
           cacheDirectory_ { std::move(cacheDirectory) }, expectWarm_ { expectWarm }, moduleFilesBefore_ { std::move(moduleFilesBefore) } {}
 
     std::string uri(std::string_view relative) const { return base::path_to_uri(base::join_path(workspace_, relative)); }
@@ -565,6 +568,22 @@ public:
                 if (auto compiler = check.find("profile-compiler"); compiler != check.end()) {
                     matched = matched && snapshot.value("profile", Json::object()).value("compiler", std::string {}).starts_with(compiler->get<std::string>());
                 }
+                // overall design 5.2 and 5.6: the core engine, and every engine serving the root.
+                if (auto engineName = check.find("engine-name"); engineName != check.end()) {
+                    matched = matched && snapshot.value("engine", Json::object()).value("name", std::string {}) == engineName->get<std::string>();
+                }
+                if (auto engines = check.find("engines-include"); engines != check.end()) {
+                    for (const auto& wanted : *engines) {
+                        matched = matched && std::ranges::any_of(snapshot.value("engines", Json::array()), [&](const Json& engine) {
+                            return engine.value("name", std::string {}) == wanted.get<std::string>();
+                        });
+                    }
+                }
+                if (auto noticeCode = check.find("notice-code"); noticeCode != check.end()) {
+                    matched = matched && std::ranges::any_of(snapshot.value("notices", Json::array()), [&](const Json& notice) {
+                        return notice.value("code", std::string {}) == noticeCode->get<std::string>();
+                    });
+                }
                 return matched;
             };
             (void)client_.wait_for([&] { return settled(current()); }, timeout_);
@@ -573,6 +592,32 @@ public:
             if (!matches(current())) (void)client_.wait_for([&] { return matches(current()); }, std::min(timeout_, std::chrono::seconds { 3 }));
             const Json snapshot = current();   // `Json x { y }` would wrap y in a one-element array; `=` copies it
             return { matches(snapshot), lsp::dump(snapshot) };
+        }
+        if (kind == "second-instance") {
+            // overall design 6.3: another server on the same workspace and cache, as an agent's own
+            // server beside an editor's, reports that it keeps a private cache.
+            Client second;
+            if (auto started = second.start(options_, serverArguments_, workspace_, cacheDirectory_); !started) return { false, started.error().message };
+            Json capabilities { { "experimental", Json { { "cxxModules", Json { { "version", 1 }, { "status", true } } } } } };
+            auto initialized = second.request("initialize", Json { { "processId", nullptr }, { "rootUri", base::path_to_uri(workspace_) },
+                { "workspaceFolders", Json::array({ Json { { "uri", base::path_to_uri(workspace_) }, { "name", "second" } } }) },
+                { "capabilities", capabilities } }, std::chrono::seconds { 60 });
+            if (!initialized || !initialized->is_object()) {
+                second.stop();
+                return { false, "the second server did not answer initialize" };
+            }
+            second.notify("initialized", Json::object());
+            const std::string wanted { check.value("notice-code", std::string { "shared-workspace" }) };
+            const auto hasNotice = [&] {
+                if (!second.status.is_object()) return false;
+                return std::ranges::any_of(second.status.value("notices", Json::array()), [&](const Json& notice) {
+                    return notice.is_object() && notice.value("code", std::string {}) == wanted;
+                });
+            };
+            const bool found { second.wait_for(hasNotice, timeout_) };
+            const Json snapshot = second.status;
+            second.stop();
+            return { found, lsp::dump(snapshot) };
         }
         if (kind == "responds") {
             // An answer of any kind, an empty one included, within the check's time: a file the engine
@@ -896,7 +941,7 @@ int run(const Options& options) {
     say("{} initialize ({:.1f}s) experimental.cxxModules={}", advertised ? "PASS" : "FAIL", initializeSeconds, advertised);
     client.notify("initialized", Json::object());
 
-    Scenario runner { client, workspace, options.timeout, std::move(prepared), cacheDirectory, options.expectWarm, std::move(moduleFilesBefore) };
+    Scenario runner { client, options, serverArguments, workspace, options.timeout, std::move(prepared), cacheDirectory, options.expectWarm, std::move(moduleFilesBefore) };
     int failures { advertised ? 0 : 1 };
     Json measured = Json::array();
     for (const auto& check : scenario.value("checks", Json::array())) {

@@ -23,6 +23,7 @@ checks fail at once with that reason instead of each waiting out its timeout.
 | Fixture | What it covers |
 |---|---|
 | `inferred` | Loose module sources, no build system and no compiler: the semantic kit provides libc++ semantics (design 13.5) |
+| `engine-none` | The `inferred` project with `--engine none` (overall design 5.6): no core engine, so mcppls's own engine alone answers module navigation, hover, outline, import completion and module diagnostics; the status names `none` as the core engine and lists `mcppls` in `engines` (S3-4-5, S3-4-6). `inferred` checks the same fields with clangd, and starts a second server on the same workspace and cache, which must report the `shared-workspace` notice (design 6.3) |
 | `untrusted` | An mcpp package in an untrusted workspace: nothing is executed, the kit answers, the status is `degraded` with the reason |
 | `mcpp-gcc` | mcpp with GCC 16, described by mcpp's own `emit build-database` (mcpp 2026.9.15.1): level 3 once the S1 library has structured mcpp's level 2 document, GCC arguments translated for clangd (P1), libstdc++'s `std` from its manifest, a test that imports the package's module across sets, and the workspace unchanged |
 | `mcpp-llvm` | The same with LLVM 22: libc++ selected through include paths, BMI arguments removed (P3) |

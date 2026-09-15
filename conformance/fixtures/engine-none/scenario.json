@@ -1,0 +1,16 @@
+{
+  "name": "engine-none",
+  "description": "The inferred project with no core engine (--engine none, overall design 5.6): mcppls's own engine alone answers module-level requests from its index; status names no core engine and lists mcppls's.",
+  "server-arguments": ["--no-discover", "--engine", "none"],
+  "checks": [
+    { "id": "S1", "kind": "status", "source": "inferred", "state": "ready", "engine-name": "none", "engines-include": ["mcppls"] },
+    { "id": "M1-definition", "kind": "definition", "file": "src/main.cpp", "at": [1, 9], "expect": "src/greet/greet.cppm" },
+    { "id": "M1-partition", "kind": "definition", "file": "src/greet/greet.cppm", "at": [1, 16], "expect": "src/greet/detail.cppm" },
+    { "id": "M2-hover", "kind": "hover-contains", "file": "src/main.cpp", "at": [1, 9], "expect": "module hello.greet" },
+    { "id": "M3-outline", "kind": "document-symbol-contains", "file": "src/greet/greet.cppm", "expect": "hello.greet" },
+    { "id": "M4-import-completion", "kind": "completion-contains", "file": "src/scratch.cpp", "text": "import hel", "at": [0, 10], "expect": "hello.greet" },
+    { "id": "M5-unresolved", "kind": "diagnostic-code", "file": "src/unresolved.cpp", "text": "import missing.module;\nint f();\n", "expect": "unresolved-module" },
+    { "id": "M6-graph", "kind": "module-graph-contains", "expect": "hello.greet:detail" },
+    { "id": "R1-elsewhere", "kind": "responds", "file": "src/main.cpp", "at": [4, 10], "timeout": 5 }
+  ]
+}

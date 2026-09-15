@@ -12,6 +12,7 @@ import mcppls.platform.env;
 import mcppls.platform.dirs;
 import mcppls.platform.process;
 import mcppls.base.sha256;
+import mcppls.spec.kit;
 import mcppls.engine.clangd.process;
 
 namespace mcppls::engine {
@@ -44,13 +45,16 @@ std::string enclosing_payload() {
     return platform::fs::is_regular_file(base::join_path(candidate, "payload.json")) ? candidate : std::string {};
 }
 
-// A kit installed by xlings: <store>/xim-x-mcppls-kit/<version>[/<archive root>]/kit.json, newest version first.
-std::string installed_kit() {
+// A kit installed by xlings: <store>/xim-x-mcppls-kit/<version>[/<archive root>]/kit.json. With a
+// wanted version only that version is taken (S4-4-5: the kit's libc++ is the engine's version);
+// without one, the newest.
+std::string installed_kit(std::string_view wantedVersion) {
     const std::string home { platform::dirs::home_directory() };
     for (std::string_view store : { ".xlings/data/xpkgs", ".mcpp/registry/data/xpkgs" }) {
         auto versions = platform::fs::list_directory(base::join_path(home, base::join_path(store, "xim-x-mcppls-kit")));
         std::ranges::sort(versions, std::greater<> {});
         for (const auto& version : versions) {
+            if (!wantedVersion.empty() && base::file_name(version) != wantedVersion) continue;
             if (platform::fs::is_regular_file(base::join_path(version, "kit.json"))) return version;
             for (const auto& child : platform::fs::list_directory(version)) {
                 if (platform::fs::is_regular_file(base::join_path(child, "kit.json"))) return child;
@@ -58,6 +62,11 @@ std::string installed_kit() {
         }
     }
     return {};
+}
+
+std::string kit_version(std::string_view kitRoot) {
+    auto kit = spec::load_kit(kitRoot);
+    return kit ? kit->stdlibVersion : std::string {};
 }
 
 } // namespace
@@ -68,19 +77,35 @@ PayloadPaths resolve_payload(const PayloadRequest& requested) {
     const std::string suffix { mcppls::os::EXECUTABLE_SUFFIX };
     PayloadRequest request { requested };
     if (request.payloadDirectory.empty()) request.payloadDirectory = enclosing_payload();
+    std::string payloadKit;
+    bool clangdDeclared { false };
     if (!request.payloadDirectory.empty()) {
         paths.directory = absolute(request.payloadDirectory);
         const std::string manifest { base::join_path(paths.directory, "payload.json") };
         if (auto text = platform::fs::read_file(manifest)) {
             nlohmann::json document = nlohmann::json::parse(*text, nullptr, false);
             if (!document.is_discarded() && document.is_object()) {
-                if (auto clangd = document.find("clangd"); clangd != document.end() && clangd->is_object()) {
+                // Payload version 3 names each engine's executable, version and kit; versions 1 and 2 the clangd and kit parts.
+                const nlohmann::json* clangd { nullptr };
+                if (auto engines = document.find("engines"); engines != document.end() && engines->is_object()) {
+                    if (auto entry = engines->find("clangd"); entry != engines->end() && entry->is_object()) clangd = &*entry;
+                }
+                if (clangd == nullptr) {
+                    if (auto entry = document.find("clangd"); entry != document.end() && entry->is_object()) clangd = &*entry;
+                }
+                if (clangd != nullptr && !clangd->value("path", std::string {}).empty()) {
                     paths.clangd = base::join_path(paths.directory, clangd->value("path", std::string {}));
                     paths.clangdVersion = clangd->value("version", std::string {});
+                    clangdDeclared = true;
                 }
-                if (auto kit = document.find("kit"); kit != document.end() && kit->is_object()) {
-                    paths.kit = base::join_path(paths.directory, kit->value("path", std::string { "kit" }));
+                const nlohmann::json* kit { nullptr };
+                if (clangd != nullptr) {
+                    if (auto entry = clangd->find("kit"); entry != clangd->end() && entry->is_object()) kit = &*entry;
                 }
+                if (kit == nullptr) {
+                    if (auto entry = document.find("kit"); entry != document.end() && entry->is_object()) kit = &*entry;
+                }
+                if (kit != nullptr) payloadKit = base::join_path(paths.directory, kit->value("path", std::string { "kit" }));
                 paths.platform = document.value("platform", paths.platform);
                 // usable plan W9.4: "files": { "clangd/bin/clangd": {"size":N,"sha256":"..."}, ... },
                 // written by assemble_payload.py. Absent in an older payload; nothing is checked then.
@@ -96,27 +121,50 @@ PayloadPaths resolve_payload(const PayloadRequest& requested) {
                 }
             }
         }
-        if (paths.clangd.empty()) paths.clangd = base::join_path(paths.directory, "clangd/bin/clangd" + suffix);
-        if (paths.kit.empty()) paths.kit = base::join_path(paths.directory, "kit");
+        // A payload that does not declare clangd may still carry it in the conventional place; one that
+        // carries none leaves clangd to PATH below (a declared but missing clangd stays missing).
+        if (!clangdDeclared) {
+            const std::string conventional { base::join_path(paths.directory, "clangd/bin/clangd" + suffix) };
+            if (platform::fs::is_regular_file(conventional)) paths.clangd = conventional;
+        }
+        if (payloadKit.empty()) payloadKit = base::join_path(paths.directory, "kit");
     }
     if (!request.clangd.empty()) {
         paths.clangd = absolute(request.clangd);
         paths.clangdVersion.clear();
     }
-    if (!request.kit.empty()) paths.kit = absolute(request.kit);
-    if (paths.clangd.empty() || !platform::fs::is_regular_file(paths.clangd)) {
-        if (auto found = platform::env::find_executable("clangd")) {
-            if (paths.clangd.empty()) paths.clangd = *found;
-        }
+    if (paths.clangd.empty()) {
+        if (auto found = platform::env::find_executable("clangd")) paths.clangd = *found;
     }
-    if (!paths.kit.empty() && !platform::fs::is_regular_file(base::join_path(paths.kit, "kit.json"))) paths.kit.clear();
-    if (paths.kit.empty() && request.kit.empty()) paths.kit = installed_kit();
     if (paths.clangdVersion.empty() && !paths.clangd.empty() && platform::fs::is_regular_file(paths.clangd)) {
         platform::SpawnOptions options;
         options.program = paths.clangd;
         options.arguments = { "--version" };
         if (auto result = platform::run(std::move(options), std::chrono::seconds { 20 }); result && !result->timedOut) {
             paths.clangdVersion = engine::clangd::parse_clangd_version(result->output + result->error);
+        }
+    }
+
+    // The kit that matches the core engine (S4-4-5): an explicit --kit is taken as given; otherwise
+    // the payload's when its libc++ is the engine's version, else that version installed by xlings.
+    const std::string wanted { request.engine == "none" || paths.clangdVersion.empty() ? std::string {} : paths.clangdVersion };
+    if (!request.kit.empty()) {
+        const std::string kit { absolute(request.kit) };
+        if (platform::fs::is_regular_file(base::join_path(kit, "kit.json"))) paths.kit = kit;
+    } else {
+        std::string mismatch;
+        if (!payloadKit.empty() && platform::fs::is_regular_file(base::join_path(payloadKit, "kit.json"))) {
+            const std::string version { kit_version(payloadKit) };
+            if (wanted.empty() || version == wanted) {
+                paths.kit = payloadKit;
+            } else {
+                mismatch = version;
+            }
+        }
+        if (paths.kit.empty()) paths.kit = installed_kit(wanted);
+        if (paths.kit.empty() && !mismatch.empty()) {
+            paths.kitNotice = std::format("the semantic kit carries libc++ {}, but clangd {} needs libc++ {}; install mcppls-kit {}", mismatch,
+                                          paths.clangdVersion, wanted, wanted);
         }
     }
     return paths;

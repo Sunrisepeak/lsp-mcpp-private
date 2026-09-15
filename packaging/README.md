@@ -28,8 +28,9 @@ its manifest.
 
 ```
 <payload>/
-  payload.json                      payload-version 1, platform, and the version
-                                    and relative path of each part
+  payload.json                      payload-version 3, platform, the version and
+                                    relative path of each part, and `engines`: per
+                                    engine its executable, version and matching kit
   bin/mcppls[.exe]
   clangd/bin/clangd[.exe]
   clangd/lib/clang/<major>/include/  clang's builtin headers, found beside clangd

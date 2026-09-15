@@ -67,10 +67,18 @@ interface CxxModulesStatusParams {
     level?: 1 | 2 | 3 | 4;        // S1 conformance level of the project model
   };
   profile: SemanticProfile;        // semantic profile of the default context
-  engine: { name: "clangd"; version: string };
+  engine: { name: string; version: string };   // the core semantic engine, e.g. "clangd"; "none" when there is none
+  engines?: EngineStatus[];        // every engine serving the root (overall design 5)
   progress?: { done: number; total: number };
   issues?: CxxModulesIssue[];      // reasons for degradation; absent or empty when there are none
   notices?: CxxModulesIssue[];     // facts worth showing that reduce no feature, e.g. a producer that writes into the project
+}
+
+interface EngineStatus {
+  name: string;                    // e.g. "clangd", or "mcppls" for the server's own module engine
+  version: string;
+  role: "core" | "modules" | string;
+  state: "starting" | "ready" | "preparing" | "unavailable" | string;
 }
 
 interface SemanticProfile {
@@ -104,6 +112,8 @@ States:
 A server **MUST** send the notification whenever any field changes, **SHOULD** coalesce changes that occur within a short interval, and **MUST** send at least one notification after `initialized`. `project.source` names where the model came from: an mcpp project, a CMake project, an S1 database, a `compile_commands.json`, or inference from sources alone. `profile.kind` is `semantic-kit` when the server analyzes the project with an [S4](s4-semantic-kit.md) semantic kit because no suitable compiler was found. <a id="S3-4-1"></a><a id="S3-4-2"></a><a id="S3-4-3"></a><sup>S3-4-1, S3-4-2, S3-4-3</sup>
 
 A server that manages more than one workspace root (multiple `workspaceFolders`, or folders added or removed later through `workspace/didChangeWorkspaceFolders`) **MUST** send one notification per root, each with that root's own `project.root`, rather than one notification describing all of them; a client that presents status per folder tells them apart by it. This is a backward-compatible addition: `project.root` already existed in protocol version 1, and a single-root server's one notification already satisfied "at least one notification" above. A request that names a document (for example `cxxModules/setContext`) is answered by the root that owns it; `cxxModules/graph` and a bare-name `cxxModules/moduleInfo` name no document and so, until a later protocol version adds a way to select one, are answered by the first root. <a id="S3-4-4"></a><sup>S3-4-4</sup>
+
+A server whose semantic capabilities come from more than one engine **SHOULD** list each in `engines` with its role and state, and **MUST** name the engine that provides the core C++ semantics in `engine`, or `"none"` when the root has none. A client **MUST** accept engine names other than `"clangd"`. <a id="S3-4-5"></a><a id="S3-4-6"></a><a id="S3-4-7"></a><sup>S3-4-5, S3-4-6, S3-4-7</sup>
 
 ## 5. Requests
 

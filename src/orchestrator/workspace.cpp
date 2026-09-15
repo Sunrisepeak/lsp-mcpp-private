@@ -28,6 +28,7 @@ import mcppls.engine.payload;
 import mcppls.engine.native.index;
 import mcppls.orchestrator.client;
 import mcppls.orchestrator.documents;
+import mcppls.orchestrator.instance;
 import mcppls.orchestrator.routing;
 
 namespace mcppls::orchestrator {
@@ -125,6 +126,9 @@ struct Workspace::Impl final : engine::Host {
     bool kitEnabled { true };
 
     std::string cacheDirectory;
+    // overall design 6.3: the lease on <cache>/workspaces/<key>; a second instance works in a private directory.
+    std::optional<WorkspaceLease> lease;
+    std::optional<Clock::time_point> leaseRenewAt;
     engine::PayloadPaths payload;
     bool payloadCorrupt { false };
     std::optional<spec::Kit> kit;
@@ -205,7 +209,10 @@ struct Workspace::Impl final : engine::Host {
         : root { std::move(root_) }, key { std::move(key_) }, options { std::move(options_) }, events { std::move(events_) }, client { client_ },
           compilerOverride { std::move(compilerOverride_) }, kitEnabled { kitEnabled_ }, payload { std::move(payload_) },
           payloadCorrupt { payloadCorrupt_ } {
-        cacheDirectory = base::join_path(platform::dirs::cache_directory(), base::join_path("workspaces", project::workspace_key(root)));
+        const std::string workspaceDirectory { base::join_path(platform::dirs::cache_directory(), base::join_path("workspaces", project::workspace_key(root))) };
+        lease = WorkspaceLease::acquire(workspaceDirectory, std::chrono::system_clock::now());
+        cacheDirectory = lease->directory();
+        if (!lease->shared()) leaseRenewAt = Clock::now() + LEASE_RENEWAL;
         // Under its one name, like every file the engines are given (engine_uri): the prime units
         // and the database live here, and clangd answers for them under the name it was given.
         (void)platform::fs::create_directories(cacheDirectory);
@@ -349,6 +356,7 @@ struct Workspace::Impl final : engine::Host {
         consider(loadGiveUpAt);
         consider(sdkCheckAt);
         consider(statusFlushAt);
+        consider(leaseRenewAt);
         for (const auto& engine : engines) consider(engine->next_deadline());
         return deadline;
     }
@@ -838,6 +846,19 @@ struct Workspace::Impl final : engine::Host {
         if (model) {
             for (const auto& notice : model->notices) notices.push_back(Json { { "code", notice.code }, { "message", notice.message } });
         }
+        if (!payload.kitNotice.empty()) notices.push_back(Json { { "code", "kit-version-mismatch" }, { "message", payload.kitNotice } });
+        if (lease && lease->shared()) {
+            notices.push_back(Json { { "code", "shared-workspace" },
+                                     { "message", "another mcppls instance serves this workspace; this one keeps a private cache and starts cold" } });
+        }
+        // S3 4 (overall design 5.2): every engine serving the root, with its role and state.
+        Json engineList = Json::array();
+        for (const auto& engine : engines) {
+            const engine::EngineStatus engineStatus { engine->status() };
+            engineList.push_back(Json { { "name", engineStatus.name }, { "version", engineStatus.version }, { "role", engineStatus.role },
+                                        { "state", engineStatus.state } });
+            for (const auto& notice : engineStatus.notices) notices.push_back(Json { { "code", notice.code }, { "message", notice.message } });
+        }
         // usable plan W9.1: `project.root` is this root's own path, so a multi-root session's several
         // notifications are told apart by it.
         Json project { { "root", clientUri.empty() ? base::path_to_uri(root) : clientUri },
@@ -849,6 +870,7 @@ struct Workspace::Impl final : engine::Host {
             { "project", project },
             { "profile", profile_json() },
             { "engine", core ? Json { { "name", core->name }, { "version", core->version } } : Json { { "name", "none" }, { "version", "" } } },
+            { "engines", std::move(engineList) },
             { "issues", issues },
         };
         if (!notices.empty()) params["notices"] = std::move(notices);
@@ -877,6 +899,10 @@ struct Workspace::Impl final : engine::Host {
     void handle_timers() {
         const auto now = Clock::now();
         for (const auto& engine : engines) engine->handle_timers();
+        if (leaseRenewAt && *leaseRenewAt <= now) {
+            lease->renew(std::chrono::system_clock::now());
+            leaseRenewAt = now + LEASE_RENEWAL;
+        }
         if (reloadAt && *reloadAt <= now) {
             reloadAt.reset();
             start_model_load();
@@ -961,6 +987,7 @@ void Workspace::allow_status_notifications() {
 
 void Workspace::shut_down() {
     for (const auto& engine : impl_->engines) engine->shut_down();
+    if (impl_->lease) impl_->lease->release();
 }
 
 void Workspace::did_open(const Json& params) {
