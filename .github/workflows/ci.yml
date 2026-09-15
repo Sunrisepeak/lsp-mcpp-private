@@ -607,3 +607,21 @@ jobs:
           name: vsix-${{ matrix.platform }}
           path: editors/vscode/mcppls-${{ matrix.platform }}.vsix
           retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # The agent task benchmark's baseline/reference pairs (bench/README.md, design
+  # §10.2, work item A2): no agent and no API key, just `mcpp build`/`mcpp test`
+  # (and a small content check) against each task's baseline project copy,
+  # expected to fail at least one check, and its reference-patched copy,
+  # expected to pass every check.
+  bench-validate:
+    name: bench-validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-mcpp
+      - name: GCC toolchain (two of the ten tasks pin gcc@16.1.0)
+        run: mcpp toolchain install gcc 16.1.0
+      - name: Validate every task's baseline/reference pair
+        run: python3 bench/run.py validate
