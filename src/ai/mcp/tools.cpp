@@ -291,7 +291,11 @@ ToolResult call_tool(query::View& view, std::string_view name, const Json& value
         if (!reviewed) return failure(reviewed.error());
         Json value = review::review_json(*reviewed);
         if (*source != model::SourceKind::none) {
-            review::JudgementOptions judgementOptions { context.model, context.modelCache, arguments.boolean("explainContext", false) };
+            review::JudgementOptions judgementOptions { context.model, context.modelCache, arguments.boolean("explainContext", false),
+                                                        [&view, deadline](const Json& fix) {
+                                                            const auto verified = verify::verify_fix(view, fix, deadline);
+                                                            return verified && verified->passes;
+                                                        } };
             judgementOptions.settings.source = *source;
             if (*source == model::SourceKind::agent) judgementOptions.settings.explicitlyEnabled = true;
             auto client = external && context.makeClient ? context.makeClient(*source) : nullptr;

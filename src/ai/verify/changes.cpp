@@ -211,6 +211,60 @@ query::Outcome<SnippetVerification> verify_snippet(query::View& view, const Snip
     return verification;
 }
 
+query::Outcome<FixVerification> verify_fix(query::View& view, const Json& fix, Clock::time_point deadline) {
+    const Json edits = fix.is_object() ? fix.value("edits", Json::array()) : Json::array();
+    if (!edits.is_array() || edits.empty()) return std::unexpected { query::invalid_arguments("a fix has no edits") };
+    view.refresh();
+    (void)view.settle(deadline);
+    // Edits by file, each file's from the end backwards so earlier positions stay where they are.
+    std::map<std::string, std::vector<Json>> byFile;
+    for (const auto& edit : edits) {
+        if (!edit.is_object() || !edit.contains("file")) return std::unexpected { query::invalid_arguments("an edit names no file") };
+        byFile[view.path_of(edit.value("file", std::string {}))].push_back(edit);
+    }
+    std::map<std::string, std::string> candidates;
+    for (auto& [path, fileEdits] : byFile) {
+        auto text = view.kernel().text(path);
+        if (!text) return std::unexpected { query::invalid_arguments(std::format("no such file: {}", view.display(path))) };
+        std::ranges::sort(fileEdits, [](const Json& a, const Json& b) {
+            return std::pair { a.value("line", 0), a.value("column", 0) } > std::pair { b.value("line", 0), b.value("column", 0) };
+        });
+        std::string candidate { *text };
+        for (const auto& edit : fileEdits) {
+            const auto start = base::offset_at(candidate, spec::lsp_position(candidate, edit.value("line", 1), edit.value("column", 1)));
+            const auto end = base::offset_at(candidate, spec::lsp_position(candidate, edit.value("endLine", edit.value("line", 1)), edit.value("endColumn", edit.value("column", 1))));
+            if (!start || !end || *end < *start) return std::unexpected { query::invalid_arguments(std::format("an edit of {} is outside the file", view.display(path))) };
+            candidate.replace(*start, *end - *start, edit.value("newText", std::string {}));
+        }
+        candidates.emplace(path, std::move(candidate));
+    }
+
+    // What the files report before the fix is not the fix's doing.
+    std::set<std::pair<std::string, std::string>> before;
+    for (const auto& [path, candidate] : candidates) view.open(path);
+    (void)view.kernel().wait_until([&] { return std::ranges::all_of(candidates, [&](const auto& item) { return query::diagnostics_fresh(view, item.first).first; }); },
+                                   until(deadline));
+    for (const auto& [path, candidate] : candidates) {
+        for (const auto& diagnostic : query::published_diagnostics(view, path)) before.emplace(diagnostic.message, std::string { base::trim(diagnostic.location.text) });
+    }
+    for (auto& [path, candidate] : candidates) view.kernel().change(path, candidate);
+    (void)view.kernel().wait_until([&] { return std::ranges::all_of(candidates, [&](const auto& item) { return query::diagnostics_fresh(view, item.first).first; }); },
+                                   until(deadline));
+    FixVerification verification;
+    verification.complete = std::ranges::all_of(candidates, [&](const auto& item) { return query::diagnostics_fresh(view, item.first).first; });
+    for (const auto& [path, candidate] : candidates) {
+        for (auto& diagnostic : query::published_diagnostics(view, path)) {
+            if (diagnostic.severity != spec::Severity::error) continue;
+            if (!before.contains({ diagnostic.message, std::string { base::trim(diagnostic.location.text) } })) verification.introduced.push_back(std::move(diagnostic));
+        }
+        view.kernel().revert(path);
+    }
+    verification.passes = verification.complete && verification.introduced.empty();
+    if (!verification.complete) verification.reason = "the core engine did not check the fixed files in time";
+    else if (!verification.introduced.empty()) verification.reason = std::format("the fix introduces {} error(s)", verification.introduced.size());
+    return verification;
+}
+
 Json to_json(const Verification& verification) {
     Json checked = Json::array();
     for (const auto& file : verification.checked) {

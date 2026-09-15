@@ -581,7 +581,10 @@ cmdline::App review_command(bool& handled, int& status) {
                     if (!gateway.executable.empty()) client = std::make_unique<ai::model::GatewayClient>(std::move(gateway));
                 }
                 const ai::review::JudgementOptions options { *modelSettings, base::join_path(view.kernel().workspace().cache_directory(), "model"),
-                                                              args.is_flag_set("explain-context") };
+                                                              args.is_flag_set("explain-context"), [&view, deadline](const Json& fix) {
+                                                                  const auto verified = ai::verify::verify_fix(view, fix, deadline);
+                                                                  return verified && verified->passes;
+                                                              } };
                 const auto judgement = ai::review::judge(*reviewed, options, client.get());
                 for (const auto& finding : judgement.findings) {
                     value["findings"].push_back(spec::to_json(finding));

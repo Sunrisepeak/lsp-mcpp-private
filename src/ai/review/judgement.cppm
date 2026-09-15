@@ -18,6 +18,8 @@ struct JudgementOptions {
     model::ModelSettings settings;
     std::string cacheDirectory;           // where model answers are kept, by the hash of what was sent
     bool explainOnly { false };           // say what would be sent, and send nothing
+    // Whether a fix a model proposes compiles (ai/verify's verify_fix); without it no fix is kept.
+    std::function<bool(const nlohmann::json& fix)> verifyFix;
 };
 
 struct Judgement {

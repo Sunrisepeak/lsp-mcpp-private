@@ -81,7 +81,7 @@ Judgement judge(const ReviewResult& result, const JudgementOptions& options, mod
         return judgement;
     }
     model::Cache cache { options.cacheDirectory };
-    auto reviewed = model::model_findings(*client, context, options.settings, cache);
+    auto reviewed = model::model_findings(*client, context, options.settings, cache, options.verifyFix);
     judgement.enabled = reviewed.enabled;
     judgement.budgetExceeded = reviewed.budgetExceeded;
     judgement.cacheHit = reviewed.cacheHit;

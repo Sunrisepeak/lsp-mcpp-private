@@ -1,6 +1,6 @@
 {
   "id": "model-evidence-checked-split",
-  "title": "A scripted model answers with a finding that cites the review's evidence and one that cites evidence that does not exist",
+  "title": "A scripted model answers with findings that cite the review's evidence or evidence that does not exist, and with a fix that compiles and one that does not",
   "category": "model",
   "project": "conformance/fixtures/mcpp-split",
   "remove": [],
@@ -43,6 +43,60 @@
                 "E404"
               ],
               "confidence": 0.99
+            },
+            {
+              "rule": "model/restore-export",
+              "severity": "error",
+              "message": "declare decorate again, since greet.cpp still calls it",
+              "location": {
+                "file": "src/greet/format.cppm",
+                "line": 6,
+                "column": 1
+              },
+              "evidence": [
+                "E1"
+              ],
+              "confidence": 0.9,
+              "fix": {
+                "description": "declare decorate in the partition interface again",
+                "edits": [
+                  {
+                    "file": "src/greet/format.cppm",
+                    "line": 6,
+                    "column": 1,
+                    "endLine": 6,
+                    "endColumn": 1,
+                    "newText": "std::string decorate(std::string_view text);\n"
+                  }
+                ]
+              }
+            },
+            {
+              "rule": "model/broken-fix",
+              "severity": "warning",
+              "message": "a fix that does not compile",
+              "location": {
+                "file": "src/greet/format.cppm",
+                "line": 6,
+                "column": 1
+              },
+              "evidence": [
+                "E1"
+              ],
+              "confidence": 0.5,
+              "fix": {
+                "description": "a declaration without its semicolon",
+                "edits": [
+                  {
+                    "file": "src/greet/format.cppm",
+                    "line": 6,
+                    "column": 1,
+                    "endLine": 6,
+                    "endColumn": 1,
+                    "newText": "std::string decorate(std::string_view text)\n"
+                  }
+                ]
+              }
             }
           ]
         }
@@ -60,6 +114,16 @@
       "file": "src/greet/greet.cpp",
       "origin": "model",
       "evidence-file": "src/greet/greet.cpp"
+    },
+    {
+      "rule": "model/restore-export",
+      "origin": "model",
+      "fixed": true
+    },
+    {
+      "rule": "model/broken-fix",
+      "origin": "model",
+      "fixed": false
     }
   ],
   "must-not": [

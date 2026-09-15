@@ -9,7 +9,8 @@ change/ over it and removes review.json's "remove" paths, then runs `mcppls revi
 the findings (overall design 10.3, work item RV5):
 
 - every entry of "must" is matched by a finding of its "rule", in its "file" and on its "line" when those are given,
-  with evidence in "evidence-file" when that is given;
+  with evidence in "evidence-file" when that is given, of its "origin" (rule or model), and with a verified fix or
+  without one as "fixed" says;
 - no finding matches an entry of "must-not" (the same fields, all optional but "rule").
 
 A fixture passes when both hold. The summary counts, per rule, matched "must" entries (true positives), unmatched ones
@@ -33,6 +34,8 @@ def matches(finding, entry):
     if "line" in entry and location.get("line") != entry["line"]:
         return False
     if "evidence-file" in entry and not any(e.get("location", {}).get("file") == entry["evidence-file"] for e in finding.get("evidence", [])):
+        return False
+    if "fixed" in entry and (finding.get("fix") is not None) != entry["fixed"]:
         return False
     return True
 

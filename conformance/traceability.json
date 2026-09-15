@@ -1488,6 +1488,13 @@
  "S5-5.4-5": [
   {
    "test": "tests/test_model.cpp: review: a proposed fix is dropped without a verifier, and kept only when one accepts it"
+  },
+  {
+   "review": "model-evidence-checked-split"
+  },
+  {
+   "script": "src/ai/verify/changes.cpp",
+   "contains": "verification.passes = verification.complete && verification.introduced.empty();"
   }
  ],
  "S5-5.4-6": [

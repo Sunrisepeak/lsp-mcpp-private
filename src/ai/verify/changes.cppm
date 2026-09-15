@@ -63,6 +63,18 @@ struct SnippetVerification {
 // given back its own content; the file on disk is never written.
 query::Outcome<SnippetVerification> verify_snippet(query::View& view, const SnippetOptions& options, query::Clock::time_point deadline);
 
+// A proposed fix (S5 5.1: {"description", "edits": [{file, line, column, endLine, endColumn, newText}]})
+// applied as unsaved content to the files it edits, checked, and taken back: whether it compiles
+// without an error the files did not have before (overall design 7.4 step 6).
+struct FixVerification {
+    bool passes { false };
+    bool complete { false };
+    std::vector<query::Diagnostic> introduced;
+    std::string reason;
+};
+
+query::Outcome<FixVerification> verify_fix(query::View& view, const nlohmann::json& fix, query::Clock::time_point deadline);
+
 nlohmann::json to_json(const Verification& verification);
 nlohmann::json to_json(const SnippetVerification& verification);
 
