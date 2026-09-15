@@ -161,6 +161,8 @@ struct Workspace::Impl final : engine::Host {
     // Diagnostics published by engines other than mcppls's own, per engine and client URI.
     std::map<std::string, std::map<std::string, Json, std::less<>>, std::less<>> engineDiagnostics;
     std::map<std::string, std::string, std::less<>> publishedDiagnostics;
+    // The document version the core engine's latest diagnostics were computed for, by client URI (-1: not said).
+    std::map<std::string, std::int64_t, std::less<>> coreDiagnosticsVersions;
 
     // Requests in flight across engines.
     struct Job {
@@ -192,6 +194,8 @@ struct Workspace::Impl final : engine::Host {
     bool firstPlanWritten { false };
     std::string contextSet;
     std::map<std::string, std::string, std::less<>> structures;   // path key -> module structure at planning time
+    // S5 2.2: advanced whenever a document, a watched file, the model or the plan changes.
+    std::uint64_t snapshotGeneration { 0 };
 
     // Timers.
     std::optional<Clock::time_point> reloadAt;
@@ -254,12 +258,16 @@ struct Workspace::Impl final : engine::Host {
         return make_engine_request_key(key, engineId, generation, engineRequestId);
     }
 
-    void publish_engine_diagnostics(std::string_view engineId, const std::string& uri, Json diagnostics) override {
+    void publish_engine_diagnostics(std::string_view engineId, const std::string& uri, Json diagnostics, std::optional<std::int64_t> version) override {
         engineDiagnostics[std::string { engineId }][uri] = std::move(diagnostics);
+        if (coreEngine != nullptr && engineId == coreEngine->id()) coreDiagnosticsVersions[uri] = version.value_or(-1);
         publish_diagnostics(uri, true);
     }
 
-    void forget_engine_diagnostics(std::string_view engineId) override { engineDiagnostics.erase(std::string { engineId }); }
+    void forget_engine_diagnostics(std::string_view engineId) override {
+        engineDiagnostics.erase(std::string { engineId });
+        if (coreEngine != nullptr && engineId == coreEngine->id()) coreDiagnosticsVersions.clear();
+    }
 
     void engine_settled(std::string_view engineId, const Json& serverCapabilities) override {
         if (coreEngine != nullptr && engineId != coreEngine->id()) return;
@@ -654,6 +662,7 @@ struct Workspace::Impl final : engine::Host {
     void handle_model_loaded(std::shared_ptr<project::ProjectModel> loadedModel) {
         loading = false;
         loadGiveUpAt.reset();
+        ++snapshotGeneration;
         // S2 5: a producer that answered before and fails now (or answers with nothing) leaves the last
         // model in place, and the status says it may be stale, rather than the project falling back to
         // scanned sources. A project that is no longer that kind of project takes the new model.
@@ -733,6 +742,7 @@ struct Workspace::Impl final : engine::Host {
     void replan() {
         replanAt.reset();
         if (!model) return;
+        ++snapshotGeneration;
         normalize::PlanInput input;
         input.database = &model->database;
         input.contextSet = contextSet;
@@ -995,6 +1005,7 @@ void Workspace::did_open(const Json& params) {
     if (item == nullptr) return;
     const std::string uri { item->value("uri", std::string {}) };
     const std::string path { impl_->path_of_uri(uri) };
+    ++impl_->snapshotGeneration;
     const Document& document = impl_->documents_.open(uri, path, item->value("languageId", std::string { "cpp" }),
                                                       item->value("version", std::int64_t { 0 }), item->value("text", std::string {}));
     if (!path.empty()) {
@@ -1010,6 +1021,7 @@ void Workspace::did_change(const Json& message, const Json& params) {
     const std::int64_t version { lsp::find_path(params, { "textDocument", "version" }) != nullptr
                                      ? params["textDocument"].value("version", std::int64_t { 0 }) : 0 };
     if (!impl_->documents_.change(uri, version, params.value("contentChanges", Json::array()))) return;
+    ++impl_->snapshotGeneration;
     const Document* document { impl_->documents_.find(uri) };
     if (!document->path.empty()) {
         impl_->index.update(document->path, document->text);
@@ -1025,12 +1037,14 @@ void Workspace::did_close(const Json& message, const Json& params) {
     if (found == nullptr) return;
     const Document document { *found };
     impl_->documents_.close(uri);
+    ++impl_->snapshotGeneration;
     if (!document.path.empty()) {
         if (auto text = platform::fs::read_file(document.path)) impl_->index.update(document.path, *text);
     }
     impl_->document_event(engine::DocumentChange::closed, document, &message);
     // Diagnostics of a closed file are cleared; an engine may send its own empty set too.
     impl_->publishedDiagnostics.erase(uri);
+    impl_->coreDiagnosticsVersions.erase(uri);
     for (auto& [engineId, byUri] : impl_->engineDiagnostics) byUri.erase(uri);
     impl_->client.notify("textDocument/publishDiagnostics", Json { { "uri", uri }, { "diagnostics", Json::array() } });
     impl_->update_status();
@@ -1050,6 +1064,7 @@ void Workspace::did_save(const Json& message, const Json& params) {
 }
 
 void Workspace::handle_watched_files(const Json& changes) {
+    ++impl_->snapshotGeneration;
     bool reload { false };
     bool replan { false };
     for (const auto& change : changes) {
@@ -1150,5 +1165,44 @@ void Workspace::handle_model_loaded(int generation, std::shared_ptr<project::Pro
 std::optional<Clock::time_point> Workspace::next_deadline() const { return impl_->next_deadline(); }
 
 void Workspace::handle_timers() { impl_->handle_timers(); }
+
+const index::ModuleIndex& Workspace::module_index() const { return impl_->index; }
+
+std::shared_ptr<const project::ProjectModel> Workspace::project_model() const { return impl_->model; }
+
+const normalize::EnginePlan& Workspace::engine_plan() const { return impl_->plan; }
+
+std::string Workspace::canonical_path_of(std::string_view uri) const { return impl_->path_of_uri(uri); }
+
+bool Workspace::model_loading() const { return impl_->loading; }
+
+std::uint64_t Workspace::snapshot_generation() const { return impl_->snapshotGeneration; }
+
+std::optional<std::string> Workspace::document_text(std::string_view path) const {
+    const Document* document { impl_->documents_.find_by_path(path) };
+    if (document == nullptr) return std::nullopt;
+    return document->text;
+}
+
+std::optional<engine::EngineStatus> Workspace::core_engine_status() const {
+    if (impl_->coreEngine == nullptr) return std::nullopt;
+    return impl_->coreEngine->status();
+}
+
+const std::string& Workspace::cache_directory() const { return impl_->cacheDirectory; }
+
+bool Workspace::trusted() const { return impl_->options.trusted; }
+
+std::optional<std::int64_t> Workspace::core_diagnostics_version(std::string_view uri) const {
+    const auto found = impl_->coreDiagnosticsVersions.find(uri);
+    if (found == impl_->coreDiagnosticsVersions.end()) return std::nullopt;
+    return found->second;
+}
+
+bool Workspace::core_engine_serves(std::string_view method, std::string_view path) const {
+    if (impl_->coreEngine == nullptr) return false;
+    const Json params = Json::object();
+    return impl_->coreEngine->claims(engine::RequestView { method, &params, path, {} });
+}
 
 } // namespace mcppls::orchestrator

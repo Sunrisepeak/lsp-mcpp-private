@@ -26,6 +26,8 @@ import mcppls.engine.native;
 import mcppls.engine.native.index;
 import mcppls.engine.clangd;
 import mcppls.server.session;
+import mcppls.cli.options;
+import mcppls.cli.query;
 
 namespace mcppls::cli {
 
@@ -33,11 +35,6 @@ namespace {
 
 using Json = nlohmann::json;
 using namespace mcpplibs;
-
-std::string absolute(std::string_view path) {
-    if (path.empty() || base::is_absolute_path(path)) return base::normalize_path(path);
-    return base::join_path(platform::fs::current_directory(), path);
-}
 
 struct Loaded {
     engine::PayloadPaths payload;
@@ -163,24 +160,6 @@ int command_check(const cmdline::ParsedArgs& args) {
     return result->exitCode == 0 && !result->timedOut ? 0 : 1;
 }
 
-// The composition root (overall design 4.1): the engines every workspace root gets.
-orchestrator::EngineFactories engine_factories(const orchestrator::SessionOptions& options, const engine::PayloadPaths& payload, bool payloadCorrupt) {
-    orchestrator::EngineFactories factories;
-    factories.modules = [](const index::ModuleIndex& index) { return engine::native::make_engine(index); };
-    if (options.engine == "none") return factories;
-    if (options.engine != "clangd") base::log::warning("unknown engine {}; using clangd", options.engine);
-    factories.core = [options, payload, payloadCorrupt]() -> std::unique_ptr<engine::Engine> {
-        engine::clangd::Options clangd;
-        clangd.executable = payload.clangd;
-        clangd.version = payload.clangdVersion;
-        clangd.payloadCorrupt = payloadCorrupt;
-        clangd.verboseLog = options.verboseEngineLog;
-        clangd.requestTimeout = options.requestTimeout;
-        return engine::clangd::make_engine(std::move(clangd));
-    };
-    return factories;
-}
-
 } // namespace
 
 int run(int argc, char* argv[]) {
@@ -188,30 +167,8 @@ int run(int argc, char* argv[]) {
     bool handled { false };
     auto serve = [&](const cmdline::ParsedArgs& args) {
         handled = true;
-        if (auto level = args.value("log-level")) {
-            if (auto parsed = base::log::parse_level(*level)) base::log::set_level(*parsed);
-        }
-        orchestrator::SessionOptions options;
-        options.payloadDirectory = args.value("payload").value_or("");
-        options.clangd = args.value("clangd").value_or("");
-        options.kit = args.value("kit").value_or("");
-        options.mcpp = args.value("mcpp").value_or("");
-        options.database = args.value("database").value_or("");
-        options.trusted = !args.is_flag_set("untrusted");
-        options.discoverCompilers = !args.is_flag_set("no-discover");
-        options.verboseEngineLog = args.value("log-level").value_or("") == "debug";
-        if (auto chosen = args.value("engine")) {
-            options.engine = *chosen;
-            options.engineFromCommandLine = true;
-        }
-        options.engineFactories = engine_factories;
-        if (auto timeout = args.value("request-timeout")) {
-            try {
-                options.requestTimeout = std::chrono::seconds { std::stoi(*timeout) };
-            } catch (...) {
-            }
-        }
-        status = server::run_session(options);
+        apply_log_level(args);
+        status = server::run_session(session_options(args));
     };
 
     // Built statement by statement: a fluent chain nests a subcommand under the
@@ -252,6 +209,9 @@ int run(int argc, char* argv[]) {
     (void)modelCommand.option("export").takes_value().help("s1 | compile-commands | engine");
     (void)modelCommand.action([&](const cmdline::ParsedArgs& args) { handled = true; status = command_model(args); });
     (void)app.subcommand(std::move(modelCommand));
+
+    (void)app.subcommand(query_command(handled, status));
+    (void)app.subcommand(diagnostics_command(handled, status));
 
     cmdline::App versionCommand { "version" };
     (void)versionCommand.description("Print the version");

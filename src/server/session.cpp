@@ -163,6 +163,7 @@ private:
         case EventKind::model_loaded:
             if (auto* root = root_by_key_(event.rootKey)) root->handle_model_loaded(event.generation, std::move(event.model));
             break;
+        case EventKind::external: break;   // no other entry shares an LSP session's loop
         }
     }
 

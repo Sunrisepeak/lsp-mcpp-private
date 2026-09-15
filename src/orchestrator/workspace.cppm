@@ -10,6 +10,7 @@ import mcppls.base.text;
 import mcppls.platform.fs;
 import mcppls.platform.task;
 import mcppls.project.model;
+import mcppls.normalize.plan;
 import mcppls.engine;
 import mcppls.engine.payload;
 import mcppls.engine.native.index;
@@ -45,7 +46,8 @@ struct SessionOptions {
 
 // A background thread (model loading, an engine's I/O threads, watch polling) reports back through
 // this queue; the session's one event loop is the only thing that ever changes state.
-enum class EventKind { client_message, client_closed, engine_event, model_loaded };
+// `external` carries a message of an entry other than LSP (an MCP request, say) through the same loop.
+enum class EventKind { client_message, client_closed, engine_event, model_loaded, external };
 
 struct Event {
     EventKind kind { EventKind::client_message };
@@ -117,6 +119,24 @@ public:
     // ---- timers -----------------------------------------------------------------------
     std::optional<Clock::time_point> next_deadline() const;
     void handle_timers();
+
+    // ---- what the AI capabilities read (overall design 7) --------------------------------
+    const index::ModuleIndex& module_index() const;
+    std::shared_ptr<const project::ProjectModel> project_model() const;   // null before the first model
+    const normalize::EnginePlan& engine_plan() const;
+    std::string canonical_path_of(std::string_view uri) const;
+    bool model_loading() const;
+    std::uint64_t snapshot_generation() const;
+    // The open buffer of a file by its canonical path, if a client has it open.
+    std::optional<std::string> document_text(std::string_view path) const;
+    std::optional<engine::EngineStatus> core_engine_status() const;
+    const std::string& cache_directory() const;
+    bool trusted() const;
+    // The document version of the core engine's latest diagnostics for a client URI: -1 when the
+    // engine did not say, nullopt when it published none since the document opened.
+    std::optional<std::int64_t> core_diagnostics_version(std::string_view uri) const;
+    // Whether the core engine takes requests of `method` for `path` (a unit left out of its database does not).
+    bool core_engine_serves(std::string_view method, std::string_view path) const;
 
 private:
     std::string root_;

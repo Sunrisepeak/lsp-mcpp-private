@@ -632,7 +632,8 @@ private:
                 host_->send_to_client(forwarded);
             } else {
                 diagnosed_.insert(uri);
-                host_->publish_engine_diagnostics(ENGINE_ID, uri, params.value("diagnostics", Json::array()));
+                const auto version = lsp::int_at(params, "version");
+                host_->publish_engine_diagnostics(ENGINE_ID, uri, params.value("diagnostics", Json::array()), version);
             }
             host_->status_changed();
             return;

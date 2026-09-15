@@ -108,7 +108,8 @@ public:
     // The id a request an engine sends to the client travels under, and back (client_response).
     virtual std::string client_request_id(std::string_view engineId, int generation, const Json& engineRequestId) const = 0;
     // An engine's diagnostics for a document the client has open; the workspace merges and publishes them.
-    virtual void publish_engine_diagnostics(std::string_view engineId, const std::string& clientUri, Json diagnostics) = 0;
+    // `version` is the document version the diagnostics were computed for, when the engine says.
+    virtual void publish_engine_diagnostics(std::string_view engineId, const std::string& clientUri, Json diagnostics, std::optional<std::int64_t> version) = 0;
     // Drops what the engine published so far without publishing anything, as when it restarts.
     virtual void forget_engine_diagnostics(std::string_view engineId) = 0;
     // Once per start: the server capabilities the engine brings, or an empty object when it has none.
