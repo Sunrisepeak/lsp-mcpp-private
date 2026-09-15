@@ -1,13 +1,13 @@
 // A lexical scanner for module declarations and imports. It does not
 // preprocess: declarations inside conditional blocks are reported and marked
 // conditional, and the result is marked uncertain.
-export module lspmcpp.project.scan;
+export module mcppls.project.scan;
 
 import std;
-import lspmcpp.base.text;
-import lspmcpp.spec.database;
+import mcppls.base.text;
+import mcppls.spec.database;
 
-export namespace lspmcpp::project {
+export namespace mcppls::project {
 
 struct ModuleDeclaration {
     std::string module;            // "hello.greet"
@@ -47,4 +47,4 @@ std::string imported_name(const ScanResult& result, const ImportDeclaration& imp
 // True when the file name has a conventional C++ source or module extension.
 bool is_cxx_source_name(std::string_view path);
 
-} // namespace lspmcpp::project
+} // namespace mcppls::project

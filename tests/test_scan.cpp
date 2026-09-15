@@ -1,16 +1,16 @@
 import std;
-import lspmcpp.testing;
-import lspmcpp.base.text;
-import lspmcpp.spec.database;
-import lspmcpp.project.scan;
+import mcppls.testing;
+import mcppls.base.text;
+import mcppls.spec.database;
+import mcppls.project.scan;
 
-using namespace lspmcpp::project;
-using lspmcpp::base::Position;
-using lspmcpp::base::Range;
-using lspmcpp::spec::Role;
+using namespace mcppls::project;
+using mcppls::base::Position;
+using mcppls::base::Range;
+using mcppls::spec::Role;
 
 int main() {
-    using namespace lspmcpp::testing;
+    using namespace mcppls::testing;
 
     "the fixture's primary interface"_test = [] {
         const auto result = scan_source("export module hello.greet;\nexport import :detail;\nimport std;\n\n"

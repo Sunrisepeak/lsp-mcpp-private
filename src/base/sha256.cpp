@@ -1,8 +1,8 @@
-module lspmcpp.base.sha256;
+module mcppls.base.sha256;
 
 import std;
 
-namespace lspmcpp::base {
+namespace mcppls::base {
 
 namespace {
 
@@ -114,4 +114,4 @@ std::string sha256_hex(std::string_view data) {
     return hasher.finish();
 }
 
-} // namespace lspmcpp::base
+} // namespace mcppls::base

@@ -1,4 +1,4 @@
-// C++ Modules for VS Code: a thin client for the lsp-mcpp language server.
+// C++ Modules for VS Code: a thin client for the mcppls language server.
 //
 // The extension starts the server from the bundled payload, advertises the
 // cxxModules protocol extension, shows one language status item, and otherwise
@@ -30,7 +30,7 @@ import { resolveLaunch } from './payload';
 import { promptTestHarness, PromptKind } from './prompt';
 import { CxxModulesStatus, ModuleState, StatusController } from './status';
 
-const CLIENT_ID = 'lspMcpp';
+const CLIENT_ID = 'mcppls';
 const CLIENT_NAME = 'C++ Modules';
 const RESTART_WINDOW_MS = 3 * 60 * 1000;
 const MAX_RESTARTS = 4;
@@ -40,7 +40,7 @@ export interface TestApi {
     lastStatus(): CxxModulesStatus | undefined;
     // Calls the extension (or the bundled language client) made to VS Code
     // APIs that would put something in front of the user, while
-    // LSP_MCPP_TEST=1; -1 when a given counter could not be installed. See
+    // MCPPLS_TEST=1; -1 when a given counter could not be installed. See
     // installUiCounters below for what each one means and, for
     // showTextDocumentCount specifically, why it is a snapshot rather than a
     // live count.
@@ -110,7 +110,7 @@ class ServerHost implements vscode.Disposable {
         private readonly status: StatusController,
         private readonly commandLineTools: CommandLineToolsController,
         // Called every time the server actually (re)starts, i.e. once at
-        // activation and once per lspMcpp.restartServer or a config-driven
+        // activation and once per mcppls.restartServer or a config-driven
         // restart -- but not for the language client's own crash-recovery
         // respawn, which never calls back into startNow(). Used to re-run
         // conflict detection at the same points a fresh cxxModules/status
@@ -177,7 +177,7 @@ class ServerHost implements vscode.Disposable {
             return;
         }
         const launch = resolution.launch;
-        const configuration = vscode.workspace.getConfiguration('lspMcpp');
+        const configuration = vscode.workspace.getConfiguration('mcppls');
 
         const args = ['serve'];
         if (launch.payloadDir) {
@@ -186,7 +186,7 @@ class ServerHost implements vscode.Disposable {
         if (!vscode.workspace.isTrusted) {
             args.push('--untrusted');
         }
-        const logLevel = process.env.LSP_MCPP_LOG_LEVEL
+        const logLevel = process.env.MCPPLS_LOG_LEVEL
             ?? (configuration.get<string>('trace.server') === 'verbose' ? 'debug' : undefined);
         if (logLevel) {
             args.push('--log-level', logLevel);
@@ -395,7 +395,7 @@ function installUiCounters() {
 let activeHost: ServerHost | undefined;
 
 export function activate(context: vscode.ExtensionContext): TestApi {
-    const ui = process.env.LSP_MCPP_TEST === '1' ? installUiCounters() : undefined;
+    const ui = process.env.MCPPLS_TEST === '1' ? installUiCounters() : undefined;
 
     const status = new StatusController();
     // Forward-declared so the callbacks below can close over the eventual
@@ -428,7 +428,7 @@ export function activate(context: vscode.ExtensionContext): TestApi {
 
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration((event) => {
-            if (event.affectsConfiguration('lspMcpp.compiler') || event.affectsConfiguration('lspMcpp.semanticKit')) {
+            if (event.affectsConfiguration('mcppls.compiler') || event.affectsConfiguration('mcppls.semanticKit')) {
                 void host.restart();
             }
         }),

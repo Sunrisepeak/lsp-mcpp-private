@@ -1,4 +1,4 @@
-# lsp-mcpp-kit
+# mcppls-kit
 
 A semantic kit (spec [S4](../../specs/s4-semantic-kit.md)) gives clangd a
 standard library with module semantics when the project's own compiler cannot
@@ -52,7 +52,7 @@ linux-x64:
 ```json
 {
   "kit-version": 1,
-  "name": "lsp-mcpp-kit-libcxx-23.1.0-x86_64-unknown-linux-gnu",
+  "name": "mcppls-kit-libcxx-23.1.0-x86_64-unknown-linux-gnu",
   "target": "x86_64-unknown-linux-gnu",
   "stdlib": {
     "name": "libc++",
@@ -97,6 +97,6 @@ and their sources are added to the engine database once. For `macos-sdk` the
 server looks at `SDKROOT`, then `xcrun --show-sdk-path`, then the Command Line
 Tools and Xcode SDK locations.
 
-With xlings, the kit is the `lsp-mcpp-kit` package, installed under
-`<xlings data>/xpkgs/xim-x-lsp-mcpp-kit/<version>`, where the server looks for
+With xlings, the kit is the `mcppls-kit` package, installed under
+`<xlings data>/xpkgs/xim-x-mcppls-kit/<version>`, where the server looks for
 it when no payload provides one.

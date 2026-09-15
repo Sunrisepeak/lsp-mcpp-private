@@ -1,7 +1,7 @@
 // The "conflicts" scenario (plan W6.4, design 16.5, U10): with the cpptools
-// and clangd stub extensions installed (test/stubs/*), lsp-mcpp must ask
+// and clangd stub extensions installed (test/stubs/*), mcppls must ask
 // once whether to turn off their language features, act only on the answer
-// runTest.ts substituted (via LSP_MCPP_E2E_CONFLICT_ANSWER, read below and
+// runTest.ts substituted (via MCPPLS_E2E_CONFLICT_ANSWER, read below and
 // handed to the extension through TestApi.setPromptAnswer before the
 // extension's own automatic check can reach it -- see src/prompt.ts), and
 // remember that answer afterwards. runTest.ts runs this suite twice, once
@@ -20,7 +20,7 @@ import * as vscode from 'vscode';
 import { DISABLE, KEEP } from '../../src/conflicts';
 import type { TestApi } from '../../src/extension';
 
-const EXTENSION_ID = 'mcpp-community.lsp-mcpp';
+const EXTENSION_ID = 'mcpp-community.mcpp-language-server';
 const READY_TIMEOUT_MS = 120_000;
 
 function settingsFile(): string {
@@ -43,12 +43,12 @@ suite('conflicting C++ extensions', function () {
     this.timeout(180_000);
 
     let api: TestApi;
-    const answer = process.env.LSP_MCPP_E2E_CONFLICT_ANSWER;
+    const answer = process.env.MCPPLS_E2E_CONFLICT_ANSWER;
 
     suiteSetup(async function () {
         assert.ok(
             answer === DISABLE || answer === KEEP,
-            `LSP_MCPP_E2E_CONFLICT_ANSWER must be "${DISABLE}" or "${KEEP}"; got ${JSON.stringify(answer)}`,
+            `MCPPLS_E2E_CONFLICT_ANSWER must be "${DISABLE}" or "${KEEP}"; got ${JSON.stringify(answer)}`,
         );
         assert.ok(vscode.extensions.getExtension('ms-vscode.cpptools'), 'the cpptools stub is not installed');
         assert.ok(vscode.extensions.getExtension('llvm-vs-code-extensions.vscode-clangd'), 'the clangd stub is not installed');
@@ -84,7 +84,7 @@ suite('conflicting C++ extensions', function () {
     }
 
     test('restarting the server does not ask again', async () => {
-        await vscode.commands.executeCommand('lspMcpp.restartServer');
+        await vscode.commands.executeCommand('mcppls.restartServer');
         await api.waitForState(['ready', 'degraded'], READY_TIMEOUT_MS);
         assert.strictEqual(api.promptShownCount('conflict'), 1, 'restarting the server must not ask again');
         assert.strictEqual(await api.conflictCheck(), 'already-answered');

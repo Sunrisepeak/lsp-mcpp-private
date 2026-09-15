@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Put the server, clangd and the semantic kit into the payload layout.
 
-    assemble_payload.py --platform linux-x64 --server target/.../bin/lsp-mcpp \\
+    assemble_payload.py --platform linux-x64 --server target/.../bin/mcppls \\
                         --clangd DIR --kit DIR --out editors/vscode/payload
     assemble_payload.py --verify editors/vscode/payload
 
@@ -9,11 +9,11 @@ The layout is the contract the server and the VS Code extension rely on:
 
     <payload>/
       payload.json                  versions and relative paths of the three parts
-      bin/lsp-mcpp[.exe]
+      bin/mcppls[.exe]
       clangd/bin/clangd[.exe]
       clangd/lib/clang/<major>/include/...
       kit/kit.json + kit data        (spec S4)
-      licenses/                      lsp-mcpp and LLVM license texts
+      licenses/                      mcppls and LLVM license texts
 
 --clangd is a directory produced by trim_clangd.py and --kit one produced by
 build_kit.py. Assembling always ends with the same verification --verify runs.
@@ -38,7 +38,7 @@ PLATFORMS = ("linux-x64", "win32-x64", "darwin-arm64")
 # server can tell a corrupt or tampered payload from a working one at startup.
 PAYLOAD_VERSION = 2
 # Payload-relative paths of the files the server checks at startup; see verify()'s "files" handling
-# and lspmcpp.server.payload.verify_payload_integrity.
+# and mcppls.server.payload.verify_payload_integrity.
 INTEGRITY_FILES = ("clangd/bin/clangd{exe}", "kit/kit.json")
 
 
@@ -140,7 +140,7 @@ def verify(payload_dir):
         problems.append(f"unknown platform {platform!r}")
         return problems
     exe = suffix(platform)
-    for part, expected in (("server", f"bin/lsp-mcpp{exe}"), ("clangd", f"clangd/bin/clangd{exe}")):
+    for part, expected in (("server", f"bin/mcppls{exe}"), ("clangd", f"clangd/bin/clangd{exe}")):
         entry = manifest.get(part) or {}
         if entry.get("path") != expected:
             problems.append(f"{part}.path is {entry.get('path')!r}, expected {expected!r}")
@@ -193,7 +193,7 @@ def verify(payload_dir):
                 problems.append("the kit's module manifest does not provide std")
         problems.extend(kit_problems(kit_dir, kit, platform, str(manifest.get("clangd", {}).get("version", ""))))
 
-    for name in ("lsp-mcpp-LICENSE.txt", "LLVM-LICENSE.TXT"):
+    for name in ("mcppls-LICENSE.txt", "LLVM-LICENSE.TXT"):
         need_file(f"licenses/{name}", "license")
 
     # usable plan W9.4: every file the server checks at startup must be exactly what "files"
@@ -243,7 +243,7 @@ def assemble(args):
     if os.path.exists(out):
         shutil.rmtree(out)
     os.makedirs(os.path.join(out, "bin"))
-    server_target = os.path.join(out, "bin", f"lsp-mcpp{exe}")
+    server_target = os.path.join(out, "bin", f"mcppls{exe}")
     shutil.copyfile(args.server, server_target)
     make_executable(server_target)
 
@@ -253,7 +253,7 @@ def assemble(args):
 
     licenses = os.path.join(out, "licenses")
     os.makedirs(licenses)
-    shutil.copyfile(os.path.join(REPO, "LICENSE"), os.path.join(licenses, "lsp-mcpp-LICENSE.txt"))
+    shutil.copyfile(os.path.join(REPO, "LICENSE"), os.path.join(licenses, "mcppls-LICENSE.txt"))
     clangd_license = os.path.join(args.clangd, "LICENSE.TXT")
     if not os.path.isfile(clangd_license):
         raise SystemExit(f"assemble_payload: {args.clangd} has no LICENSE.TXT")
@@ -269,7 +269,7 @@ def assemble(args):
     manifest = {
         "payload-version": PAYLOAD_VERSION,
         "platform": args.platform,
-        "server": {"version": args.server_version or server_version_from_manifest(), "path": f"bin/lsp-mcpp{exe}"},
+        "server": {"version": args.server_version or server_version_from_manifest(), "path": f"bin/mcppls{exe}"},
         "clangd": {"version": lock["clangd-version"], "path": f"clangd/bin/clangd{exe}"},
         "kit": {"name": kit["name"], "path": "kit"},
         "files": files,
@@ -291,7 +291,7 @@ def assemble(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--platform", choices=PLATFORMS)
-    parser.add_argument("--server", help="the lsp-mcpp executable built for --platform")
+    parser.add_argument("--server", help="the mcppls executable built for --platform")
     parser.add_argument("--clangd", help="directory produced by trim_clangd.py")
     parser.add_argument("--kit", help="directory produced by build_kit.py")
     parser.add_argument("--out", help="payload directory to create (replaced if it exists)")

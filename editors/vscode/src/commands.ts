@@ -152,9 +152,9 @@ async function showModuleGraph(access: ServerAccess): Promise<void> {
 
 export function registerCommands(context: vscode.ExtensionContext, access: ServerAccess): void {
     context.subscriptions.push(
-        vscode.commands.registerCommand('lspMcpp.selectContext', () => selectContext(access)),
-        vscode.commands.registerCommand('lspMcpp.showModuleGraph', () => showModuleGraph(access)),
-        vscode.commands.registerCommand('lspMcpp.restartServer', () => access.restart()),
-        vscode.commands.registerCommand('lspMcpp.showLogs', () => access.showLogs()),
+        vscode.commands.registerCommand('mcppls.selectContext', () => selectContext(access)),
+        vscode.commands.registerCommand('mcppls.showModuleGraph', () => showModuleGraph(access)),
+        vscode.commands.registerCommand('mcppls.restartServer', () => access.restart()),
+        vscode.commands.registerCommand('mcppls.showLogs', () => access.showLogs()),
     );
 }

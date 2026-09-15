@@ -1,30 +1,30 @@
-module lspmcpp.server.cli;
+module mcppls.server.cli;
 
 import std;
 import nlohmann.json;
 import mcpplibs.cmdline;
-import lspmcpp.os;
-import lspmcpp.base.error;
-import lspmcpp.base.log;
-import lspmcpp.base.path;
-import lspmcpp.base.version;
-import lspmcpp.platform.fs;
-import lspmcpp.platform.dirs;
-import lspmcpp.platform.process;
-import lspmcpp.spec.database;
-import lspmcpp.spec.kit;
-import lspmcpp.spec.metadata;
-import lspmcpp.toolchain.probe;
-import lspmcpp.project.scan;
-import lspmcpp.project.detect;
-import lspmcpp.project.infer;
-import lspmcpp.project.model;
-import lspmcpp.normalize.plan;
-import lspmcpp.index.modules;
-import lspmcpp.server.payload;
-import lspmcpp.server.session;
+import mcppls.os;
+import mcppls.base.error;
+import mcppls.base.log;
+import mcppls.base.path;
+import mcppls.base.version;
+import mcppls.platform.fs;
+import mcppls.platform.dirs;
+import mcppls.platform.process;
+import mcppls.spec.database;
+import mcppls.spec.kit;
+import mcppls.spec.metadata;
+import mcppls.toolchain.probe;
+import mcppls.project.scan;
+import mcppls.project.detect;
+import mcppls.project.infer;
+import mcppls.project.model;
+import mcppls.normalize.plan;
+import mcppls.index.modules;
+import mcppls.server.payload;
+import mcppls.server.session;
 
-namespace lspmcpp::server {
+namespace mcppls::server {
 
 namespace {
 
@@ -141,7 +141,7 @@ int command_check(const cmdline::ParsedArgs& args) {
         std::println("clangd    not found; skipped the semantic check");
         return loaded.plan.issues.empty() ? 0 : 1;
     }
-    const std::string directory { base::join_path(platform::dirs::temp_directory(), std::format("lsp-mcpp-check-{}", project::workspace_key(root))) };
+    const std::string directory { base::join_path(platform::dirs::temp_directory(), std::format("mcppls-check-{}", project::workspace_key(root))) };
     if (auto written = normalize::write_engine_database(directory, loaded.plan); !written) {
         std::println(std::cerr, "check: {}", written.error().message);
         return 2;
@@ -190,7 +190,7 @@ int run_cli(int argc, char* argv[]) {
 
     // Built statement by statement: a fluent chain nests a subcommand under the
     // previous one once an option has been added to it.
-    cmdline::App app { "lsp-mcpp" };
+    cmdline::App app { "mcppls" };
     (void)app.version(std::string { base::VERSION });
     (void)app.description("Compiler-agnostic C++ modules language server");
     (void)app.option("payload").takes_value().global(true).help("Payload directory with clangd and the semantic kit");
@@ -230,7 +230,7 @@ int run_cli(int argc, char* argv[]) {
     (void)versionCommand.description("Print the version");
     (void)versionCommand.action([&](const cmdline::ParsedArgs&) {
         handled = true;
-        std::println("lsp-mcpp {} ({}; S1 {}; clangd {})", base::VERSION, lspmcpp::os::VSCODE_TARGET, spec::PROFILE_VERSION, base::CLANGD_VERSION);
+        std::println("mcppls {} ({}; S1 {}; clangd {})", base::VERSION, mcppls::os::VSCODE_TARGET, spec::PROFILE_VERSION, base::CLANGD_VERSION);
     });
     (void)app.subcommand(std::move(versionCommand));
     const int parsed { app.run(argc, argv) };
@@ -238,4 +238,4 @@ int run_cli(int argc, char* argv[]) {
     return handled ? status : 0;
 }
 
-} // namespace lspmcpp::server
+} // namespace mcppls::server

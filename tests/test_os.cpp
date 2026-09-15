@@ -1,8 +1,8 @@
 import std;
-import lspmcpp.os;
+import mcppls.os;
 
 int main() {
-    using namespace lspmcpp::os;
+    using namespace mcppls::os;
     bool ok { true };
     if constexpr (FAMILY == Family::windows) {
         ok = EXECUTABLE_SUFFIX == ".exe" && PATH_LIST_SEPARATOR == ';' && VSCODE_TARGET == "win32-x64";

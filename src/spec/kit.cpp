@@ -1,12 +1,12 @@
-module lspmcpp.spec.kit;
+module mcppls.spec.kit;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
-import lspmcpp.base.path;
-import lspmcpp.platform.fs;
+import mcppls.base.error;
+import mcppls.base.path;
+import mcppls.platform.fs;
 
-namespace lspmcpp::spec {
+namespace mcppls::spec {
 
 namespace {
 
@@ -96,4 +96,4 @@ bool requires_macos_sdk(const Kit& kit) {
     return std::ranges::find(kit.requirements, "macos-sdk") != kit.requirements.end();
 }
 
-} // namespace lspmcpp::spec
+} // namespace mcppls::spec

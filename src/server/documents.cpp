@@ -1,11 +1,11 @@
-module lspmcpp.server.documents;
+module mcppls.server.documents;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.text;
-import lspmcpp.base.path;
+import mcppls.base.text;
+import mcppls.base.path;
 
-namespace lspmcpp::server {
+namespace mcppls::server {
 
 namespace {
 
@@ -78,4 +78,4 @@ std::vector<const Document*> DocumentStore::all() const {
     return result;
 }
 
-} // namespace lspmcpp::server
+} // namespace mcppls::server

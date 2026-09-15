@@ -7,13 +7,13 @@ Protocol and checks what comes back. The same fixtures run locally and in CI.
 ```bash
 mcpp build
 bin=target/<triple>/<fingerprint>/bin
-$bin/lsp-mcpp-conformance run --server $bin/lsp-mcpp --fixture conformance/fixtures/inferred \
+$bin/mcppls-conformance run --server $bin/mcppls --fixture conformance/fixtures/inferred \
     --payload editors/vscode/payload            # or --clangd PATH --kit DIR
 ```
 
 The runner copies the fixture to a scratch directory, runs its `prepare`
 commands there, starts the server with a private cache directory
-(`LSP_MCPP_CACHE_DIR`), advertises `experimental.cxxModules`, and prints one
+(`MCPPLS_CACHE_DIR`), advertises `experimental.cxxModules`, and prints one
 `PASS`/`FAIL` line per check. It exits non-zero when a check fails. Once the
 server has exited, or has left two requests in a row unanswered, the remaining
 checks fail at once with that reason instead of each waiting out its timeout.
@@ -29,7 +29,7 @@ checks fail at once with that reason instead of each waiting out its timeout.
 | `mcpp-split` | The shape of a project that separates interfaces from implementations: interface units and an interface partition in `.cppm`, two implementation units (`module hello.greet;`) in `.cpp`, and an implementation partition; from mcpp's own build database. Declarations and definitions are reached from importers, implementation units navigate into partitions and complete module-internal names, and edits reach importers. `mcpp-split-gcc` (Linux) and `mcpp-split-msvc` (Windows) are the same project with GCC 16 and with `msvc@system` |
 | `mcpp-all-cppm` | The shape of a project whose module units are all `.cppm`, implementations written inside the interfaces: a primary interface re-exporting two partitions and a second module; navigation into partitions and through the re-exports, completion through the re-exported module, edits propagated to importers |
 | `mcpp-watch` | S2 5 with mcpp itself: a new module interface, a broken `mcpp.toml` and its repair are inputs mcpp names in `watch`; the broken manifest keeps the last model, `degraded` with `model-stale` and mcpp's own `MCPP_BUILD_DATABASE_PLAN_FAILED` (S2-5-9). CI also runs it as `mcpp-watch@polling` on Linux |
-| `mcpp-emit` | mcpp's `emit build-database --format json` (mcpp-community/mcpp#636), simulated by `lsp-mcpp-mock-mcpp` from `mcpp-mock.json`, which records what mcpp 2026.9.15.1 prints for the project (paths as `${root}` and `${env:HOME}`): a level 2 document without `ide.options`, one set per package plus `hello:test` and `mcpp:std`, each seeing every other set. The S1 library completes it to a level 3 model; a test imports the package's module across sets, and the workspace stays unchanged. The simulated fixtures cover what a real mcpp cannot be made to do on demand |
+| `mcpp-emit` | mcpp's `emit build-database --format json` (mcpp-community/mcpp#636), simulated by `mcppls-mock-mcpp` from `mcpp-mock.json`, which records what mcpp 2026.9.15.1 prints for the project (paths as `${root}` and `${env:HOME}`): a level 2 document without `ide.options`, one set per package plus `hello:test` and `mcpp:std`, each seeing every other set. The S1 library completes it to a level 3 model; a test imports the package's module across sets, and the workspace stays unchanged. The simulated fixtures cover what a real mcpp cannot be made to do on demand |
 | `mcpp-emit-package-std` | The same with `std` and `std.compat` provided by translation units of `mcpp:std` from a dependency package instead of by the toolchain's manifest, built in an mcpp std cache directory that does not exist yet |
 | `mcpp-emit-broken` | The same mcpp answering with an error: the status carries mcpp's own diagnostic, sources are scanned meanwhile, and nothing is configured in its place (the mock's `build` would leave a `compile_commands.json` that `workspace-unchanged` sees) |
 | `mcpp-emit-unavailable` | A project whose `.xlings.json` asks for an mcpp that is not installed: xlings answers every mcpp command in its place and runs nothing, and the status carries xlings's explanation (`mcpp-no-database`) while sources are scanned |
@@ -49,7 +49,7 @@ checks fail at once with that reason instead of each waiting out its timeout.
 | `inferred-msvc` | Loose module sources on a machine with Visual Studio: MSVC STL semantics without a build system (design 9.3, D27) |
 | `inferred-no-sdk` | macOS with the Command Line Tools and Xcode hidden: degraded with `sdk-missing` and its install command, a file importing `std` answered at once, module-level features (usable plan W5, U7) |
 | `inferred-discover` | The `inferred` project with compiler discovery on, on clean machines: a Linux container without a compiler and Windows with Visual Studio hidden (usable plan W5) |
-| `self-lsp-mcpp` | This repository at a fixed commit: `std` from the openkal-llvm-runtime package, units of `mcpp:std` in mcpp's own build database (nightly, W8) |
+| `self-mcppls` | This repository at a fixed commit: `std` from the openkal-llvm-runtime package, units of `mcpp:std` in mcpp's own build database (nightly, W8) |
 | `self-mcpp` | The mcpp repository at a fixed commit, about 170 modules (nightly, W8). Its `.xlings.json` asks for mcpp 2026.9.14.1, which xlings runs inside it: an mcpp without `emit build-database`, so this fixture also covers the `mcpp build --configure-only` fallback |
 | `timing` | Startup timing (usable plan W7): the `inferred` project opened and navigated at once; run cold, then warm with the same workspace and cache |
 | `s1-two-sets` | A workspace carrying its own S1 build database (`--database`, usable plan W9.2): two sets compile the same file under `-DVARIANT=1` and `-DVARIANT=2`; `cxxModules/setContext` switches which one answers |
@@ -66,9 +66,9 @@ On Windows every server runs without a developer environment, as it does when an
 A run can reuse its workspace and the server's cache, so a second run measures a warm start:
 
 ```bash
-$bin/lsp-mcpp-conformance run --server $bin/lsp-mcpp --payload payload --fixture conformance/fixtures/timing \
+$bin/mcppls-conformance run --server $bin/mcppls --payload payload --fixture conformance/fixtures/timing \
     --workspace-dir /tmp/timing/workspace --cache-dir /tmp/timing/cache --measure cold.json --navigation-budget 15
-$bin/lsp-mcpp-conformance run --server $bin/lsp-mcpp --payload payload --fixture conformance/fixtures/timing \
+$bin/mcppls-conformance run --server $bin/mcppls --payload payload --fixture conformance/fixtures/timing \
     --workspace-dir /tmp/timing/workspace --cache-dir /tmp/timing/cache --measure warm.json --navigation-budget 2 --expect-warm
 ```
 

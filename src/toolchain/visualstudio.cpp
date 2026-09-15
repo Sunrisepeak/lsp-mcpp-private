@@ -1,12 +1,12 @@
-module lspmcpp.toolchain.visualstudio;
+module mcppls.toolchain.visualstudio;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
-import lspmcpp.platform.fs;
+import mcppls.base.path;
+import mcppls.base.text;
+import mcppls.platform.fs;
 
-namespace lspmcpp::toolchain::visualstudio {
+namespace mcppls::toolchain::visualstudio {
 
 namespace {
 
@@ -165,4 +165,4 @@ std::optional<Installation> discover(const DiscoveryInputs& inputs) {
     return installation;
 }
 
-} // namespace lspmcpp::toolchain::visualstudio
+} // namespace mcppls::toolchain::visualstudio

@@ -1,13 +1,13 @@
 // GCC and Clang dialect arguments translated for the Clang-based engine
 // (design section 14.4, rows P1-P5), and engine commands built from a kit.
-export module lspmcpp.normalize.gnu;
+export module mcppls.normalize.gnu;
 
 import std;
-import lspmcpp.spec.database;
-import lspmcpp.spec.kit;
-import lspmcpp.toolchain.probe;
+import mcppls.spec.database;
+import mcppls.spec.kit;
+import mcppls.toolchain.probe;
 
-export namespace lspmcpp::normalize {
+export namespace mcppls::normalize {
 
 // The driver name written into engine commands when the build's own driver is
 // not a Clang driver. The engine never executes it.
@@ -36,4 +36,4 @@ std::vector<std::string> kit_arguments(const spec::Kit& kit, std::string_view la
 // The -std= value in arguments, or empty.
 std::string language_standard_of(std::span<const std::string> arguments);
 
-} // namespace lspmcpp::normalize
+} // namespace mcppls::normalize

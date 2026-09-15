@@ -1,24 +1,24 @@
 // Dialect translation rules (design section 14.4) and engine database plans.
 import std;
-import lspmcpp.testing;
+import mcppls.testing;
 import nlohmann.json;
-import lspmcpp.base.path;
-import lspmcpp.platform.fs;
-import lspmcpp.platform.dirs;
-import lspmcpp.spec.database;
-import lspmcpp.spec.kit;
-import lspmcpp.spec.metadata;
-import lspmcpp.toolchain.probe;
-import lspmcpp.project.scan;
-import lspmcpp.normalize.gnu;
-import lspmcpp.normalize.msvc;
-import lspmcpp.normalize.plan;
-import lspmcpp.normalize.semantic;
+import mcppls.base.path;
+import mcppls.platform.fs;
+import mcppls.platform.dirs;
+import mcppls.spec.database;
+import mcppls.spec.kit;
+import mcppls.spec.metadata;
+import mcppls.toolchain.probe;
+import mcppls.project.scan;
+import mcppls.normalize.gnu;
+import mcppls.normalize.msvc;
+import mcppls.normalize.plan;
+import mcppls.normalize.semantic;
 
-namespace s = lspmcpp::spec;
-namespace n = lspmcpp::normalize;
-namespace p = lspmcpp::project;
-using lspmcpp::toolchain::ToolchainFacts;
+namespace s = mcppls::spec;
+namespace n = mcppls::normalize;
+namespace p = mcppls::project;
+using mcppls::toolchain::ToolchainFacts;
 
 namespace {
 
@@ -49,7 +49,7 @@ ToolchainFacts msvc_facts(s::Family family) {
     facts.toolchain.driver = "C:/VS/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe";
     facts.toolchain.target = "x86_64-pc-windows-msvc";
     facts.toolchain.stdlib = s::Stdlib { "msvc-stl", "14.44.35207", "C:/VS/VC/Tools/MSVC/14.44.35207/modules/modules.json" };
-    facts.msvc = lspmcpp::toolchain::MsvcEnvironment { "C:/VS/VC/Tools/MSVC/14.44.35207", "14.44.35207", "C:/Windows Kits/10", "10.0.26100.0" };
+    facts.msvc = mcppls::toolchain::MsvcEnvironment { "C:/VS/VC/Tools/MSVC/14.44.35207", "14.44.35207", "C:/Windows Kits/10", "10.0.26100.0" };
     facts.msCompatibilityVersion = family == s::Family::msvc ? "19.44.35228" : "19.44";
     return facts;
 }
@@ -57,7 +57,7 @@ ToolchainFacts msvc_facts(s::Family family) {
 } // namespace
 
 int main() {
-    using namespace lspmcpp::testing;
+    using namespace mcppls::testing;
 
     "P1: GCC on Linux"_test = [] {
         const auto facts = gcc_facts();
@@ -172,9 +172,9 @@ int main() {
     };
 
     "a plan resolves, injects std once and leaves out what cannot resolve"_test = [] {
-        const std::string root { lspmcpp::base::join_path(lspmcpp::platform::dirs::temp_directory(),
-            std::format("lsp-mcpp-test-plan-{}", std::chrono::steady_clock::now().time_since_epoch().count())) };
-        (void)lspmcpp::platform::fs::create_directories(root);
+        const std::string root { mcppls::base::join_path(mcppls::platform::dirs::temp_directory(),
+            std::format("mcppls-test-plan-{}", std::chrono::steady_clock::now().time_since_epoch().count())) };
+        (void)mcppls::platform::fs::create_directories(root);
         const std::map<std::string, std::string> sources {
             { "/p/src/main.cpp", "import std;\nimport hello.greet;\nimport missing.module;\nint main() {}\n" },
             { "/p/src/app.cpp", "import std;\nimport hello.greet;\nint run() { return 0; }\n" },
@@ -244,10 +244,10 @@ int main() {
         }
         const auto written = n::write_engine_database(root, plan);
         expect(written.has_value());
-        const auto text = lspmcpp::platform::fs::read_file(lspmcpp::base::join_path(root, "compile_commands.json"));
+        const auto text = mcppls::platform::fs::read_file(mcppls::base::join_path(root, "compile_commands.json"));
         expect(fatal(text.has_value()));
         expect(nlohmann::json::parse(*text).size() == plan.entries.size());
-        lspmcpp::platform::fs::remove_all(root);
+        mcppls::platform::fs::remove_all(root);
     };
 
     "a kit plan without a toolchain"_test = [] {
@@ -498,7 +498,7 @@ int main() {
         const auto plan = n::plan_engine(input);
         expect(plan.issues.empty()) << (plan.issues.empty() ? "" : plan.issues.front().message);
 
-        const auto hint = [](std::string_view file) { return lspmcpp::base::join_path("/cache/hints", file); };
+        const auto hint = [](std::string_view file) { return mcppls::base::join_path("/cache/hints", file); };
         const auto entry_for = [&](std::string_view file) -> const n::EngineEntry* {
             const auto it = std::ranges::find_if(plan.entries, [&](const n::EngineEntry& entry) { return entry.file == file; });
             return it == plan.entries.end() ? nullptr : &*it;

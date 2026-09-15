@@ -1,10 +1,10 @@
 // Text utilities, including the UTF-8 / UTF-16 position arithmetic the
 // Language Server Protocol requires: LSP columns count UTF-16 code units.
-export module lspmcpp.base.text;
+export module mcppls.base.text;
 
 import std;
 
-export namespace lspmcpp::base {
+export namespace mcppls::base {
 
 struct Position {
     int line { 0 };
@@ -34,4 +34,4 @@ std::optional<std::size_t> offset_at(std::string_view text, Position position);
 bool is_identifier_start(char c);
 bool is_identifier_char(char c);
 
-} // namespace lspmcpp::base
+} // namespace mcppls::base

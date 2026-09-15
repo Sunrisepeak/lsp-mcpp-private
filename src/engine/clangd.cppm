@@ -1,16 +1,16 @@
 // The semantic engine: a pinned clangd started over openkal with the engine
 // database of one context (design section 15.1), implementing the
-// lspmcpp.engine interface (usable plan W9.5).
-export module lspmcpp.engine.clangd;
+// mcppls.engine interface (usable plan W9.5).
+export module mcppls.engine.clangd;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
-import lspmcpp.lsp.connection;
-import lspmcpp.toolchain.probe;
-import lspmcpp.engine;
+import mcppls.base.error;
+import mcppls.lsp.connection;
+import mcppls.toolchain.probe;
+import mcppls.engine;
 
-export namespace lspmcpp::engine {
+export namespace mcppls::engine {
 
 inline constexpr std::string_view PINNED_CLANGD_MAJOR { "23" };
 
@@ -48,4 +48,4 @@ public:
     EngineCapabilities capabilities() const override { return capabilities_for_clangd_version(config_.version); }
 };
 
-} // namespace lspmcpp::engine
+} // namespace mcppls::engine

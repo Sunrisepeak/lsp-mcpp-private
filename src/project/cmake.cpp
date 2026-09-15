@@ -1,21 +1,21 @@
-module lspmcpp.project.cmake;
+module mcppls.project.cmake;
 
 import std;
-import lspmcpp.base.error;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
-import lspmcpp.base.log;
-import lspmcpp.platform.fs;
-import lspmcpp.platform.process;
-import lspmcpp.spec.database;
-import lspmcpp.toolchain.probe;
-import lspmcpp.project.detect;
-import lspmcpp.project.compdb;
-import lspmcpp.project.scan;
-import lspmcpp.project.infer;
-import lspmcpp.project.provider;
+import mcppls.base.error;
+import mcppls.base.path;
+import mcppls.base.text;
+import mcppls.base.log;
+import mcppls.platform.fs;
+import mcppls.platform.process;
+import mcppls.spec.database;
+import mcppls.toolchain.probe;
+import mcppls.project.detect;
+import mcppls.project.compdb;
+import mcppls.project.scan;
+import mcppls.project.infer;
+import mcppls.project.provider;
 
-namespace lspmcpp::project {
+namespace mcppls::project {
 
 namespace {
 
@@ -181,4 +181,4 @@ base::Result<InferredDatabase> load_cmake(const Detection& detection, std::strin
     return from_commands(commands, detection, context);
 }
 
-} // namespace lspmcpp::project
+} // namespace mcppls::project

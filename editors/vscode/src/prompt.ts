@@ -32,7 +32,7 @@ import * as vscode from 'vscode';
 
 export type PromptKind = 'conflict' | 'commandLineTools';
 
-const TEST_MODE = process.env.LSP_MCPP_TEST === '1';
+const TEST_MODE = process.env.MCPPLS_TEST === '1';
 const SUBSTITUTION_GRACE_MS = 5000;
 
 class Deferred<T> {

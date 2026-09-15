@@ -1,13 +1,13 @@
-module lspmcpp.server.router;
+module mcppls.server.router;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.text;
-import lspmcpp.index.modules;
-import lspmcpp.lsp.jsonrpc;
-import lspmcpp.lsp.protocol;
+import mcppls.base.text;
+import mcppls.index.modules;
+import mcppls.lsp.jsonrpc;
+import mcppls.lsp.protocol;
 
-namespace lspmcpp::server {
+namespace mcppls::server {
 
 using Json = nlohmann::json;
 
@@ -124,4 +124,4 @@ bool client_supports(const Json& clientCapabilities, std::string_view feature) {
     return value != modules->end() && value->is_boolean() && value->get<bool>();
 }
 
-} // namespace lspmcpp::server
+} // namespace mcppls::server

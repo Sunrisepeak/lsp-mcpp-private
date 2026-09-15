@@ -1,10 +1,10 @@
-module lspmcpp.base.uri;
+module mcppls.base.uri;
 
 import std;
-import lspmcpp.base.error;
-import lspmcpp.base.path;
+import mcppls.base.error;
+import mcppls.base.path;
 
-namespace lspmcpp::base {
+namespace mcppls::base {
 
 namespace {
 
@@ -91,4 +91,4 @@ std::string path_to_uri(std::string_view path, PathStyle style) {
     return "file://" + percent_encode_path(normalized);
 }
 
-} // namespace lspmcpp::base
+} // namespace mcppls::base

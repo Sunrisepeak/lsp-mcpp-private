@@ -1,13 +1,13 @@
-module lspmcpp.normalize.msvc;
+module mcppls.normalize.msvc;
 
 import std;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
-import lspmcpp.spec.database;
-import lspmcpp.toolchain.probe;
-import lspmcpp.normalize.gnu;
+import mcppls.base.path;
+import mcppls.base.text;
+import mcppls.spec.database;
+import mcppls.toolchain.probe;
+import mcppls.normalize.gnu;
 
-namespace lspmcpp::normalize {
+namespace mcppls::normalize {
 
 namespace {
 
@@ -149,4 +149,4 @@ std::vector<std::string> translate_msvc(const MsvcInput& input) {
     return out;
 }
 
-} // namespace lspmcpp::normalize
+} // namespace mcppls::normalize

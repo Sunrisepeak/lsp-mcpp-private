@@ -1,8 +1,8 @@
 // Locates the language server and the payload it ships with.
 //
 // A platform-specific package carries `payload/payload.json`, the server
-// executable, clangd and the standard library kit. LSP_MCPP_SERVER and
-// LSP_MCPP_PAYLOAD point somewhere else during development and tests.
+// executable, clangd and the standard library kit. MCPPLS_SERVER and
+// MCPPLS_PAYLOAD point somewhere else during development and tests.
 
 import * as fs from 'fs';
 import * as path from 'path';
@@ -106,8 +106,8 @@ function ensureExecutable(file: string): void {
 }
 
 export function resolveLaunch(extensionPath: string, env: NodeJS.ProcessEnv = process.env): LaunchResolution {
-    const payloadDir = env.LSP_MCPP_PAYLOAD && env.LSP_MCPP_PAYLOAD.length > 0
-        ? path.resolve(env.LSP_MCPP_PAYLOAD)
+    const payloadDir = env.MCPPLS_PAYLOAD && env.MCPPLS_PAYLOAD.length > 0
+        ? path.resolve(env.MCPPLS_PAYLOAD)
         : path.join(extensionPath, 'payload');
     const hasPayload = isDirectory(payloadDir);
 
@@ -132,10 +132,10 @@ export function resolveLaunch(extensionPath: string, env: NodeJS.ProcessEnv = pr
         }
     }
 
-    const override = env.LSP_MCPP_SERVER;
+    const override = env.MCPPLS_SERVER;
     if (override && override.length > 0) {
         if (!path.isAbsolute(override) || !isFile(override)) {
-            return { ok: false, reason: `LSP_MCPP_SERVER does not name an existing executable: ${override}` };
+            return { ok: false, reason: `MCPPLS_SERVER does not name an existing executable: ${override}` };
         }
         ensureExecutable(override);
         return { ok: true, launch: { executable: override, payloadDir: hasPayload ? payloadDir : undefined, manifest, source: 'environment' } };

@@ -1,32 +1,32 @@
-// lsp-mcpp-conformance: drives a language server through a fixture's scenario
+// mcppls-conformance: drives a language server through a fixture's scenario
 // and reports each check (conformance/README.md).
 //
-//   lsp-mcpp-conformance run --server <lsp-mcpp> --fixture <dir> [--payload DIR] [--clangd PATH] [--kit DIR]
+//   mcppls-conformance run --server <mcppls> --fixture <dir> [--payload DIR] [--clangd PATH] [--kit DIR]
 //                            [--msvc-env FILE] [--timeout SECONDS] [--keep] [--verbose]
 //                            [--workspace-dir DIR] [--cache-dir DIR] [--measure FILE] [--expect-warm]
 //                            [--navigation-budget SECONDS]
-//   lsp-mcpp-conformance version
+//   mcppls-conformance version
 import std;
 import nlohmann.json;
 import mcpplibs.cmdline;
-import lspmcpp.os;
-import lspmcpp.base.error;
-import lspmcpp.base.glob;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
-import lspmcpp.base.uri;
-import lspmcpp.base.version;
-import lspmcpp.platform.fs;
-import lspmcpp.platform.dirs;
-import lspmcpp.platform.env;
-import lspmcpp.platform.process;
-import lspmcpp.platform.task;
-import lspmcpp.lsp.jsonrpc;
-import lspmcpp.lsp.connection;
+import mcppls.os;
+import mcppls.base.error;
+import mcppls.base.glob;
+import mcppls.base.path;
+import mcppls.base.text;
+import mcppls.base.uri;
+import mcppls.base.version;
+import mcppls.platform.fs;
+import mcppls.platform.dirs;
+import mcppls.platform.env;
+import mcppls.platform.process;
+import mcppls.platform.task;
+import mcppls.lsp.jsonrpc;
+import mcppls.lsp.connection;
 
-namespace base = lspmcpp::base;
-namespace fs = lspmcpp::platform::fs;
-namespace lsp = lspmcpp::lsp;
+namespace base = mcppls::base;
+namespace fs = mcppls::platform::fs;
+namespace lsp = mcppls::lsp;
 using Json = nlohmann::json;
 using Clock = std::chrono::steady_clock;
 
@@ -85,7 +85,7 @@ struct Expansion {
 // "{payload}" is the runner's own --payload (usable plan W9.4's payload-corrupt fixture copies
 // and mutates it, then points server-arguments' own --payload at the mutated copy).
 std::string expand(std::string word, const Expansion& expansion = {}) {
-    word = base::replace_all(word, "{exe}", lspmcpp::os::EXECUTABLE_SUFFIX);
+    word = base::replace_all(word, "{exe}", mcppls::os::EXECUTABLE_SUFFIX);
     word = base::replace_all(word, "{workspace}", expansion.workspace);
     word = base::replace_all(word, "{runner-dir}", expansion.runnerDirectory);
     word = base::replace_all(word, "{payload}", expansion.payload);
@@ -95,7 +95,7 @@ std::string expand(std::string word, const Expansion& expansion = {}) {
         const std::string body { word.substr(at + 5, close - at - 5) };
         const std::size_t bar { body.find('|') };
         const std::string name { body.substr(0, bar) };
-        std::string value { lspmcpp::platform::env::get(name).value_or("") };
+        std::string value { mcppls::platform::env::get(name).value_or("") };
         if (value.empty() && bar != std::string::npos) value = body.substr(bar + 1);
         word.replace(at, close - at + 1, value);
         at += value.size();
@@ -108,12 +108,12 @@ std::optional<std::vector<std::string>> prepare_environment(const std::string& o
     if (overlayFile.empty()) return std::nullopt;
     auto text = fs::read_file(overlayFile);
     if (!text) return std::nullopt;
-    const bool caseInsensitive { lspmcpp::os::FAMILY == lspmcpp::os::Family::windows };
+    const bool caseInsensitive { mcppls::os::FAMILY == mcppls::os::Family::windows };
     auto key = [&](std::string_view entry) {
         std::string name { entry.substr(0, entry.find('=')) };
         return caseInsensitive ? base::to_lower_ascii(name) : name;
     };
-    std::vector<std::string> environment { lspmcpp::platform::env::variables() };
+    std::vector<std::string> environment { mcppls::platform::env::variables() };
     for (auto line : base::split_lines(*text)) {
         line = base::trim(line);
         if (line.empty() || line.find('=') == std::string_view::npos || line.front() == '=') continue;
@@ -134,25 +134,25 @@ bool run_prepare(const Json& command, const std::string& workspace, bool verbose
         // Found where the step runs: a developer environment may put another version of a tool first.
         std::optional<std::string> pathList;
         if (environment) {
-            const bool caseInsensitive { lspmcpp::os::FAMILY == lspmcpp::os::Family::windows };
+            const bool caseInsensitive { mcppls::os::FAMILY == mcppls::os::Family::windows };
             for (const auto& entry : *environment) {
                 const std::string name { entry.substr(0, entry.find('=')) };
                 if (caseInsensitive ? base::to_lower_ascii(name) == "path" : name == "PATH") pathList = entry.substr(entry.find('=') + 1);
             }
         }
-        auto found = pathList ? lspmcpp::platform::env::find_executable(program, *pathList) : lspmcpp::platform::env::find_executable(program);
+        auto found = pathList ? mcppls::platform::env::find_executable(program, *pathList) : mcppls::platform::env::find_executable(program);
         if (!found) {
             say("prepare: {} is not on PATH", program);
             return false;
         }
         program = *found;
     }
-    lspmcpp::platform::SpawnOptions options;
+    mcppls::platform::SpawnOptions options;
     options.program = program;
     options.arguments.assign(argv.begin() + 1, argv.end());
     options.workDirectory = workspace;
     options.environment = environment;
-    auto result = lspmcpp::platform::run(std::move(options), std::chrono::minutes { 20 });
+    auto result = mcppls::platform::run(std::move(options), std::chrono::minutes { 20 });
     if (!result || result->exitCode != 0 || result->timedOut) {
         say("prepare failed: {}", lsp::dump(command));
         if (result) say("{}\n{}", result->output, result->error);
@@ -226,7 +226,7 @@ std::map<std::string, std::string> module_files(const std::string& cacheDirector
 class Client {
 private:
     std::unique_ptr<lsp::Connection> connection_;
-    std::shared_ptr<lspmcpp::platform::Channel<Json>> inbox_ { std::make_shared<lspmcpp::platform::Channel<Json>>() };
+    std::shared_ptr<mcppls::platform::Channel<Json>> inbox_ { std::make_shared<mcppls::platform::Channel<Json>>() };
     std::int64_t nextId_ { 1 };
     int unanswered_ { 0 }; // consecutive requests that reached their deadline
     bool verbose_ { false };
@@ -249,7 +249,7 @@ public:
     base::Result<void> start(const Options& options, const std::vector<std::string>& serverArguments, const std::string& workspace,
                              const std::string& cacheDirectory) {
         verbose_ = options.verbose;
-        lspmcpp::platform::SpawnOptions spawn;
+        mcppls::platform::SpawnOptions spawn;
         spawn.program = options.server;
         spawn.arguments = { "serve" };
         if (!options.payload.empty()) spawn.arguments.insert(spawn.arguments.end(), { "--payload", options.payload });
@@ -257,8 +257,8 @@ public:
         if (!options.kit.empty()) spawn.arguments.insert(spawn.arguments.end(), { "--kit", options.kit });
         spawn.arguments.insert(spawn.arguments.end(), serverArguments.begin(), serverArguments.end());
         spawn.workDirectory = workspace;
-        auto environment = lspmcpp::platform::env::variables();
-        environment.push_back("LSP_MCPP_CACHE_DIR=" + cacheDirectory);
+        auto environment = mcppls::platform::env::variables();
+        environment.push_back("MCPPLS_CACHE_DIR=" + cacheDirectory);
         spawn.environment = std::move(environment);
         const bool verbose { verbose_ };
         auto inbox = inbox_;
@@ -814,8 +814,8 @@ int run(const Options& options) {
     const std::string name { scenario.value("name", std::string { base::file_name(options.fixture) }) };
     const bool reused { !options.workspaceDirectory.empty() };
     const std::string scratch { reused ? options.workspaceDirectory
-                                       : base::join_path(lspmcpp::platform::dirs::temp_directory(),
-                                             std::format("lsp-mcpp-conformance-{}-{}", name, Clock::now().time_since_epoch().count())) };
+                                       : base::join_path(mcppls::platform::dirs::temp_directory(),
+                                             std::format("mcppls-conformance-{}-{}", name, Clock::now().time_since_epoch().count())) };
     const std::string workspace { base::join_path(scratch, name) };
     // A reused workspace is prepared once; the marker sits beside it, outside what the server sees.
     const std::string preparedMarker { base::join_path(scratch, name + ".prepared") };
@@ -827,7 +827,7 @@ int run(const Options& options) {
     }
     say("fixture {} in {}{}", name, workspace, alreadyPrepared ? " (prepared before)" : "");
 
-    Expansion expansion { workspace, base::parent_path(absolute(lspmcpp::platform::env::arguments().front())), options.payload };
+    Expansion expansion { workspace, base::parent_path(absolute(mcppls::platform::env::arguments().front())), options.payload };
     std::optional<std::vector<std::string>> prepareEnvironment;
     if (scenario.value("prepare-environment", std::string {}) == "msvc") {
         if (options.msvcEnvironment.empty()) {
@@ -954,13 +954,13 @@ int run(const Options& options) {
 int main(int argc, char* argv[]) {
     using namespace mcpplibs;
     int status { 0 };
-    cmdline::App app { "lsp-mcpp-conformance" };
+    cmdline::App app { "mcppls-conformance" };
     (void)app.version(std::string { base::VERSION });
     (void)app.description("Run a conformance fixture against a language server");
 
     cmdline::App runCommand { "run" };
     (void)runCommand.description("Run one fixture");
-    (void)runCommand.option("server").takes_value().help("The lsp-mcpp executable");
+    (void)runCommand.option("server").takes_value().help("The mcppls executable");
     (void)runCommand.option("fixture").takes_value().help("Fixture directory with scenario.json");
     (void)runCommand.option("payload").takes_value().help("Payload directory");
     (void)runCommand.option("clangd").takes_value().help("clangd executable");
@@ -1011,7 +1011,7 @@ int main(int argc, char* argv[]) {
 
     cmdline::App versionCommand { "version" };
     (void)versionCommand.description("Print the version");
-    (void)versionCommand.action([](const cmdline::ParsedArgs&) { say("lsp-mcpp-conformance {}", base::VERSION); });
+    (void)versionCommand.action([](const cmdline::ParsedArgs&) { say("mcppls-conformance {}", base::VERSION); });
     (void)app.subcommand(std::move(versionCommand));
 
     const int parsed { app.run(argc, argv) };

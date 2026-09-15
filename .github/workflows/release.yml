@@ -66,7 +66,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag='${{ github.event.inputs.tag || github.ref_name }}'
-          gh release create "$tag" release/* --title "lsp-mcpp $tag" --notes "Platform VSIX files for the C++ Modules extension, and the payloads (server, clangd 23.1, lsp-mcpp-kit) they carry. SHA256SUMS lists every file." \
+          gh release create "$tag" release/* --title "mcpp-language-server $tag" --notes "Platform VSIX files for the C++ Modules extension, and the payloads (server, clangd 23.1, mcppls-kit) they carry. SHA256SUMS lists every file." \
             || gh release upload "$tag" release/* --clobber
       - name: Visual Studio Marketplace
         if: env.VSCE_PAT != ''
@@ -84,7 +84,7 @@ jobs:
           tag='${{ github.event.inputs.tag || github.ref_name }}'
           version="${tag#v}"
           kit=$(python3 -c "import json; print(json.load(open('packaging/payload.lock.json'))['libcxx-version'])")
-          gh release create "$version" release/lsp-mcpp-"$version"-*.tar.gz -R xlings-res/lsp-mcpp --title "$version" --notes "Mirror of lsp-mcpp $tag" \
-            || gh release upload "$version" release/lsp-mcpp-"$version"-*.tar.gz -R xlings-res/lsp-mcpp --clobber
-          gh release create "$kit" release/lsp-mcpp-kit-"$kit"-*.tar.gz -R xlings-res/lsp-mcpp-kit --title "$kit" --notes "lsp-mcpp-kit $kit, from lsp-mcpp $tag" \
-            || gh release upload "$kit" release/lsp-mcpp-kit-"$kit"-*.tar.gz -R xlings-res/lsp-mcpp-kit --clobber
+          gh release create "$version" release/mcpp-language-server-"$version"-*.tar.gz -R xlings-res/mcpp-language-server --title "$version" --notes "Mirror of mcpp-language-server $tag" \
+            || gh release upload "$version" release/mcpp-language-server-"$version"-*.tar.gz -R xlings-res/mcpp-language-server --clobber
+          gh release create "$kit" release/mcppls-kit-"$kit"-*.tar.gz -R xlings-res/mcppls-kit --title "$kit" --notes "mcppls-kit $kit, from mcppls $tag" \
+            || gh release upload "$kit" release/mcppls-kit-"$kit"-*.tar.gz -R xlings-res/mcppls-kit --clobber

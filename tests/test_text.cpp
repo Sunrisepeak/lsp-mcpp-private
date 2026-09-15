@@ -1,11 +1,11 @@
 import std;
-import lspmcpp.testing;
-import lspmcpp.base.text;
+import mcppls.testing;
+import mcppls.base.text;
 
-using namespace lspmcpp::base;
+using namespace mcppls::base;
 
 int main() {
-    using namespace lspmcpp::testing;
+    using namespace mcppls::testing;
 
     "UTF-16 columns count surrogate pairs twice"_test = [] {
         const std::string_view text { "a\xF0\x9F\x98\x80" "b" };   // a😀b

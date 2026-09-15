@@ -1,12 +1,12 @@
-module lspmcpp.spec.metadata;
+module mcppls.spec.metadata;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
-import lspmcpp.base.path;
-import lspmcpp.platform.fs;
+import mcppls.base.error;
+import mcppls.base.path;
+import mcppls.platform.fs;
 
-namespace lspmcpp::spec {
+namespace mcppls::spec {
 
 namespace {
 
@@ -77,4 +77,4 @@ base::Result<std::vector<ModuleEntry>> read_module_metadata(std::string_view man
     return parse_module_metadata(document, base::parent_path(manifestPath));
 }
 
-} // namespace lspmcpp::spec
+} // namespace mcppls::spec

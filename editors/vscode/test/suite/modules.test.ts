@@ -1,4 +1,4 @@
-// End to end: VS Code → this extension → lsp-mcpp → clangd, on C++ modules
+// End to end: VS Code → this extension → mcppls → clangd, on C++ modules
 // without a build system. Positions refer to the fixture's src/main.cpp:
 //
 //   0  import std;
@@ -14,7 +14,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import type { TestApi } from '../../src/extension';
 
-const EXTENSION_ID = 'mcpp-community.lsp-mcpp';
+const EXTENSION_ID = 'mcpp-community.mcpp-language-server';
 const READY_TIMEOUT_MS = 120_000;
 const RESULT_TIMEOUT_MS = 90_000;
 
@@ -61,7 +61,7 @@ function completionLabels(list: vscode.CompletionList | undefined): string[] {
     return (list?.items ?? []).map((item) => (typeof item.label === 'string' ? item.label : item.label.label).trim());
 }
 
-suite('C++ modules through lsp-mcpp', function () {
+suite('C++ modules through mcppls', function () {
     this.timeout(600_000);
 
     let api: TestApi;

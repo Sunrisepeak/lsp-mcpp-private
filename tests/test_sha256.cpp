@@ -1,12 +1,12 @@
 // SHA-256 against known digests (usable plan W9.4: payload integrity needs a trustworthy one).
 import std;
-import lspmcpp.testing;
-import lspmcpp.base.sha256;
+import mcppls.testing;
+import mcppls.base.sha256;
 
-namespace b = lspmcpp::base;
+namespace b = mcppls::base;
 
 int main() {
-    using namespace lspmcpp::testing;
+    using namespace mcppls::testing;
 
     "known digests"_test = [] {
         expect(b::sha256_hex("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");

@@ -1,16 +1,16 @@
 // The interface a session drives to get semantic help from a backend (design
 // section 15.1 and usable plan W9.5): start it, push it the engine database,
 // forward LSP messages to and from it, and query what it can do. clangd
-// (lspmcpp.engine.clangd) is the only implementation; the interface exists so
+// (mcppls.engine.clangd) is the only implementation; the interface exists so
 // a fake can stand in for tests without a real clangd process, and so a future
 // backend (design 15.1 mentions clice) needs no change to the session.
-export module lspmcpp.engine;
+export module mcppls.engine;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
+import mcppls.base.error;
 
-export namespace lspmcpp::engine {
+export namespace mcppls::engine {
 
 struct EngineConfig {
     std::string executable;
@@ -53,4 +53,4 @@ public:
     virtual EngineCapabilities capabilities() const = 0;
 };
 
-} // namespace lspmcpp::engine
+} // namespace mcppls::engine

@@ -1,32 +1,32 @@
 // Document store, module index and routing, without processes.
 import std;
 import nlohmann.json;
-import lspmcpp.testing;
-import lspmcpp.base.error;
-import lspmcpp.base.path;
-import lspmcpp.base.sha256;
-import lspmcpp.base.text;
-import lspmcpp.base.uri;
-import lspmcpp.platform.fs;
-import lspmcpp.platform.dirs;
-import lspmcpp.index.modules;
-import lspmcpp.server.documents;
-import lspmcpp.server.router;
-import lspmcpp.server.payload;
-import lspmcpp.server.workspace;
-import lspmcpp.engine;
-import lspmcpp.engine.clangd;
-import lspmcpp.server.primer;
+import mcppls.testing;
+import mcppls.base.error;
+import mcppls.base.path;
+import mcppls.base.sha256;
+import mcppls.base.text;
+import mcppls.base.uri;
+import mcppls.platform.fs;
+import mcppls.platform.dirs;
+import mcppls.index.modules;
+import mcppls.server.documents;
+import mcppls.server.router;
+import mcppls.server.payload;
+import mcppls.server.workspace;
+import mcppls.engine;
+import mcppls.engine.clangd;
+import mcppls.server.primer;
 
 using Json = nlohmann::json;
-using lspmcpp::base::Position;
-namespace idx = lspmcpp::index;
-namespace srv = lspmcpp::server;
-namespace eng = lspmcpp::engine;
+using mcppls::base::Position;
+namespace idx = mcppls::index;
+namespace srv = mcppls::server;
+namespace eng = mcppls::engine;
 
 namespace {
 
-// usable plan W9.5: a fake that satisfies the lspmcpp.engine interface without a clangd process,
+// usable plan W9.5: a fake that satisfies the mcppls.engine interface without a clangd process,
 // recording what the session (or anything else coded only against the interface) does to it.
 class FakeEngine : public eng::Engine {
 public:
@@ -39,7 +39,7 @@ public:
     MessageHandler onMessage;
     ClosedHandler onClosed;
 
-    lspmcpp::base::Result<void> start(const eng::EngineConfig& config, MessageHandler message, ClosedHandler closed, LogHandler) override {
+    mcppls::base::Result<void> start(const eng::EngineConfig& config, MessageHandler message, ClosedHandler closed, LogHandler) override {
         ++starts;
         running_ = true;
         lastConfig = config;
@@ -47,11 +47,11 @@ public:
         onClosed = std::move(closed);
         return {};
     }
-    lspmcpp::base::Result<void> push_database(std::string_view compileCommandsJson) override {
+    mcppls::base::Result<void> push_database(std::string_view compileCommandsJson) override {
         pushedDatabases.emplace_back(compileCommandsJson);
         return {};
     }
-    lspmcpp::base::Result<void> send(const Json& message) override {
+    mcppls::base::Result<void> send(const Json& message) override {
         sent.push_back(message);
         return {};
     }
@@ -76,7 +76,7 @@ idx::ModuleIndex fixture_index() {
 } // namespace
 
 int main() {
-    using namespace lspmcpp::testing;
+    using namespace mcppls::testing;
 
     "incremental changes use UTF-16 positions"_test = [] {
         srv::DocumentStore store;
@@ -104,17 +104,17 @@ int main() {
         const auto index = fixture_index();
         const Json toInterface = index.definition("/p/src/main.cpp", Position { 1, 9 });
         expect(fatal(toInterface.is_array() && toInterface.size() == 1u));
-        expect(toInterface[0]["uri"] == lspmcpp::base::path_to_uri("/p/src/greet/greet.cppm"));
+        expect(toInterface[0]["uri"] == mcppls::base::path_to_uri("/p/src/greet/greet.cppm"));
         expect(toInterface[0]["range"]["start"]["character"] == 14);
         const Json toPartition = index.definition("/p/src/greet/greet.cppm", Position { 1, 15 });
         expect(fatal(toPartition.size() == 1u));
-        expect(toPartition[0]["uri"] == lspmcpp::base::path_to_uri("/p/src/greet/detail.cppm"));
+        expect(toPartition[0]["uri"] == mcppls::base::path_to_uri("/p/src/greet/detail.cppm"));
         const Json toStd = index.definition("/p/src/main.cpp", Position { 0, 8 });
         expect(fatal(toStd.size() == 1u));
-        expect(toStd[0]["uri"] == lspmcpp::base::path_to_uri("/kit/share/libc++/v1/std.cppm"));
+        expect(toStd[0]["uri"] == mcppls::base::path_to_uri("/kit/share/libc++/v1/std.cppm"));
         const Json implementation = index.definition("/p/src/greet/impl.cpp", Position { 0, 9 });
         expect(fatal(implementation.size() == 1u));
-        expect(implementation[0]["uri"] == lspmcpp::base::path_to_uri("/p/src/greet/greet.cppm"));
+        expect(implementation[0]["uri"] == mcppls::base::path_to_uri("/p/src/greet/greet.cppm"));
         expect(index.definition("/p/src/main.cpp", Position { 3, 5 }).is_null());
     };
 
@@ -145,7 +145,7 @@ int main() {
     "module diagnostics"_test = [] {
         auto index = fixture_index();
         const Json impl = index.diagnostics("/p/src/greet/impl.cpp");
-        expect(impl.size() == 1u && impl[0]["code"] == "unresolved-module" && impl[0]["source"] == "lsp-mcpp") << impl.dump();
+        expect(impl.size() == 1u && impl[0]["code"] == "unresolved-module" && impl[0]["source"] == "mcppls") << impl.dump();
         expect(index.diagnostics("/p/src/main.cpp").empty());
         index.update("/p/src/loose.cpp", "import :part;\n");
         expect(index.diagnostics("/p/src/loose.cpp")[0]["code"] == "partition-outside-module");
@@ -186,16 +186,16 @@ int main() {
     };
 
     "clangd's module build failures are recognized"_test = [] {
-        const auto failure = lspmcpp::engine::parse_module_failure(
+        const auto failure = mcppls::engine::parse_module_failure(
             R"(E[03:15:19.435] Failed to build module greet; due to Failed to compile C:\Program Files\VS\modules\std.ixx. Use '--log=verbose' to view detailed failure reasons.)");
         expect(fatal(failure.has_value()));
         expect(failure->module == "greet") << failure->module;
         expect(failure->reason == R"(Failed to compile C:\Program Files\VS\modules\std.ixx)") << failure->reason;
         expect(failure->failedSource == R"(C:\Program Files\VS\modules\std.ixx)") << failure->failedSource;
-        const auto other = lspmcpp::engine::parse_module_failure("E[04:05:38.910] Failed to build module std; due to Don't get the module unit for module std");
+        const auto other = mcppls::engine::parse_module_failure("E[04:05:38.910] Failed to build module std; due to Don't get the module unit for module std");
         expect(fatal(other.has_value()));
         expect(other->module == "std" && other->failedSource.empty());
-        expect(!lspmcpp::engine::parse_module_failure("I[04:34:47.305] Built module std to /cache/std.pcm").has_value());
+        expect(!mcppls::engine::parse_module_failure("I[04:34:47.305] Built module std to /cache/std.pcm").has_value());
     };
 
     "merging"_test = [] {
@@ -208,7 +208,7 @@ int main() {
         expect(srv::merge_workspace_symbols(nullptr, moduleSymbols).size() == 1u);
 
         const Json range = Json::parse(R"({"start": {"line": 1, "character": 7}, "end": {"line": 1, "character": 18}})");
-        const Json moduleDiagnostics = Json::array({ Json { { "range", range }, { "message", "module 'x' not found" }, { "source", "lsp-mcpp" } } });
+        const Json moduleDiagnostics = Json::array({ Json { { "range", range }, { "message", "module 'x' not found" }, { "source", "mcppls" } } });
         const Json engineDiagnostics = Json::array({ Json { { "range", range }, { "message", "module 'x' not found" }, { "source", "clang" } },
                                                      Json { { "range", Json::parse(R"({"start": {"line": 4, "character": 0}, "end": {"line": 4, "character": 1}})") }, { "message", "other" }, { "source", "clang" } } });
         const Json diagnostics = srv::merge_diagnostics(engineDiagnostics, moduleDiagnostics, "gcc 16.1.0");
@@ -342,16 +342,16 @@ int main() {
     };
 
     "the clangd capability table is keyed by version"_test = [] {
-        const auto pinned = lspmcpp::engine::capabilities_for_clangd_version("23.1.0");
+        const auto pinned = mcppls::engine::capabilities_for_clangd_version("23.1.0");
         expect(pinned.experimentalModulesSupport && pinned.useDirtyHeaders && pinned.persistentModuleCache && pinned.msvcStlNeedsNoAlignedAllocation);
-        const auto other = lspmcpp::engine::capabilities_for_clangd_version("22.1.8");
+        const auto other = mcppls::engine::capabilities_for_clangd_version("22.1.8");
         expect(!other.experimentalModulesSupport && !other.useDirtyHeaders && !other.persistentModuleCache && !other.msvcStlNeedsNoAlignedAllocation)
             << "an unrecognized version assumes none of the optional behaviour, not the pinned one's";
     };
 
-    "a fake engine satisfies the lspmcpp.engine interface with no clangd process"_test = [] {
+    "a fake engine satisfies the mcppls.engine interface with no clangd process"_test = [] {
         // usable plan W9.5: anything coded only against eng::Engine (the session, and this test)
-        // works the same with this fake as with lspmcpp.engine.clangd::Clangd.
+        // works the same with this fake as with mcppls.engine.clangd::Clangd.
         FakeEngine fake;
         expect(!fake.running());
         eng::EngineConfig config;
@@ -385,22 +385,22 @@ int main() {
 
     "payload integrity checks size and sha256, and caches the hash"_test = [] {
         // usable plan W9.4.
-        namespace fs = lspmcpp::platform::fs;
-        const std::string root { lspmcpp::base::join_path(lspmcpp::platform::dirs::temp_directory(),
-            std::format("lsp-mcpp-test-payload-{}", std::chrono::steady_clock::now().time_since_epoch().count())) };
+        namespace fs = mcppls::platform::fs;
+        const std::string root { mcppls::base::join_path(mcppls::platform::dirs::temp_directory(),
+            std::format("mcppls-test-payload-{}", std::chrono::steady_clock::now().time_since_epoch().count())) };
         (void)fs::create_directories(root);
-        const std::string clangdPath { lspmcpp::base::join_path(root, "clangd") };
-        const std::string kitJsonPath { lspmcpp::base::join_path(root, "kit.json") };
+        const std::string clangdPath { mcppls::base::join_path(root, "clangd") };
+        const std::string kitJsonPath { mcppls::base::join_path(root, "kit.json") };
         const std::string content { "pretend-clangd-bytes" };
         const std::string kitContent { "{\"name\":\"k\"}" };
         (void)fs::write_file(clangdPath, content);
         (void)fs::write_file(kitJsonPath, kitContent);
-        const std::string cacheFile { lspmcpp::base::join_path(root, "cache.json") };
+        const std::string cacheFile { mcppls::base::join_path(root, "cache.json") };
 
         srv::PayloadPaths payload;
         payload.directory = root;
-        payload.files.emplace("clangd", srv::PayloadFileIntegrity { content.size(), lspmcpp::base::sha256_hex(content) });
-        payload.files.emplace("kit.json", srv::PayloadFileIntegrity { kitContent.size(), lspmcpp::base::sha256_hex(kitContent) });
+        payload.files.emplace("clangd", srv::PayloadFileIntegrity { content.size(), mcppls::base::sha256_hex(content) });
+        payload.files.emplace("kit.json", srv::PayloadFileIntegrity { kitContent.size(), mcppls::base::sha256_hex(kitContent) });
 
         expect(srv::verify_payload_integrity(payload, cacheFile).empty()) << "both files match their manifest entry";
         expect(fs::is_regular_file(cacheFile)) << "a hash was computed and cached";

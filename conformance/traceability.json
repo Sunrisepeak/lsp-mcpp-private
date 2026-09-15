@@ -494,7 +494,7 @@
  ],
  "S1-14-2": [
   {
-   "manual": "Driver queries run only in trusted workspaces and only for drivers the workspace's build description names; lsp-mcpp offers no allow-list setting yet (recorded in issue #2)."
+   "manual": "Driver queries run only in trusted workspaces and only for drivers the workspace's build description names; mcppls offers no allow-list setting yet (recorded in issue #2)."
   }
  ],
  "S1-14-3": [
@@ -512,7 +512,7 @@
  ],
  "S2-2-1": [
   {
-   "manual": "Stream-mode producers are outside this repository; the only producer here, lsp-mcpp-mock-mcpp, answers in single-document mode and writes no database file."
+   "manual": "Stream-mode producers are outside this repository; the only producer here, mcppls-mock-mcpp, answers in single-document mode and writes no database file."
   }
  ],
  "S2-3.1-1": [

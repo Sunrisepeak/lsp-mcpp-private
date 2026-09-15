@@ -1,19 +1,19 @@
 // The engine database for one context: which units are written, with which
 // arguments, which standard library units are injected, and what could not be
 // resolved (design section 14.4, "remaining steps").
-export module lspmcpp.normalize.plan;
+export module mcppls.normalize.plan;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
-import lspmcpp.base.text;
-import lspmcpp.spec.database;
-import lspmcpp.spec.kit;
-import lspmcpp.spec.metadata;
-import lspmcpp.toolchain.probe;
-import lspmcpp.project.scan;
+import mcppls.base.error;
+import mcppls.base.text;
+import mcppls.spec.database;
+import mcppls.spec.kit;
+import mcppls.spec.metadata;
+import mcppls.toolchain.probe;
+import mcppls.project.scan;
 
-export namespace lspmcpp::normalize {
+export namespace mcppls::normalize {
 
 struct EngineEntry {
     std::string directory;
@@ -75,4 +75,4 @@ EnginePlan plan_engine(const PlanInput& input);
 nlohmann::json to_compile_commands(const EnginePlan& plan, bool moduleHints = true);
 base::Result<void> write_engine_database(std::string_view directory, const EnginePlan& plan);
 
-} // namespace lspmcpp::normalize
+} // namespace mcppls::normalize

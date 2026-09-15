@@ -1,10 +1,10 @@
 // Message passing between threads: a closable blocking queue. The server's
 // main loop owns all session state and receives everything through one of these.
-export module lspmcpp.platform.task;
+export module mcppls.platform.task;
 
 import std;
 
-export namespace lspmcpp::platform {
+export namespace mcppls::platform {
 
 template <class T>
 class Channel {
@@ -74,4 +74,4 @@ private:
     }
 };
 
-} // namespace lspmcpp::platform
+} // namespace mcppls::platform

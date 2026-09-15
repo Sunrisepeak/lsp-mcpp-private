@@ -1,12 +1,12 @@
 // LSP glob patterns (S2 watch entries).
 import std;
-import lspmcpp.testing;
-import lspmcpp.base.glob;
+import mcppls.testing;
+import mcppls.base.glob;
 
-using lspmcpp::base::glob_match;
+using mcppls::base::glob_match;
 
 int main() {
-    using namespace lspmcpp::testing;
+    using namespace mcppls::testing;
 
     "segments, stars and double stars"_test = [] {
         expect(glob_match("mcpp.toml", "mcpp.toml", false));

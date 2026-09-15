@@ -1,13 +1,13 @@
 // Request routing and result merging (design section 12.6): the module index
 // answers on module names, the engine answers everything else, and outlines,
 // workspace symbols and diagnostics combine both.
-export module lspmcpp.server.router;
+export module mcppls.server.router;
 
 import std;
 import nlohmann.json;
-import lspmcpp.index.modules;
+import mcppls.index.modules;
 
-export namespace lspmcpp::server {
+export namespace mcppls::server {
 
 enum class Route { local, engine };
 enum class Merge { none, document_symbols, workspace_symbols };
@@ -32,4 +32,4 @@ nlohmann::json merge_capabilities(const nlohmann::json& engineCapabilities);
 // Whether the client advertised experimental.cxxModules.<feature>.
 bool client_supports(const nlohmann::json& clientCapabilities, std::string_view feature);
 
-} // namespace lspmcpp::server
+} // namespace mcppls::server

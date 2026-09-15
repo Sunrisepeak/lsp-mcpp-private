@@ -1,11 +1,11 @@
 // Visual Studio and the Windows SDK as facts: what a Clang-based engine needs to
 // analyze MSVC STL code on a machine whose environment was not set up by a
 // developer command prompt (usable plan W1.1).
-export module lspmcpp.toolchain.visualstudio;
+export module mcppls.toolchain.visualstudio;
 
 import std;
 
-export namespace lspmcpp::toolchain::visualstudio {
+export namespace mcppls::toolchain::visualstudio {
 
 struct Installation {
     std::string vsRoot;           // <...>/Microsoft Visual Studio/2022/Enterprise; empty when only a tools directory is known
@@ -45,4 +45,4 @@ std::string compatibility_version(std::string_view toolsVersion);
 // environment, else the newest complete one under the default root.
 std::optional<Installation> discover(const DiscoveryInputs& inputs);
 
-} // namespace lspmcpp::toolchain::visualstudio
+} // namespace mcppls::toolchain::visualstudio

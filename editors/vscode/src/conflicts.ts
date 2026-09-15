@@ -10,7 +10,7 @@ import { askOnce } from './prompt';
 // to get them; see conflictAnswers.ts for why they do not simply live here.
 export { DISABLE, KEEP };
 
-export const CONFLICT_ANSWER_KEY = 'lspMcpp.conflictAnswer';
+export const CONFLICT_ANSWER_KEY = 'mcppls.conflictAnswer';
 
 export type ConflictCheck = 'skipped-setting' | 'already-answered' | 'none-found' | 'asked';
 
@@ -42,7 +42,7 @@ function activeConflicts(): Conflict[] {
 // settings, the workspaceState guard); only the final question is
 // substituted, through askOnce -- see src/prompt.ts for why and how.
 export async function checkConflicts(context: vscode.ExtensionContext, log: (line: string) => void): Promise<ConflictCheck> {
-    if (!vscode.workspace.getConfiguration('lspMcpp').get<boolean>('detectConflicts', true)) {
+    if (!vscode.workspace.getConfiguration('mcppls').get<boolean>('detectConflicts', true)) {
         return 'skipped-setting';
     }
     if (context.workspaceState.get<string>(CONFLICT_ANSWER_KEY) !== undefined) {

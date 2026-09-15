@@ -1,10 +1,10 @@
 // Diagnostic logging to standard error. The protocol owns standard output, so
 // nothing here may ever write there.
-export module lspmcpp.base.log;
+export module mcppls.base.log;
 
 import std;
 
-export namespace lspmcpp::base::log {
+export namespace mcppls::base::log {
 
 enum class Level { debug, info, warning, error, off };
 
@@ -34,4 +34,4 @@ void error(std::format_string<Args...> fmt, Args&&... args) {
     if (enabled(Level::error)) write(Level::error, std::format(fmt, std::forward<Args>(args)...));
 }
 
-} // namespace lspmcpp::base::log
+} // namespace mcppls::base::log

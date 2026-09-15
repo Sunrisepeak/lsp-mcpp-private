@@ -1,16 +1,16 @@
 // The syntactic module index: module-level language features answered without
 // the engine (design section 8.5) — module-name navigation, import completion,
 // module hover, outline and workspace symbols, and module diagnostics.
-export module lspmcpp.index.modules;
+export module mcppls.index.modules;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.text;
-import lspmcpp.spec.database;
-import lspmcpp.spec.metadata;
-import lspmcpp.project.scan;
+import mcppls.base.text;
+import mcppls.spec.database;
+import mcppls.spec.metadata;
+import mcppls.project.scan;
 
-export namespace lspmcpp::index {
+export namespace mcppls::index {
 
 struct ModuleUnit {
     std::string path;
@@ -71,4 +71,4 @@ std::vector<ExternalModule> external_modules(std::span<const std::pair<std::stri
 nlohmann::json to_json(const base::Range& range);
 nlohmann::json make_location(std::string_view path, const base::Range& range);
 
-} // namespace lspmcpp::index
+} // namespace mcppls::index

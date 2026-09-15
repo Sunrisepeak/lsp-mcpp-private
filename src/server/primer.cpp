@@ -1,8 +1,8 @@
-module lspmcpp.server.primer;
+module mcppls.server.primer;
 
 import std;
 
-namespace lspmcpp::server {
+namespace mcppls::server {
 
 void Primer::set_modules(std::vector<PrimeModule> modules) {
     std::map<std::string, State, std::less<>> states;
@@ -145,4 +145,4 @@ std::pair<std::size_t, std::size_t> Primer::progress() const {
     return { done, wanted };
 }
 
-} // namespace lspmcpp::server
+} // namespace mcppls::server

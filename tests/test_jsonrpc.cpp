@@ -1,13 +1,13 @@
 import std;
-import lspmcpp.testing;
+import mcppls.testing;
 import nlohmann.json;
-import lspmcpp.lsp.jsonrpc;
-import lspmcpp.lsp.protocol;
+import mcppls.lsp.jsonrpc;
+import mcppls.lsp.protocol;
 
-using namespace lspmcpp::lsp;
+using namespace mcppls::lsp;
 
 int main() {
-    using namespace lspmcpp::testing;
+    using namespace mcppls::testing;
 
     "frames split across feeds"_test = [] {
         const std::string frame { encode_frame(make_request(1, "initialize", Json { { "rootUri", nullptr } })) };

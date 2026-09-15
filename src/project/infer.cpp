@@ -1,15 +1,15 @@
-module lspmcpp.project.infer;
+module mcppls.project.infer;
 
 import std;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
-import lspmcpp.platform.fs;
-import lspmcpp.spec.database;
-import lspmcpp.toolchain.probe;
-import lspmcpp.project.compdb;
-import lspmcpp.project.scan;
+import mcppls.base.path;
+import mcppls.base.text;
+import mcppls.platform.fs;
+import mcppls.spec.database;
+import mcppls.toolchain.probe;
+import mcppls.project.compdb;
+import mcppls.project.scan;
 
-namespace lspmcpp::project {
+namespace mcppls::project {
 
 namespace {
 
@@ -39,7 +39,7 @@ InferredDatabase database_from_commands(std::span<const CompileCommand> commands
                                         const Scanner& scanner, const Prober& prober) {
     InferredDatabase result;
     result.database.hasIde = true;
-    result.database.generator = spec::Generator { "lsp-mcpp", "compile-commands" };
+    result.database.generator = spec::Generator { "mcppls", "compile-commands" };
     std::map<std::string, std::size_t, std::less<>> setByToolchain;
     std::map<std::string, std::string, std::less<>> toolchainByProbeKey;
 
@@ -144,7 +144,7 @@ InferredDatabase infer_database(std::string_view rootInput, const InferOptions& 
     InferredDatabase result;
     const std::string root { base::normalize_path(rootInput) };
     result.database.hasIde = true;
-    result.database.generator = spec::Generator { "lsp-mcpp", "inferred" };
+    result.database.generator = spec::Generator { "mcppls", "inferred" };
 
     spec::Set set;
     set.name = "inferred";
@@ -185,4 +185,4 @@ InferredDatabase infer_database(std::string_view rootInput, const InferOptions& 
     return result;
 }
 
-} // namespace lspmcpp::project
+} // namespace mcppls::project

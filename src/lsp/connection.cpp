@@ -1,13 +1,13 @@
-module lspmcpp.lsp.connection;
+module mcppls.lsp.connection;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
-import lspmcpp.base.log;
-import lspmcpp.platform.process;
-import lspmcpp.lsp.jsonrpc;
+import mcppls.base.error;
+import mcppls.base.log;
+import mcppls.platform.process;
+import mcppls.lsp.jsonrpc;
 
-namespace lspmcpp::lsp {
+namespace mcppls::lsp {
 
 Connection::~Connection() { stop(std::chrono::milliseconds { 500 }); }
 
@@ -83,4 +83,4 @@ std::optional<int> Connection::exit_code() {
     return **waited;
 }
 
-} // namespace lspmcpp::lsp
+} // namespace mcppls::lsp

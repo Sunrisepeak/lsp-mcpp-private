@@ -33,10 +33,10 @@ All settings are optional.
 
 | Setting | Default | Use |
 |---|---|---|
-| `lspMcpp.compiler` | automatic | Follow this compiler instead of the discovered one |
-| `lspMcpp.semanticKit` | `auto` | `off` never uses the built-in standard library kit |
-| `lspMcpp.detectConflicts` | `true` | Offer once to turn off other C++ extensions' language features in the workspace |
-| `lspMcpp.trace.server` | `off` | Trace the language server protocol in the log |
+| `mcppls.compiler` | automatic | Follow this compiler instead of the discovered one |
+| `mcppls.semanticKit` | `auto` | `off` never uses the built-in standard library kit |
+| `mcppls.detectConflicts` | `true` | Offer once to turn off other C++ extensions' language features in the workspace |
+| `mcppls.trace.server` | `off` | Trace the language server protocol in the log |
 
 ## Other C++ extensions
 

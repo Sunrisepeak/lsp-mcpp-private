@@ -1,12 +1,12 @@
 // Finding compilers on this machine, in the order design section 14.3 gives:
 // PATH, the mcpp and xlings toolchain stores, Homebrew LLVM, Visual Studio.
-export module lspmcpp.toolchain.discover;
+export module mcppls.toolchain.discover;
 
 import std;
-import lspmcpp.spec.database;
-import lspmcpp.toolchain.probe;
+import mcppls.spec.database;
+import mcppls.toolchain.probe;
 
-export namespace lspmcpp::toolchain {
+export namespace mcppls::toolchain {
 
 struct CompilerCandidate {
     std::string driver;
@@ -21,4 +21,4 @@ std::vector<CompilerCandidate> discover_compilers(const Runner& runner);
 // language server must never cause. Always false elsewhere.
 bool macos_developer_tools_present();
 
-} // namespace lspmcpp::toolchain
+} // namespace mcppls::toolchain

@@ -1,12 +1,12 @@
 // Module metadata manifests: the P3286 / EcoStd shape of libc++.modules.json and
 // libstdc++.modules.json, and the MSVC STL's modules.json (module-sources).
-export module lspmcpp.spec.metadata;
+export module mcppls.spec.metadata;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
+import mcppls.base.error;
 
-export namespace lspmcpp::spec {
+export namespace mcppls::spec {
 
 struct ModuleDefinition {
     std::string name;
@@ -25,4 +25,4 @@ struct ModuleEntry {
 base::Result<std::vector<ModuleEntry>> parse_module_metadata(const nlohmann::json& document, std::string_view manifestDirectory);
 base::Result<std::vector<ModuleEntry>> read_module_metadata(std::string_view manifestPath);
 
-} // namespace lspmcpp::spec
+} // namespace mcppls::spec

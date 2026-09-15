@@ -1,38 +1,38 @@
-module lspmcpp.server.workspace;
+module mcppls.server.workspace;
 
 import std;
 import nlohmann.json;
-import lspmcpp.os;
-import lspmcpp.base.error;
-import lspmcpp.base.glob;
-import lspmcpp.base.log;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
-import lspmcpp.base.uri;
-import lspmcpp.base.version;
-import lspmcpp.platform.dirs;
-import lspmcpp.platform.env;
-import lspmcpp.platform.fs;
-import lspmcpp.platform.stdio;
-import lspmcpp.platform.task;
-import lspmcpp.lsp.jsonrpc;
-import lspmcpp.lsp.protocol;
-import lspmcpp.spec.database;
-import lspmcpp.spec.kit;
-import lspmcpp.spec.metadata;
-import lspmcpp.toolchain.probe;
-import lspmcpp.project.scan;
-import lspmcpp.project.detect;
-import lspmcpp.project.model;
-import lspmcpp.normalize.plan;
-import lspmcpp.index.modules;
-import lspmcpp.engine.clangd;
-import lspmcpp.server.documents;
-import lspmcpp.server.payload;
-import lspmcpp.server.primer;
-import lspmcpp.server.router;
+import mcppls.os;
+import mcppls.base.error;
+import mcppls.base.glob;
+import mcppls.base.log;
+import mcppls.base.path;
+import mcppls.base.text;
+import mcppls.base.uri;
+import mcppls.base.version;
+import mcppls.platform.dirs;
+import mcppls.platform.env;
+import mcppls.platform.fs;
+import mcppls.platform.stdio;
+import mcppls.platform.task;
+import mcppls.lsp.jsonrpc;
+import mcppls.lsp.protocol;
+import mcppls.spec.database;
+import mcppls.spec.kit;
+import mcppls.spec.metadata;
+import mcppls.toolchain.probe;
+import mcppls.project.scan;
+import mcppls.project.detect;
+import mcppls.project.model;
+import mcppls.normalize.plan;
+import mcppls.index.modules;
+import mcppls.engine.clangd;
+import mcppls.server.documents;
+import mcppls.server.payload;
+import mcppls.server.primer;
+import mcppls.server.router;
 
-namespace lspmcpp::server {
+namespace mcppls::server {
 
 namespace log = base::log;
 
@@ -178,7 +178,7 @@ bool parse_engine_request_key(std::string_view key, std::string& rootKey, int& g
 // ---- WorkspaceRoot::Impl ---------------------------------------------------------------------
 //
 // Everything one workspace root owns (usable plan W9.1): the project model, module index, plan,
-// clangd engine and the documents under it. This used to be all of lspmcpp::server::(anonymous)
+// clangd engine and the documents under it. This used to be all of mcppls::server::(anonymous)
 // Session; a session now composes one of these per root and stays a thin router of client
 // requests, by the longest root prefix of the document path, to the right one.
 
@@ -306,7 +306,7 @@ struct WorkspaceRoot::Impl {
     // "one file, one name"): clangd matches an unsaved buffer to the module source it builds by
     // exact name.
     std::string engine_uri(std::string_view uri) const {
-        if constexpr (lspmcpp::os::FAMILY == lspmcpp::os::Family::windows) {
+        if constexpr (mcppls::os::FAMILY == mcppls::os::Family::windows) {
             const std::string path { path_of_uri(uri) };
             if (path.size() < 2 || path[1] != ':') return std::string { uri };
             return "file:///" + path.substr(0, 2) + base::percent_encode_path(std::string_view { path }.substr(2));
@@ -563,7 +563,7 @@ struct WorkspaceRoot::Impl {
         engineAccepting = false;
         if (payloadCorrupt) {
             engineUnavailable = true;
-            add_engine_issue(Issue { "payload-corrupt", "the extension's payload is corrupt or was modified; reinstall the extension", "lspMcpp.showLogs" });
+            add_engine_issue(Issue { "payload-corrupt", "the extension's payload is corrupt or was modified; reinstall the extension", "mcppls.showLogs" });
             flush_deferred_without_engine();
             answer_initialize_settled(Json::object());
             update_status();
@@ -571,7 +571,7 @@ struct WorkspaceRoot::Impl {
         }
         if (payload.clangd.empty() || !platform::fs::is_regular_file(payload.clangd)) {
             engineUnavailable = true;
-            add_engine_issue(Issue { "engine-missing", "clangd was not found; only module-level features are available", "lspMcpp.showLogs" });
+            add_engine_issue(Issue { "engine-missing", "clangd was not found; only module-level features are available", "mcppls.showLogs" });
             flush_deferred_without_engine();
             answer_initialize_settled(Json::object());
             update_status();
@@ -584,8 +584,8 @@ struct WorkspaceRoot::Impl {
         config.databaseDirectory = databaseDirectory;
         config.workDirectory = root;
         config.verboseLog = options.verboseEngineLog;
-        // Extra engine arguments for troubleshooting, e.g. LSP_MCPP_ENGINE_ARGUMENTS="-j=8 --background-index-priority=background".
-        if (auto extra = platform::env::get("LSP_MCPP_ENGINE_ARGUMENTS")) {
+        // Extra engine arguments for troubleshooting, e.g. MCPPLS_ENGINE_ARGUMENTS="-j=8 --background-index-priority=background".
+        if (auto extra = platform::env::get("MCPPLS_ENGINE_ARGUMENTS")) {
             for (auto word : base::split(*extra, ' ')) {
                 if (!base::trim(word).empty()) config.extraArguments.emplace_back(base::trim(word));
             }
@@ -606,7 +606,7 @@ struct WorkspaceRoot::Impl {
             });
         if (!started) {
             engineUnavailable = true;
-            add_engine_issue(Issue { "engine-crashed", std::format("clangd could not start: {}", started.error().message), "lspMcpp.restartServer" });
+            add_engine_issue(Issue { "engine-crashed", std::format("clangd could not start: {}", started.error().message), "mcppls.restartServer" });
             flush_deferred_without_engine();
             answer_initialize_settled(Json::object());
             update_status();
@@ -748,7 +748,7 @@ struct WorkspaceRoot::Impl {
         const auto now = Clock::now();
         crashes.push_back(now);
         while (!crashes.empty() && now - crashes.front() > std::chrono::minutes { 3 }) crashes.pop_front();
-        add_engine_issue(Issue { "engine-crashed", "clangd exited unexpectedly", "lspMcpp.restartServer" });
+        add_engine_issue(Issue { "engine-crashed", "clangd exited unexpectedly", "mcppls.restartServer" });
         if (crashes.size() >= 3) {
             engineUnavailable = true;
             flush_deferred_without_engine();
@@ -830,7 +830,7 @@ struct WorkspaceRoot::Impl {
     void register_model_watch() {
         if (!dynamicWatch || !model || !initializeAnswered) return;
         if (watchRegistration != 0) {
-            Json unregister { { "unregisterations", Json::array({ Json { { "id", std::format("lsp-mcpp-model-watch:{}:{}", key, watchRegistration) },
+            Json unregister { { "unregisterations", Json::array({ Json { { "id", std::format("mcppls-model-watch:{}:{}", key, watchRegistration) },
                                                                         { "method", "workspace/didChangeWatchedFiles" } } }) } };
             send_client_message(lsp::make_request(std::format("w:{}:u{}", key, watchRegistration), "client/unregisterCapability", std::move(unregister)));
             watchRegistration = 0;
@@ -852,7 +852,7 @@ struct WorkspaceRoot::Impl {
         }
         static int nextRegistration { 0 };
         watchRegistration = ++nextRegistration;
-        Json registrations { { "registrations", Json::array({ Json { { "id", std::format("lsp-mcpp-model-watch:{}:{}", key, watchRegistration) },
+        Json registrations { { "registrations", Json::array({ Json { { "id", std::format("mcppls-model-watch:{}:{}", key, watchRegistration) },
                                                                     { "method", "workspace/didChangeWatchedFiles" },
                                                                     { "registerOptions", Json { { "watchers", std::move(watchers) } } } } }) } };
         send_client_message(lsp::make_request(std::format("w:{}:r{}", key, watchRegistration), "client/registerCapability", std::move(registrations)));
@@ -1126,7 +1126,7 @@ struct WorkspaceRoot::Impl {
         // waiting for its modules and one more for requests, so it never holds every worker (hardware
         // threads count as two per core except on macOS, where they are cores).
         const std::size_t threads { std::max<std::size_t>(1, std::thread::hardware_concurrency()) };
-        const std::size_t cores { lspmcpp::os::FAMILY == lspmcpp::os::Family::macos ? threads : std::max<std::size_t>(1, threads / 2) };
+        const std::size_t cores { mcppls::os::FAMILY == mcppls::os::Family::macos ? threads : std::max<std::size_t>(1, threads / 2) };
         const std::size_t reserved { awaitingDiagnostics.size() + 1 };
         primer.set_limit(cores > reserved ? cores - reserved : 1);
         for (const PrimeModule* module : primer.start_ready([this](const PrimeModule& candidate) { return module_already_built(candidate); })) {
@@ -1242,7 +1242,7 @@ struct WorkspaceRoot::Impl {
         } else if (kit) {
             profile = Json { { "kind", "semantic-kit" }, { "stdlib", std::format("{} {}", kit->stdlibName, kit->stdlibVersion) }, { "target", kit->target } };
         } else {
-            profile = Json { { "kind", "semantic-kit" }, { "stdlib", "unknown" }, { "target", std::string { lspmcpp::os::VSCODE_TARGET } } };
+            profile = Json { { "kind", "semantic-kit" }, { "stdlib", "unknown" }, { "target", std::string { mcppls::os::VSCODE_TARGET } } };
         }
         return profile;
     }
@@ -1275,9 +1275,9 @@ struct WorkspaceRoot::Impl {
             issues.push_back(std::move(issue));
         };
         for (const auto& issue : engineIssues) add(issue.code, issue.message, issue.command);
-        if (!staleModelReason.empty()) add("model-stale", staleModelReason, "lspMcpp.showLogs", "Show Logs");
+        if (!staleModelReason.empty()) add("model-stale", staleModelReason, "mcppls.showLogs", "Show Logs");
         if (model) {
-            for (const auto& issue : model->issues) add(issue.code, issue.message, "lspMcpp.showLogs");
+            for (const auto& issue : model->issues) add(issue.code, issue.message, "mcppls.showLogs");
         }
         for (const auto& issue : plan.issues) {
             // sdk-missing is reported once below, workspace-wide, with the fix command (W5.4).
@@ -1286,7 +1286,7 @@ struct WorkspaceRoot::Impl {
         }
         if (!options.trusted) add("untrusted-workspace", "the workspace is not trusted: build tools and compilers are not run", "");
         if (kit && spec::requires_macos_sdk(*kit) && macosSdk.empty()) {
-            add("sdk-missing", "the macOS SDK was not found; install the Command Line Tools", "lspMcpp.installCommandLineTools", "Install Command Line Tools");
+            add("sdk-missing", "the macOS SDK was not found; install the Command Line Tools", "mcppls.installCommandLineTools", "Install Command Line Tools");
         }
         Json notices = Json::array();
         if (model) {
@@ -1354,13 +1354,13 @@ struct WorkspaceRoot::Impl {
                 (void)send_engine(lsp::make_notification("$/cancelRequest", Json { { "id", id } }));
                 // A file whose modules are still being built is slow, not stuck: restarting would throw that work away.
                 if (awaitingDiagnostics.contains(client_uri(request.uri))) break;
-                add_engine_issue(Issue { "engine-timeout", std::format("clangd did not answer {} in time", request.method), "lspMcpp.restartServer" });
+                add_engine_issue(Issue { "engine-timeout", std::format("clangd did not answer {} in time", request.method), "mcppls.restartServer" });
                 if (++timeoutsByUri[request.uri] >= 3) restart = true;
                 break;
             }
             case Purpose::engine_initialize:
                 log::error("clangd ({}) did not answer initialize", root);
-                add_engine_issue(Issue { "engine-timeout", "clangd did not answer initialize", "lspMcpp.restartServer" });
+                add_engine_issue(Issue { "engine-timeout", "clangd did not answer initialize", "mcppls.restartServer" });
                 answer_initialize_settled(Json::object());
                 restart = true;
                 break;
@@ -1433,7 +1433,7 @@ void WorkspaceRoot::start(Json clientParams, bool clientSupportsStatus, bool use
     impl_->onEngineSettled = std::move(onEngineSettled);
     impl_->dynamicWatch = !usePolling;
     if (usePolling) impl_->start_watch_polling();
-    log::info("lsp-mcpp {} ({}) root {}", base::VERSION, lspmcpp::os::FAMILY_NAME, root_);
+    log::info("mcppls {} ({}) root {}", base::VERSION, mcppls::os::FAMILY_NAME, root_);
     log::info("clangd {} at {}", impl_->payload.clangdVersion.empty() ? "?" : impl_->payload.clangdVersion,
               impl_->payload.clangd.empty() ? "(none)" : impl_->payload.clangd);
     if (!impl_->payloadCorrupt && impl_->kitEnabled && !impl_->payload.kit.empty()) {
@@ -1655,4 +1655,4 @@ std::optional<Clock::time_point> WorkspaceRoot::next_deadline() const { return i
 
 void WorkspaceRoot::handle_timers() { impl_->handle_timers(); }
 
-} // namespace lspmcpp::server
+} // namespace mcppls::server

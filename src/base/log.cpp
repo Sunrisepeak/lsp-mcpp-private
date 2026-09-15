@@ -1,9 +1,9 @@
-module lspmcpp.base.log;
+module mcppls.base.log;
 
 import std;
 import openkal.stream;
 
-namespace lspmcpp::base::log {
+namespace mcppls::base::log {
 
 namespace {
 
@@ -32,7 +32,7 @@ bool enabled(Level level) {
 }
 
 void write(Level level, std::string_view message) {
-    const std::string line { std::format("lsp-mcpp [{}] {}\n", name_of(level), message) };
+    const std::string line { std::format("mcppls [{}] {}\n", name_of(level), message) };
     std::lock_guard lock { gWriteMutex };
     std::size_t done { 0 };
     while (done < line.size()) {
@@ -52,4 +52,4 @@ std::optional<Level> parse_level(std::string_view name) {
     return std::nullopt;
 }
 
-} // namespace lspmcpp::base::log
+} // namespace mcppls::base::log

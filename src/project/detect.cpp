@@ -1,10 +1,10 @@
-module lspmcpp.project.detect;
+module mcppls.project.detect;
 
 import std;
-import lspmcpp.base.path;
-import lspmcpp.platform.fs;
+import mcppls.base.path;
+import mcppls.platform.fs;
 
-namespace lspmcpp::project {
+namespace mcppls::project {
 
 namespace fs = platform::fs;
 
@@ -94,4 +94,4 @@ Detection detect_project(std::string_view rootInput, std::string_view configured
     return detection;
 }
 
-} // namespace lspmcpp::project
+} // namespace mcppls::project

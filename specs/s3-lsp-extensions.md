@@ -186,10 +186,10 @@ After answering, the server rewrites the engine's input for the new context and 
 | Module-name hover: providers, role, semantic profile | `textDocument/hover` | the server's module index |
 | Module declaration as a top-level outline node | `textDocument/documentSymbol` | merged with the semantic engine's result |
 | Search by module name | `workspace/symbol` | merged with the semantic engine's result |
-| Unresolved and ambiguous modules, import of another module's partition | `textDocument/publishDiagnostics` | the server's module index, with `source` `"lsp-mcpp"` |
+| Unresolved and ambiguous modules, import of another module's partition | `textDocument/publishDiagnostics` | the server's module index, with `source` `"mcppls"` |
 | Changes to build descriptions | `workspace/didChangeWatchedFiles`, registered dynamically by the server | the editor watches the files |
 
-Diagnostics produced from the module index use these `code` values: `unresolved-module`, `ambiguous-module` and `partition-outside-module`. A server **SHOULD** name the semantic profile in the `source` of diagnostics it forwards from the semantic engine, for example `"lsp-mcpp · gcc 16"`, so that a user can tell which compiler's semantics a diagnostic reflects. <a id="S3-6-1"></a><sup>S3-6-1</sup>
+Diagnostics produced from the module index use these `code` values: `unresolved-module`, `ambiguous-module` and `partition-outside-module`. A server **SHOULD** name the semantic profile in the `source` of diagnostics it forwards from the semantic engine, for example `"mcppls · gcc 16"`, so that a user can tell which compiler's semantics a diagnostic reflects. <a id="S3-6-1"></a><sup>S3-6-1</sup>
 
 ## 7. Versioning
 

@@ -1,14 +1,14 @@
 // Asking a compiler driver what it is: family, version, target, standard
 // library and its module manifest, and the installation facts normalization needs.
-export module lspmcpp.toolchain.probe;
+export module mcppls.toolchain.probe;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
-import lspmcpp.platform.process;
-import lspmcpp.spec.database;
+import mcppls.base.error;
+import mcppls.platform.process;
+import mcppls.spec.database;
 
-export namespace lspmcpp::toolchain {
+export namespace mcppls::toolchain {
 
 // The Visual Studio toolset and Windows SDK a `*-windows-msvc` toolchain uses,
 // passed to the engine explicitly so no developer environment is needed.
@@ -67,4 +67,4 @@ private:
 base::Result<ToolchainFacts> probe_cached(std::string_view driverPath, std::span<const std::string> relevantArguments,
                                           const Runner& runner, ProbeCache* cache);
 
-} // namespace lspmcpp::toolchain
+} // namespace mcppls::toolchain

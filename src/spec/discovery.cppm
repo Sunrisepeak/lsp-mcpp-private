@@ -1,13 +1,13 @@
 // S2: the discovery command protocol (specs/s2-discovery.md). In stream mode a
 // producer is started with one JSON request on stdin and answers JSON lines on
 // stdout; in single-document mode it prints one envelope with the database inline.
-export module lspmcpp.spec.discovery;
+export module mcppls.spec.discovery;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
+import mcppls.base.error;
 
-export namespace lspmcpp::spec {
+export namespace mcppls::spec {
 
 struct DiscoveryRequest {
     std::string workspace;
@@ -64,4 +64,4 @@ base::Result<DiscoveryResult> parse_discovery_output(std::string_view output);
 base::Result<DiscoveryResult> run_discovery(std::span<const std::string> command, const DiscoveryRequest& request,
                                             std::string_view workDirectory, std::chrono::milliseconds timeout);
 
-} // namespace lspmcpp::spec
+} // namespace mcppls::spec

@@ -1,11 +1,11 @@
 // SHA-256 (FIPS 180-4). Payload integrity (usable plan W9.4) needs a digest of a couple of known
 // files; that does not justify a cryptography dependency, so this is a small, from-scratch,
 // streaming implementation instead.
-export module lspmcpp.base.sha256;
+export module mcppls.base.sha256;
 
 import std;
 
-export namespace lspmcpp::base {
+export namespace mcppls::base {
 
 class Sha256 {
 public:
@@ -27,4 +27,4 @@ private:
 // One-shot convenience for data that already fits in memory.
 std::string sha256_hex(std::string_view data);
 
-} // namespace lspmcpp::base
+} // namespace mcppls::base

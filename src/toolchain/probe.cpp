@@ -1,17 +1,17 @@
-module lspmcpp.toolchain.probe;
+module mcppls.toolchain.probe;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
-import lspmcpp.platform.process;
-import lspmcpp.platform.env;
-import lspmcpp.platform.fs;
-import lspmcpp.spec.database;
-import lspmcpp.toolchain.visualstudio;
+import mcppls.base.error;
+import mcppls.base.path;
+import mcppls.base.text;
+import mcppls.platform.process;
+import mcppls.platform.env;
+import mcppls.platform.fs;
+import mcppls.spec.database;
+import mcppls.toolchain.visualstudio;
 
-namespace lspmcpp::toolchain {
+namespace mcppls::toolchain {
 
 namespace {
 
@@ -390,4 +390,4 @@ base::Result<ToolchainFacts> probe_cached(std::string_view driverPath, std::span
     return facts;
 }
 
-} // namespace lspmcpp::toolchain
+} // namespace mcppls::toolchain

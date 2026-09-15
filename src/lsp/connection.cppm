@@ -1,15 +1,15 @@
 // A Language Server Protocol peer running as a child process: frames written to
 // its standard input, frames read from its standard output on a reader thread,
 // and its standard error drained on another.
-export module lspmcpp.lsp.connection;
+export module mcppls.lsp.connection;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
-import lspmcpp.platform.process;
-import lspmcpp.lsp.jsonrpc;
+import mcppls.base.error;
+import mcppls.platform.process;
+import mcppls.lsp.jsonrpc;
 
-export namespace lspmcpp::lsp {
+export namespace mcppls::lsp {
 
 class Connection {
 public:
@@ -41,4 +41,4 @@ public:
     std::optional<int> exit_code();
 };
 
-} // namespace lspmcpp::lsp
+} // namespace mcppls::lsp

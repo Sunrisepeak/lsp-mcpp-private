@@ -1,6 +1,6 @@
 {
-  "name": "self-lsp-mcpp",
-  "description": "The lsp-mcpp repository at a fixed commit (usable plan W8): an mcpp package whose std comes from the openkal-llvm-runtime package, which mcpp's own build database describes as units of mcpp:std. Nightly.",
+  "name": "self-mcppls",
+  "description": "This repository at a fixed commit from before the rename to mcppls, so its modules are still named lspmcpp.* (usable plan W8): an mcpp package whose std comes from the openkal-llvm-runtime package, which mcpp's own build database describes as units of mcpp:std. Nightly.",
   "prepare": [
     [
       "git",

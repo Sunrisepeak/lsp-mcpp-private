@@ -1,15 +1,15 @@
-module lspmcpp.engine.clangd;
+module mcppls.engine.clangd;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
-import lspmcpp.platform.fs;
-import lspmcpp.platform.process;
-import lspmcpp.lsp.connection;
+import mcppls.base.error;
+import mcppls.base.path;
+import mcppls.base.text;
+import mcppls.platform.fs;
+import mcppls.platform.process;
+import mcppls.lsp.connection;
 
-namespace lspmcpp::engine {
+namespace mcppls::engine {
 
 namespace {
 
@@ -111,4 +111,4 @@ void Clangd::stop(std::chrono::milliseconds grace) {
 
 bool Clangd::running() const { return connection_ && !connection_->closed(); }
 
-} // namespace lspmcpp::engine
+} // namespace mcppls::engine

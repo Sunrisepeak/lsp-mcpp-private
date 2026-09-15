@@ -1,4 +1,4 @@
-module lspmcpp.platform.process;
+module mcppls.platform.process;
 
 import std;
 import openkal.types;
@@ -6,14 +6,14 @@ import openkal.fs;
 import openkal.stream;
 import openkal.process;
 import openkal.timeout;
-import lspmcpp.base.error;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
-import lspmcpp.platform.env;
-import lspmcpp.platform.fs;
-import lspmcpp.platform.preopen;
+import mcppls.base.error;
+import mcppls.base.path;
+import mcppls.base.text;
+import mcppls.platform.env;
+import mcppls.platform.fs;
+import mcppls.platform.preopen;
 
-namespace lspmcpp::platform {
+namespace mcppls::platform {
 
 namespace {
 
@@ -306,4 +306,4 @@ base::Result<RunResult> run(SpawnOptions options, std::chrono::milliseconds time
     return result;
 }
 
-} // namespace lspmcpp::platform
+} // namespace mcppls::platform

@@ -1,19 +1,19 @@
-// A minimal test harness for lsp-mcpp's unit tests, written as a named module.
+// A minimal test harness for mcppls's unit tests, written as a named module.
 //
-//   import lspmcpp.testing;
+//   import mcppls.testing;
 //   int main() {
-//       using namespace lspmcpp::testing;
+//       using namespace mcppls::testing;
 //       "adds"_test = [] { expect(1 + 1 == 2) << "arithmetic"; };
 //       return report();
 //   }
 //
 // mcpp runs every tests/**/*.cpp as a program and a test passes when it exits
 // zero; report() returns non-zero when any expectation failed.
-export module lspmcpp.testing;
+export module mcppls.testing;
 
 import std;
 
-export namespace lspmcpp::testing {
+export namespace mcppls::testing {
 
 // Wraps a condition whose failure ends the current test case.
 struct Fatal {
@@ -68,4 +68,4 @@ inline constexpr int operator""_i(unsigned long long value) { return static_cast
 // Prints the summary and returns the process exit code.
 int report();
 
-} // namespace lspmcpp::testing
+} // namespace mcppls::testing

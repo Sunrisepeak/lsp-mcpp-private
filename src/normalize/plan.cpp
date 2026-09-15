@@ -1,23 +1,23 @@
-module lspmcpp.normalize.plan;
+module mcppls.normalize.plan;
 
 import std;
 import nlohmann.json;
-import lspmcpp.os;
-import lspmcpp.base.error;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
-import lspmcpp.platform.fs;
-import lspmcpp.spec.database;
-import lspmcpp.spec.kit;
-import lspmcpp.spec.metadata;
-import lspmcpp.toolchain.probe;
-import lspmcpp.project.scan;
-import lspmcpp.project.compdb;
-import lspmcpp.normalize.gnu;
-import lspmcpp.normalize.msvc;
-import lspmcpp.normalize.semantic;
+import mcppls.os;
+import mcppls.base.error;
+import mcppls.base.path;
+import mcppls.base.text;
+import mcppls.platform.fs;
+import mcppls.spec.database;
+import mcppls.spec.kit;
+import mcppls.spec.metadata;
+import mcppls.toolchain.probe;
+import mcppls.project.scan;
+import mcppls.project.compdb;
+import mcppls.normalize.gnu;
+import mcppls.normalize.msvc;
+import mcppls.normalize.semantic;
 
-namespace lspmcpp::normalize {
+namespace mcppls::normalize {
 
 namespace {
 
@@ -123,7 +123,7 @@ EnginePlan plan_engine(const PlanInput& input) {
             if (candidate.required.empty()) candidate.required = project::required_names(scan());
 
             const bool importable { spec::is_importable(candidate.role) };
-            const auto syntax { lspmcpp::os::FAMILY == lspmcpp::os::Family::windows ? project::CommandSyntax::windows
+            const auto syntax { mcppls::os::FAMILY == mcppls::os::Family::windows ? project::CommandSyntax::windows
                                                                                   : project::CommandSyntax::posix };
             // S1 section 9 rule 1: options, when the producer stated them, decide the unit's semantics; they
             // are written in the toolchain's dialect and take the translation a build's arguments take.
@@ -414,4 +414,4 @@ base::Result<void> write_engine_database(std::string_view directory, const Engin
     return platform::fs::write_file_atomic(base::join_path(directory, "compile_commands.json"), to_compile_commands(plan).dump(1));
 }
 
-} // namespace lspmcpp::normalize
+} // namespace mcppls::normalize

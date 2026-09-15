@@ -1,15 +1,15 @@
-module lspmcpp.index.modules;
+module mcppls.index.modules;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.text;
-import lspmcpp.base.path;
-import lspmcpp.base.uri;
-import lspmcpp.spec.database;
-import lspmcpp.spec.metadata;
-import lspmcpp.project.scan;
+import mcppls.base.text;
+import mcppls.base.path;
+import mcppls.base.uri;
+import mcppls.spec.database;
+import mcppls.spec.metadata;
+import mcppls.project.scan;
 
-namespace lspmcpp::index {
+namespace mcppls::index {
 
 using Json = nlohmann::json;
 
@@ -41,7 +41,7 @@ Json position_json(base::Position position) { return Json { { "line", position.l
 
 Json diagnostic(const base::Range& range, int severity, std::string_view code, std::string message) {
     return Json { { "range", to_json(range) }, { "severity", severity }, { "code", std::string { code } },
-                  { "source", "lsp-mcpp" }, { "message", std::move(message) } };
+                  { "source", "mcppls" }, { "message", std::move(message) } };
 }
 
 } // namespace
@@ -328,4 +328,4 @@ Json ModuleIndex::module_info(std::string_view name) const {
     return info;
 }
 
-} // namespace lspmcpp::index
+} // namespace mcppls::index

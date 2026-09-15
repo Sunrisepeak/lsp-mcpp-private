@@ -1,14 +1,14 @@
-module lspmcpp.spec.discovery;
+module mcppls.spec.discovery;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
-import lspmcpp.platform.process;
-import lspmcpp.spec.database;
+import mcppls.base.error;
+import mcppls.base.path;
+import mcppls.base.text;
+import mcppls.platform.process;
+import mcppls.spec.database;
 
-namespace lspmcpp::spec {
+namespace mcppls::spec {
 
 namespace {
 
@@ -182,4 +182,4 @@ base::Result<DiscoveryResult> run_discovery(std::span<const std::string> command
     return result;
 }
 
-} // namespace lspmcpp::spec
+} // namespace mcppls::spec

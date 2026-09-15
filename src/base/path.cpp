@@ -1,10 +1,10 @@
-module lspmcpp.base.path;
+module mcppls.base.path;
 
 import std;
-import lspmcpp.os;
-import lspmcpp.base.text;
+import mcppls.os;
+import mcppls.base.text;
 
-namespace lspmcpp::base {
+namespace mcppls::base {
 
 namespace {
 
@@ -128,4 +128,4 @@ bool is_within(std::string_view path, std::string_view directory, bool caseInsen
     return directory.ends_with('/') || path[directory.size()] == '/';
 }
 
-} // namespace lspmcpp::base
+} // namespace mcppls::base

@@ -1,7 +1,7 @@
-// lsp-mcpp: the language server and its command line.
+// mcppls: the language server and its command line.
 import std;
-import lspmcpp.server.cli;
+import mcppls.server.cli;
 
 int main(int argc, char* argv[]) {
-    return lspmcpp::server::run_cli(argc, argv);
+    return mcppls::server::run_cli(argc, argv);
 }

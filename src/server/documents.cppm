@@ -1,12 +1,12 @@
 // The editor's open documents: text, version and language, with LSP content
 // changes applied the way the client describes them (UTF-16 ranges).
-export module lspmcpp.server.documents;
+export module mcppls.server.documents;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.text;
+import mcppls.base.text;
 
-export namespace lspmcpp::server {
+export namespace mcppls::server {
 
 struct Document {
     std::string uri;
@@ -33,4 +33,4 @@ public:
 // Applies one change: a range edit, or a full replacement when there is no range.
 void apply_change(std::string& text, const nlohmann::json& change);
 
-} // namespace lspmcpp::server
+} // namespace mcppls::server

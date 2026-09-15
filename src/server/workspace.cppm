@@ -1,34 +1,34 @@
 // One workspace root's project model, module index, document subset and clangd engine (usable
 // plan W9.1): everything session.cppm's Session used to hold as its own state, extracted so a
-// multi-root session can have several. lspmcpp.server.session composes one or more of these,
+// multi-root session can have several. mcppls.server.session composes one or more of these,
 // routes client requests to the right one by the longest root prefix of the document path, and
 // otherwise stays a thin coordinator of the client-facing protocol.
-export module lspmcpp.server.workspace;
+export module mcppls.server.workspace;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
-import lspmcpp.base.text;
-import lspmcpp.spec.database;
-import lspmcpp.spec.kit;
-import lspmcpp.spec.metadata;
-import lspmcpp.project.model;
-import lspmcpp.normalize.plan;
-import lspmcpp.index.modules;
-import lspmcpp.engine;
-import lspmcpp.platform.fs;
-import lspmcpp.platform.task;
-import lspmcpp.server.documents;
-import lspmcpp.server.payload;
-import lspmcpp.server.primer;
-import lspmcpp.server.router;
+import mcppls.base.error;
+import mcppls.base.text;
+import mcppls.spec.database;
+import mcppls.spec.kit;
+import mcppls.spec.metadata;
+import mcppls.project.model;
+import mcppls.normalize.plan;
+import mcppls.index.modules;
+import mcppls.engine;
+import mcppls.platform.fs;
+import mcppls.platform.task;
+import mcppls.server.documents;
+import mcppls.server.payload;
+import mcppls.server.primer;
+import mcppls.server.router;
 
-export namespace lspmcpp::server {
+export namespace mcppls::server {
 
 using Json = nlohmann::json;
 using Clock = std::chrono::steady_clock;
 
-// Moved here from lspmcpp.server.session (usable plan W9.1) so this module, which the session
+// Moved here from mcppls.server.session (usable plan W9.1) so this module, which the session
 // composes one WorkspaceRoot per root from, does not depend back on it: session.cppm re-exports
 // it, so a caller importing either module sees the same type.
 struct SessionOptions {
@@ -41,8 +41,8 @@ struct SessionOptions {
     bool discoverCompilers { true };
     bool verboseEngineLog { false };
     std::chrono::milliseconds requestTimeout { std::chrono::seconds { 60 } };
-    // usable plan W9.5: empty means a real clangd (lspmcpp.engine.clangd::Clangd); a test can supply
-    // a fake engine instead, since a root only ever uses the lspmcpp.engine interface.
+    // usable plan W9.5: empty means a real clangd (mcppls.engine.clangd::Clangd); a test can supply
+    // a fake engine instead, since a root only ever uses the mcppls.engine interface.
     std::function<std::unique_ptr<engine::Engine>()> engineFactory;
 };
 
@@ -203,4 +203,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace lspmcpp::server
+} // namespace mcppls::server

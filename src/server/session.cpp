@@ -1,25 +1,25 @@
-module lspmcpp.server.session;
+module mcppls.server.session;
 
 import std;
 import nlohmann.json;
-import lspmcpp.os;
-import lspmcpp.base.error;
-import lspmcpp.base.log;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
-import lspmcpp.base.uri;
-import lspmcpp.base.version;
-import lspmcpp.platform.dirs;
-import lspmcpp.platform.fs;
-import lspmcpp.platform.stdio;
-import lspmcpp.platform.task;
-import lspmcpp.lsp.jsonrpc;
-import lspmcpp.lsp.protocol;
-import lspmcpp.server.payload;
-import lspmcpp.server.router;
-import lspmcpp.server.workspace;
+import mcppls.os;
+import mcppls.base.error;
+import mcppls.base.log;
+import mcppls.base.path;
+import mcppls.base.text;
+import mcppls.base.uri;
+import mcppls.base.version;
+import mcppls.platform.dirs;
+import mcppls.platform.fs;
+import mcppls.platform.stdio;
+import mcppls.platform.task;
+import mcppls.lsp.jsonrpc;
+import mcppls.lsp.protocol;
+import mcppls.server.payload;
+import mcppls.server.router;
+import mcppls.server.workspace;
 
-namespace lspmcpp::server {
+namespace mcppls::server {
 
 namespace {
 
@@ -29,7 +29,7 @@ namespace log = base::log;
 
 // usable plan W9.1: one event loop feeding one or more WorkspaceRoots. Everything a root itself
 // owns (project model, module index, plan, clangd engine, documents) moved to
-// lspmcpp.server.workspace; this class is left with the client-facing LSP protocol (capability
+// mcppls.server.workspace; this class is left with the client-facing LSP protocol (capability
 // negotiation, initialize/shutdown/exit), workspace/didChangeWorkspaceFolders, and routing a
 // document-bearing message to the root with the longest matching root prefix, or to the first
 // root for the handful of S3 requests that name no document (documented in handle_modules_request_).
@@ -300,7 +300,7 @@ private:
         initializeAnswered_ = true;
         Json result {
             { "capabilities", merge_capabilities(engineCapabilities) },
-            { "serverInfo", Json { { "name", "lsp-mcpp" }, { "version", std::string { base::VERSION } } } },
+            { "serverInfo", Json { { "name", "mcppls" }, { "version", std::string { base::VERSION } } } },
         };
         reply_(clientInitializeId_, std::move(result));
         for (auto& root : roots_) root->allow_status_notifications();
@@ -468,7 +468,7 @@ private:
                                        "**/*.{cppm,ccm,cxxm,c++m,ixx,mpp,mxx,cpp,cc,cxx}" }) {
             watchers.push_back(Json { { "globPattern", std::string { glob } } });
         }
-        Json params { { "registrations", Json::array({ Json { { "id", "lsp-mcpp-watched-files" },
+        Json params { { "registrations", Json::array({ Json { { "id", "mcppls-watched-files" },
                                                               { "method", "workspace/didChangeWatchedFiles" },
                                                               { "registerOptions", Json { { "watchers", watchers } } } } }) } };
         send_client_message(lsp::make_request(std::format("s:{}", nextServerRequest_++), "client/registerCapability", std::move(params)));
@@ -488,4 +488,4 @@ int run_session(const SessionOptions& options) {
     return session.run();
 }
 
-} // namespace lspmcpp::server
+} // namespace mcppls::server

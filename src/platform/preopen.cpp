@@ -1,11 +1,11 @@
-module lspmcpp.platform.preopen;
+module mcppls.platform.preopen;
 
 import std;
 import openkal.fs;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
+import mcppls.base.path;
+import mcppls.base.text;
 
-namespace lspmcpp::platform {
+namespace mcppls::platform {
 
 namespace {
 
@@ -58,4 +58,4 @@ std::optional<ResolvedName> resolve_name(std::string_view absolutePath) {
     return best;
 }
 
-} // namespace lspmcpp::platform
+} // namespace mcppls::platform

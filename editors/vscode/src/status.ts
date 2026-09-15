@@ -39,8 +39,8 @@ export interface CxxModulesStatus {
     notices?: ModuleIssue[];
 }
 
-const SHOW_LOGS: vscode.Command = { title: 'Show Logs', command: 'lspMcpp.showLogs' };
-const RESTART: vscode.Command = { title: 'Restart', command: 'lspMcpp.restartServer' };
+const SHOW_LOGS: vscode.Command = { title: 'Show Logs', command: 'mcppls.showLogs' };
+const RESTART: vscode.Command = { title: 'Restart', command: 'mcppls.restartServer' };
 const BUSY_STATES: readonly ModuleState[] = ['starting', 'loading', 'preparing'];
 
 interface Waiter {
@@ -83,7 +83,7 @@ export class StatusController implements vscode.Disposable {
     private readonly waiters = new Set<Waiter>();
 
     constructor() {
-        this.item = vscode.languages.createLanguageStatusItem('lspMcpp.status', { language: 'cpp' });
+        this.item = vscode.languages.createLanguageStatusItem('mcppls.status', { language: 'cpp' });
         this.item.name = 'C++ Modules';
         this.showStarting();
     }

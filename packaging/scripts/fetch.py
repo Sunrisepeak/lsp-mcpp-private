@@ -20,8 +20,8 @@ import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_LOCK = os.path.normpath(os.path.join(HERE, "..", "payload.lock.json"))
-DEFAULT_CACHE = os.environ.get("LSP_MCPP_PAYLOAD_CACHE") or os.path.join(
-    os.path.expanduser("~"), ".cache", "lsp-mcpp-payload")
+DEFAULT_CACHE = os.environ.get("MCPPLS_PAYLOAD_CACHE") or os.path.join(
+    os.path.expanduser("~"), ".cache", "mcppls-payload")
 PLATFORMS = ("linux-x64", "win32-x64", "darwin-arm64")
 
 
@@ -66,7 +66,7 @@ def fetch(name, cache=DEFAULT_CACHE, lock=None, retries=4, quiet=False):
         try:
             if not quiet:
                 print(f"fetch: {entry['url']} (attempt {attempt})", file=sys.stderr)
-            request = urllib.request.Request(entry["url"], headers={"User-Agent": "lsp-mcpp-packaging"})
+            request = urllib.request.Request(entry["url"], headers={"User-Agent": "mcppls-packaging"})
             with urllib.request.urlopen(request, timeout=120) as response, open(partial, "wb") as out:
                 shutil.copyfileobj(response, out, length=1 << 20)
             actual = sha256_of(partial)

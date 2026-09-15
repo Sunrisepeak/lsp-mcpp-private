@@ -1,16 +1,16 @@
 // mcpp as a producer (design section 14.2): `mcpp emit build-database --format json`
 // when this mcpp advertises the kind (mcpp-community/mcpp#636), otherwise
 // `mcpp build --configure-only`'s compile database plus scanning and probing.
-export module lspmcpp.project.mcpp;
+export module mcppls.project.mcpp;
 
 import std;
-import lspmcpp.base.error;
-import lspmcpp.project.compdb;
-import lspmcpp.project.detect;
-import lspmcpp.project.infer;
-import lspmcpp.project.provider;
+import mcppls.base.error;
+import mcppls.project.compdb;
+import mcppls.project.detect;
+import mcppls.project.infer;
+import mcppls.project.provider;
 
-export namespace lspmcpp::project {
+export namespace mcppls::project {
 
 std::string mcpp_package_name(std::string_view manifestText);
 
@@ -23,4 +23,4 @@ std::string mcpp_package_name(std::string_view manifestText);
 std::vector<CompileCommand> mcpp_standard_units(std::span<const CompileCommand> commands);
 base::Result<InferredDatabase> load_mcpp(const Detection& detection, const ProviderContext& context);
 
-} // namespace lspmcpp::project
+} // namespace mcppls::project

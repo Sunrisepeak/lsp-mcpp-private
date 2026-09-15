@@ -1,9 +1,9 @@
 {
   "name": "mcpp-emit",
-  "description": "mcpp answering `emit build-database --format json` (mcpp-community/mcpp#636), simulated by lsp-mcpp-mock-mcpp from recorded data in the shape mcpp decided: a level 2 database with one set for the package, one for its tests (hello:test) and one for the standard library modules mcpp builds (mcpp:std), each seeing every other. The S1 library completes the model to level 3; nothing is configured or written in the project.",
+  "description": "mcpp answering `emit build-database --format json` (mcpp-community/mcpp#636), simulated by mcppls-mock-mcpp from recorded data in the shape mcpp decided: a level 2 database with one set for the package, one for its tests (hello:test) and one for the standard library modules mcpp builds (mcpp:std), each seeing every other. The S1 library completes the model to level 3; nothing is configured or written in the project.",
   "server-arguments": [
     "--mcpp",
-    "{runner-dir}/lsp-mcpp-mock-mcpp{exe}"
+    "{runner-dir}/mcppls-mock-mcpp{exe}"
   ],
   "checks": [
     {

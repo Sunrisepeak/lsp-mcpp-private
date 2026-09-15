@@ -1,12 +1,12 @@
 // S4: the semantic kit manifest (specs/s4-semantic-kit.md). A kit carries a
 // standard library's headers and module sources without a compiler.
-export module lspmcpp.spec.kit;
+export module mcppls.spec.kit;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
+import mcppls.base.error;
 
-export namespace lspmcpp::spec {
+export namespace mcppls::spec {
 
 inline constexpr int KIT_VERSION { 1 };
 
@@ -28,4 +28,4 @@ base::Result<Kit> parse_kit(const nlohmann::json& document, std::string_view kit
 base::Result<Kit> load_kit(std::string_view kitRoot);
 bool requires_macos_sdk(const Kit& kit);
 
-} // namespace lspmcpp::spec
+} // namespace mcppls::spec

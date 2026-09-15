@@ -1,14 +1,14 @@
 // S1 section 9 from the consumer's side: arguments structured into options, level 2 completed to level 3.
 import std;
-import lspmcpp.testing;
-import lspmcpp.base.path;
-import lspmcpp.platform.fs;
-import lspmcpp.spec.database;
-import lspmcpp.spec.options;
+import mcppls.testing;
+import mcppls.base.path;
+import mcppls.platform.fs;
+import mcppls.spec.database;
+import mcppls.spec.options;
 
-namespace fs = lspmcpp::platform::fs;
-namespace base = lspmcpp::base;
-namespace s = lspmcpp::spec;
+namespace fs = mcppls::platform::fs;
+namespace base = mcppls::base;
+namespace s = mcppls::spec;
 
 namespace {
 
@@ -46,7 +46,7 @@ s::TranslationUnit unit_of(std::string source, std::vector<std::string> argument
 } // namespace
 
 int main() {
-    using namespace lspmcpp::testing;
+    using namespace mcppls::testing;
 
     "GCC and Clang arguments structure into options; what only a build needs does not"_test = [] {
         const std::vector<std::string> arguments {

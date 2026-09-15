@@ -1,12 +1,12 @@
-module lspmcpp.normalize.gnu;
+module mcppls.normalize.gnu;
 
 import std;
-import lspmcpp.base.path;
-import lspmcpp.spec.database;
-import lspmcpp.spec.kit;
-import lspmcpp.toolchain.probe;
+import mcppls.base.path;
+import mcppls.spec.database;
+import mcppls.spec.kit;
+import mcppls.toolchain.probe;
 
-namespace lspmcpp::normalize {
+namespace mcppls::normalize {
 
 namespace {
 
@@ -160,4 +160,4 @@ std::vector<std::string> kit_arguments(const spec::Kit& kit, std::string_view la
     return out;
 }
 
-} // namespace lspmcpp::normalize
+} // namespace mcppls::normalize

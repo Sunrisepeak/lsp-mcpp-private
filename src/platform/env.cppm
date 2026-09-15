@@ -1,9 +1,9 @@
 // The process environment over openkal.env.
-export module lspmcpp.platform.env;
+export module mcppls.platform.env;
 
 import std;
 
-export namespace lspmcpp::platform::env {
+export namespace mcppls::platform::env {
 
 // Value of a variable; names compare case-insensitively on Windows.
 std::optional<std::string> get(std::string_view name);
@@ -19,4 +19,4 @@ std::optional<std::string> find_executable(std::string_view name, std::string_vi
 // This program's own command-line arguments, argv[0] included.
 std::vector<std::string> arguments();
 
-} // namespace lspmcpp::platform::env
+} // namespace mcppls::platform::env

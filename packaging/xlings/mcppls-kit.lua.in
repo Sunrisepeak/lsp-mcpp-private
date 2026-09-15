@@ -1,24 +1,24 @@
--- lsp-mcpp-kit: the semantic kit (spec S4) lsp-mcpp uses where there is no
+-- mcppls-kit: the semantic kit (spec S4) mcppls uses where there is no
 -- compiler: libc++ @KIT_VERSION@ headers and std module sources, and on Linux the
 -- C library headers. Data only; no programs (design 17.1).
 --
 -- Rendered by packaging/scripts/xlings_artifacts.py; goes to xim-pkgindex as
--- pkgs/l/lsp-mcpp-kit.lua. The version follows libc++, which follows clangd.
+-- pkgs/l/mcppls-kit.lua. The version follows libc++, which follows clangd.
 package = {
     spec = "2",
 
-    name = "lsp-mcpp-kit",
-    description = "Standard library headers and std module sources for lsp-mcpp without a compiler (S4 semantic kit)",
+    name = "mcppls-kit",
+    description = "Standard library headers and std module sources for mcppls without a compiler (S4 semantic kit)",
 
     authors = {"mcpp community"},
     licenses = {"Apache-2.0 WITH LLVM-exception", "LGPL-2.1-or-later", "GPL-2.0-only WITH Linux-syscall-note"},
-    repo = "https://github.com/mcpp-community/lsp-mcpp",
+    repo = "https://github.com/mcpp-community/mcpp-language-server",
 
     type = "package",
     archs = {"x86_64", "aarch64"},
     status = "dev",
     categories = {"cpp", "data"},
-    keywords = {"libc++", "std module", "kit", "lsp-mcpp"},
+    keywords = {"libc++", "std module", "kit", "mcppls"},
 
     xpm = {
         source = "xlings-res",
@@ -40,8 +40,8 @@ package = {
 import("xim.libxpkg.pkginfo")
 
 function install()
-    -- The archive holds lsp-mcpp-kit-<version>-<os>-<arch>/kit.json and the kit beside it;
-    -- lsp-mcpp looks for kit.json directly in this package's install directory.
+    -- The archive holds mcppls-kit-<version>-<os>-<arch>/kit.json and the kit beside it;
+    -- mcppls looks for kit.json directly in this package's install directory.
     local root = pkginfo.install_file():replace(".tar.gz", "")
     os.tryrm(pkginfo.install_dir())
     os.trymv(root, pkginfo.install_dir())

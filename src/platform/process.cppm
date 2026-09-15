@@ -1,11 +1,11 @@
 // Child processes over openkal.process: start a program, talk to it through
 // pipes, wait for it with or without a bound, and end it.
-export module lspmcpp.platform.process;
+export module mcppls.platform.process;
 
 import std;
-import lspmcpp.base.error;
+import mcppls.base.error;
 
-export namespace lspmcpp::platform {
+export namespace mcppls::platform {
 
 struct SpawnOptions {
     std::string program;                                   // absolute path of the executable
@@ -64,4 +64,4 @@ struct PreopenMatch {
 };
 std::optional<PreopenMatch> match_preopen(std::string_view absolutePath);
 
-} // namespace lspmcpp::platform
+} // namespace mcppls::platform

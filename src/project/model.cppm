@@ -1,16 +1,16 @@
 // The project model a session works with: an S1 database from the best source
 // available, the facts about its toolchains, and what degraded along the way.
 // Loading never fails; the last resort is inference from sources.
-export module lspmcpp.project.model;
+export module mcppls.project.model;
 
 import std;
-import lspmcpp.spec.database;
-import lspmcpp.spec.kit;
-import lspmcpp.toolchain.probe;
-import lspmcpp.project.detect;
-import lspmcpp.project.infer;
+import mcppls.spec.database;
+import mcppls.spec.kit;
+import mcppls.toolchain.probe;
+import mcppls.project.detect;
+import mcppls.project.infer;
 
-export namespace lspmcpp::project {
+export namespace mcppls::project {
 
 struct ModelIssue {
     std::string code;
@@ -42,7 +42,7 @@ struct LoadOptions {
     bool trusted { false };
     std::string cacheDirectory;               // <cache>/workspaces/<hash>
     std::string configuredDatabase;
-    std::string compilerOverride;             // lspMcpp.compiler; "kit" forces the semantic kit
+    std::string compilerOverride;             // mcppls.compiler; "kit" forces the semantic kit
     std::string mcppExecutable;               // the producer for mcpp projects; empty: found on PATH
     bool discoverCompilers { true };          // false: loose sources use the kit
     const spec::Kit* kit { nullptr };
@@ -67,4 +67,4 @@ struct ModuleManifest {
 // standard library, the kit's when the model uses it, and every set's metadata.
 std::vector<ModuleManifest> module_manifests(const ProjectModel& model, const spec::Kit* kit);
 
-} // namespace lspmcpp::project
+} // namespace mcppls::project

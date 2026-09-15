@@ -1,7 +1,7 @@
 {
   "name": "cpptools",
   "displayName": "C/C++ (conflicts scenario stub)",
-  "description": "Stands in for ms-vscode.cpptools in the e2e conflicts scenario: only the configuration setting lsp-mcpp reacts to.",
+  "description": "Stands in for ms-vscode.cpptools in the e2e conflicts scenario: only the configuration setting mcppls reacts to.",
   "version": "0.0.1",
   "publisher": "ms-vscode",
   "engines": {

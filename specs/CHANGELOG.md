@@ -4,6 +4,10 @@ All changes to the specifications in this directory. Each specification is versi
 
 ## All specifications
 
+### 2026-09-15
+
+- The reference implementation is renamed from lsp-mcpp to mcpp-language-server: its program, C++ modules and namespaces are `mcppls` and its semantic kit package is `mcppls-kit`. S3's example diagnostic `source` and S4's distribution package name follow. No normative change.
+
 ### 2026-09-14
 
 - Rule identifiers `S<n>-<section>-<ordinal>` on every requirement of S1 to S4 (S3 added the same day), and `conformance/traceability.json` mapping each to its evidence (README, "Rule identifiers and traceability"). No normative change.
@@ -69,5 +73,5 @@ First draft of 0.2.0:
 - Kit layout and the `kit.json` manifest; kit paths; the `macos-sdk` requirement kind.
 - Rules: data only, libc++ version equal to the pinned engine version, no redistributed macOS SDK, MinGW-w64 semantics on Windows.
 - Consumer procedure for turning a kit into engine compile commands.
-- First-batch kits for linux-x64, win32-x64 and darwin-arm64, distributed as `lsp-mcpp-kit`.
+- First-batch kits for linux-x64, win32-x64 and darwin-arm64, distributed as `mcppls-kit`.
 - JSON Schema `schema/s4-kit.schema.json` and examples.
