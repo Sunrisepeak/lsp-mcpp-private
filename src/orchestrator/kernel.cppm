@@ -40,6 +40,11 @@ public:
     // An overlay: the engines see `text` instead of the file until it is closed or refreshed from disk.
     void change(std::string_view path, std::string text);
     void close(std::string_view path);
+    // An overlay's document gets its file's content back.
+    void revert(std::string_view path);
+    // An open document is given its content again as a new version, so the engines build it again:
+    // what it imports may have changed while it did not.
+    void touch(std::string_view path);
     bool is_open(std::string_view path) const;
     std::optional<std::int64_t> version(std::string_view path) const;   // of an open document
     // Open documents whose file changed on disk (an agent writes files) are given the new content,

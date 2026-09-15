@@ -178,6 +178,41 @@ interface DiagnosticsReport { snapshot: Snapshot; files: FileDiagnostics[]; coun
 - With `fresh`, a server **MUST** wait, within its deadline, until the core engine's diagnostics are computed for the content each file has now. <a id="S5-3.6-1"></a><sup>S5-3.6-1</sup>
 - A file whose diagnostics are not computed for its current content when the result is returned **MUST** have `complete: false` and a `reason`. <a id="S5-3.6-2"></a><sup>S5-3.6-2</sup>
 
+### 3.7 Verification
+
+Input: changed `files`, or `changed` (the working tree's changes) or `base` (the changes since a revision), and a `budget` of files; or a `snippet`: `file`, `line` (the snippet goes before it), `replaceLines` (default 0) and `code`.
+
+```ts
+interface Verification {
+  snapshot: Snapshot;
+  verdict: "pass" | "errors" | "incomplete";
+  changed: string[];
+  removed: string[];
+  checked: { file: string; why: "changed" | "importer"; complete: boolean; reason?: string; diagnostics: Diagnostic[] }[];
+  unchecked: string[];       // beyond the budget
+  counts: { error: number; warning: number; information: number; hint: number };
+  semanticSource: string;
+}
+interface SnippetVerification {
+  snapshot: Snapshot;
+  verdict: "pass" | "errors" | "incomplete";
+  file: string;
+  line: number;
+  endLine: number;           // the snippet's last line in the candidate file
+  complete: boolean;
+  inSnippet: Diagnostic[];
+  introduced: Diagnostic[];  // elsewhere in the file, and not there before
+  counts: { error: number; warning: number; information: number; hint: number };
+}
+```
+
+- Verifying a changed interface unit **MUST** check the units of its search scope (3.2) that exist, each reported with `why: "importer"`. <a id="S5-3.7-1"></a><sup>S5-3.7-1</sup>
+- An importer the core engine built before the change **MUST** be built again before its diagnostics count. <a id="S5-3.7-2"></a><sup>S5-3.7-2</sup>
+- A snippet verification **MUST** leave the file on disk, and the content the engines see for it afterwards, as they were. <a id="S5-3.7-3"></a><sup>S5-3.7-3</sup>
+- A diagnostic outside the snippet that the file had before **MUST NOT** be reported as introduced. <a id="S5-3.7-4"></a><sup>S5-3.7-4</sup>
+- Unless an error was found, the verdict **MUST** be `incomplete` when a checked file's diagnostics are not complete or files were left unchecked. <a id="S5-3.7-5"></a><sup>S5-3.7-5</sup>
+- Changes read from git **MUST** be refused with `untrusted` in a workspace that is not trusted. <a id="S5-3.7-6"></a><sup>S5-3.7-6</sup>
+
 ## 4. Contexts
 
 ### 4.1 Build context
@@ -275,6 +310,7 @@ A server runs as an MCP server over standard input and output (`mcppls mcp`): on
 | `cxx_module` | 3.5 with 4.2 as `interface` (unless `interface: false`); `graph: true` for the graph |
 | `cxx_build_context` | 4.1 |
 | `cxx_diagnostics` | 3.6 |
+| `cxx_verify` | 3.7 |
 
 - Every tool **MUST** be annotated `readOnlyHint: true`, and leave every file of the workspace as it was. <a id="S5-6-1"></a><sup>S5-6-1</sup>
 - A tool result **MUST** carry its S5 result as JSON text, and also as `structuredContent` when the negotiated protocol version is 2025-06-18 or later. <a id="S5-6-2"></a><sup>S5-6-2</sup>
@@ -292,6 +328,8 @@ A server runs as an MCP server over standard input and output (`mcppls mcp`): on
 | `mcppls query outline <file>` | 3.4 |
 | `mcppls query module <name> [--file F] [--graph]` | 3.5 |
 | `mcppls diagnostics <file>... [--no-fresh]` | 3.6 |
+| `mcppls verify [<file>...] [--changed] [--base REV] [--budget N]`, `mcppls verify --snippet FILE:LINE --code TEXT [--replace-lines N]` | 3.7 |
+| `mcppls query context <file>` | 4.1 |
 
 Every command takes `--root`, `--timeout` and `--format json|text`.
 

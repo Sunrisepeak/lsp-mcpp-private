@@ -97,7 +97,8 @@ std::pair<bool, std::string> diagnostics_fresh(View& view, std::string_view path
     const auto published = workspace.core_diagnostics_version(view.kernel().uri_of(path));
     if (!version) return { false, "the file is not open" };
     if (!published) return { false, "the core engine has not published diagnostics for this file yet" };
-    if (*published >= 0 && *published < *version) return { false, "the core engine's diagnostics are for an earlier version of the file" };
+    // clangd names the version of every document it builds; a list without one is what it sends when a document closes.
+    if (*published < *version) return { false, "the core engine's diagnostics are for an earlier version of the file" };
     return { true, {} };
 }
 

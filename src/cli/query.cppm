@@ -6,6 +6,7 @@
 //   mcppls query module <name> [--file F] [--graph]
 //   mcppls query context <file>
 //   mcppls diagnostics <file>... [--no-fresh]
+//   mcppls verify [<file>...] [--changed] [--base REV] [--budget N] | --snippet FILE:LINE --code TEXT [--replace-lines N]
 // Every command takes --root DIR, --timeout SECONDS and --format json|text. Exit status: 0 with a
 // result, 1 when the query found nothing (or diagnostics include errors), 2 when the command failed.
 export module mcppls.cli.query;
@@ -17,5 +18,6 @@ export namespace mcppls::cli {
 
 mcpplibs::cmdline::App query_command(bool& handled, int& status);
 mcpplibs::cmdline::App diagnostics_command(bool& handled, int& status);
+mcpplibs::cmdline::App verify_command(bool& handled, int& status);
 
 } // namespace mcppls::cli

@@ -1225,7 +1225,7 @@
  "S5-3.6-2": [
   {
    "script": "src/ai/query/files.cpp",
-   "contains": "if (*published >= 0 && *published < *version) return { false, \"the core engine's diagnostics are for an earlier version of the file\" };"
+   "contains": "if (*published < *version) return { false, \"the core engine's diagnostics are for an earlier version of the file\" };"
   }
  ],
  "S5-4.1-1": [
@@ -1312,6 +1312,47 @@
  "S5-4.2-3": [
   {
    "check": "engine-none/Q1-exported-symbol"
+  }
+ ],
+ "S5-3.7-1": [
+  {
+   "check": "verify-changes/V2-importer-breaks"
+  }
+ ],
+ "S5-3.7-2": [
+  {
+   "check": "verify-changes/V4-restored-passes"
+  },
+  {
+   "script": "src/ai/verify/changes.cpp",
+   "contains": "if (why == \"importer\" && view.kernel().is_open(path)) view.kernel().touch(path);"
+  }
+ ],
+ "S5-3.7-3": [
+  {
+   "check": "verify-changes/V1-snippet-leaves-no-overlay"
+  },
+  {
+   "script": "src/ai/verify/changes.cpp",
+   "contains": "view.kernel().revert(path);"
+  }
+ ],
+ "S5-3.7-4": [
+  {
+   "script": "src/ai/verify/changes.cpp",
+   "contains": "} else if (!before.contains({ diagnostic.message, std::string { base::trim(diagnostic.location.text) } })) {"
+  }
+ ],
+ "S5-3.7-5": [
+  {
+   "script": "src/ai/verify/changes.cpp",
+   "contains": "verification.verdict = errors ? \"errors\" : incomplete ? \"incomplete\" : \"pass\";"
+  }
+ ],
+ "S5-3.7-6": [
+  {
+   "script": "src/ai/verify/changes.cpp",
+   "contains": "if (!workspace.trusted()) return std::unexpected { query::Failure { \"untrusted\", \"the workspace is not trusted, so git is not run\", nullptr } };"
   }
  ]
 }

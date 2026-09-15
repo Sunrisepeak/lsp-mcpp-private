@@ -323,6 +323,35 @@ void Kernel::close(std::string_view path) {
     impl_->close_document(uri_of(path));
 }
 
+void Kernel::touch(std::string_view path) {
+    Impl& impl = *impl_;
+    const std::string uri { uri_of(path) };
+    const auto found = impl.documents.find(uri);
+    if (found == impl.documents.end()) return;
+    // clangd does not build a document again for a new version with the same content: it is closed
+    // and opened again, with what it had.
+    // Versions keep growing, so diagnostics of the document before it was closed are never taken for its own.
+    const Impl::OpenDocument document { found->second };
+    const std::int64_t version { document.version + 1 };
+    impl.close_document(uri);
+    impl.documents[uri] = Impl::OpenDocument { document.path, version, document.text, document.overlay, ++impl.useClock };
+    impl.workspace->did_open(Json { { "textDocument", Json { { "uri", uri }, { "languageId", "cpp" }, { "version", version }, { "text", document.text } } } });
+    impl.answer_engine_requests();
+}
+
+void Kernel::revert(std::string_view path) {
+    Impl& impl = *impl_;
+    const auto found = impl.documents.find(uri_of(path));
+    if (found == impl.documents.end() || !found->second.overlay) return;
+    auto text = platform::fs::read_file(found->second.path);
+    if (!text) {
+        impl.close_document(std::string { found->first });
+        return;
+    }
+    found->second.overlay = false;
+    impl.send_change(found->first, found->second, std::move(*text));
+}
+
 bool Kernel::is_open(std::string_view path) const { return impl_->documents.contains(uri_of(path)); }
 
 std::optional<std::int64_t> Kernel::version(std::string_view path) const {

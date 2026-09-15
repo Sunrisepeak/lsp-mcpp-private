@@ -9,6 +9,7 @@ import mcppls.ai.query.files;
 import mcppls.ai.query.modules;
 import mcppls.ai.context.build;
 import mcppls.ai.context.interface;
+import mcppls.ai.verify.changes;
 
 namespace mcppls::ai::mcp {
 
@@ -133,6 +134,19 @@ Json tool_list() {
     tools.push_back(tool("cxx_build_context", "C++ build context",
                          "How a file is built and read: sets and role, compiler, standard library, language standard, macros, and issues.",
                          Json { { "file", property("string", "File relative to the workspace root") } }, { "file" }));
+    tools.push_back(tool("cxx_verify", "C++ verify",
+                         "Check an edit: changed files and the units that import them, or a candidate snippet placed in a file without writing it.",
+                         Json { { "files", Json { { "type", "array" }, { "items", Json { { "type", "string" } } }, { "description", "Files that changed" } } },
+                                { "changed", property("boolean", "The working tree's changes, from git") },
+                                { "base", property("string", "The changes since this git revision") },
+                                { "budget", Json { { "type", "integer" }, { "minimum", 1 }, { "description", "Files checked at most (default 32)" } } },
+                                { "snippet", Json { { "type", "object" },
+                                                    { "description", "Code to place before line (replacing replaceLines lines) of file" },
+                                                    { "properties", Json { { "file", property("string", "File relative to the workspace root") },
+                                                                           { "line", Json { { "type", "integer" }, { "minimum", 1 } } },
+                                                                           { "replaceLines", Json { { "type", "integer" }, { "minimum", 0 } } },
+                                                                           { "code", property("string", "The candidate code") } } },
+                                                    { "required", Json::array({ "file", "line", "code" }) } } } }));
     tools.push_back(tool("cxx_diagnostics", "C++ diagnostics",
                          "Compiler diagnostics of files as they are on disk now, waiting for fresh results unless fresh is false.",
                          Json { { "files", Json { { "type", "array" }, { "items", Json { { "type", "string" } } }, { "description", "Files relative to the workspace root" } } },
@@ -201,6 +215,29 @@ ToolResult call_tool(query::View& view, std::string_view name, const Json& value
         auto context = context::build_context(view, arguments.string("file"), deadline);
         if (!context) return failure(context.error());
         return ToolResult { context::to_json(*context), false };
+    }
+    if (name == "cxx_verify") {
+        if (const auto snippet = value.find("snippet"); value.is_object() && snippet != value.end() && snippet->is_object()) {
+            const Arguments part { *snippet };
+            if (auto wrong = part.check("line", Json::value_t::number_integer)) return failure(*wrong);
+            if (auto wrong = part.check("replaceLines", Json::value_t::number_integer)) return failure(*wrong);
+            verify::SnippetOptions options { part.string("file"), part.integer("line", 0), part.integer("replaceLines", 0), part.string("code") };
+            if (options.file.empty()) return failure(query::invalid_arguments("snippet.file is required"));
+            auto verified = verify::verify_snippet(view, options, deadline);
+            if (!verified) return failure(verified.error());
+            return ToolResult { verify::to_json(*verified), false };
+        }
+        if (auto wrong = arguments.check("changed", Json::value_t::boolean)) return failure(*wrong);
+        if (auto wrong = arguments.check("base", Json::value_t::string)) return failure(*wrong);
+        if (auto wrong = arguments.check("budget", Json::value_t::number_integer)) return failure(*wrong);
+        verify::ChangeOptions options;
+        options.files = arguments.strings("files");
+        options.workingTree = arguments.boolean("changed", false);
+        options.base = arguments.string("base");
+        options.budget = static_cast<std::size_t>(std::max(1, arguments.integer("budget", 32)));
+        auto verified = verify::verify_changes(view, options, deadline);
+        if (!verified) return failure(verified.error());
+        return ToolResult { verify::to_json(*verified), false };
     }
     if (name == "cxx_diagnostics") {
         const auto files = arguments.strings("files");

@@ -15,6 +15,7 @@ import mcppls.ai.query.files;
 import mcppls.ai.query.modules;
 import mcppls.ai.context.build;
 import mcppls.ai.context.interface;
+import mcppls.ai.verify.changes;
 import mcppls.cli.options;
 
 namespace mcppls::cli {
@@ -360,6 +361,79 @@ cmdline::App query_command(bool& handled, int& status) {
         }, [](const Json& result) { std::println("{}", result.dump(2)); });
     });
     (void)command.subcommand(std::move(context));
+    return command;
+}
+
+cmdline::App verify_command(bool& handled, int& status) {
+    cmdline::App command { "verify" };
+    (void)command.description("Check an edit: changed files and the units that import them, or a snippet placed in a file without writing it");
+    (void)command.arg("file").help("Files that changed");
+    (void)command.option("changed").help("The working tree's changes, from git");
+    (void)command.option("base").takes_value().help("The changes since this git revision");
+    (void)command.option("budget").takes_value().help("Files checked at most (default 32)");
+    (void)command.option("snippet").takes_value().help("FILE:LINE where the code of --code or --code-file goes");
+    (void)command.option("code").takes_value().help("The snippet's code");
+    (void)command.option("code-file").takes_value().help("A file holding the snippet's code");
+    (void)command.option("replace-lines").takes_value().help("Lines of the file the snippet replaces (default 0)");
+    add_session_options(command);
+    (void)command.action([&](const cmdline::ParsedArgs& args) {
+        handled = true;
+        auto verdict_status = [](const Json& result) {
+            const std::string verdict { result.value("verdict", std::string {}) };
+            return verdict == "pass" ? 0 : verdict == "errors" ? 1 : EXIT_FAILED;
+        };
+        auto print = [](const Json& result) {
+            std::println("{}", result.value("verdict", std::string {}));
+            for (const std::string_view key : { "inSnippet", "introduced" }) {
+                for (const auto& diagnostic : result.value(std::string { key }, Json::array())) {
+                    std::println("{}: {}: {}", location_text(diagnostic["location"]), diagnostic.value("severity", std::string {}), diagnostic.value("message", std::string {}));
+                }
+            }
+            for (const auto& file : result.value("checked", Json::array())) {
+                for (const auto& diagnostic : file.value("diagnostics", Json::array())) {
+                    std::println("{}: {}: {}", location_text(diagnostic["location"]), diagnostic.value("severity", std::string {}), diagnostic.value("message", std::string {}));
+                }
+            }
+        };
+        if (auto at = args.value("snippet")) {
+            const auto position = parse_position(*at);
+            std::string code { args.value("code").value_or("") };
+            if (auto codeFile = args.value("code-file")) code = platform::fs::read_file(absolute(*codeFile)).value_or("");
+            if (!position) {
+                std::println(std::cerr, "verify: --snippet takes FILE:LINE");
+                status = EXIT_FAILED;
+                return;
+            }
+            const std::string file { absolute(position->file) };
+            int replace { 0 };
+            try {
+                replace = std::stoi(args.value("replace-lines").value_or("0"));
+            } catch (...) {
+            }
+            status = run_in_session(args, file, [&](query::View& view, Clock::time_point deadline) -> query::Outcome<Json> {
+                auto verified = ai::verify::verify_snippet(view, ai::verify::SnippetOptions { file, position->line, replace, code }, deadline);
+                if (!verified) return std::unexpected { verified.error() };
+                return ai::verify::to_json(*verified);
+            }, print, verdict_status);
+            return;
+        }
+        ai::verify::ChangeOptions options;
+        for (const auto& file : args.positionals) options.files.push_back(absolute(file));
+        options.workingTree = args.is_flag_set("changed");
+        options.base = args.value("base").value_or("");
+        options.budget = static_cast<std::size_t>(std::max(1, static_cast<int>(max_results(args, 32))));
+        if (auto budget = args.value("budget")) {
+            try {
+                options.budget = static_cast<std::size_t>(std::max(1, std::stoi(*budget)));
+            } catch (...) {
+            }
+        }
+        status = run_in_session(args, options.files.empty() ? std::string {} : options.files.front(), [&](query::View& view, Clock::time_point deadline) -> query::Outcome<Json> {
+            auto verified = ai::verify::verify_changes(view, options, deadline);
+            if (!verified) return std::unexpected { verified.error() };
+            return ai::verify::to_json(*verified);
+        }, print, verdict_status);
+    });
     return command;
 }
 

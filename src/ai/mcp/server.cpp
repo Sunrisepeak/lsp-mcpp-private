@@ -26,7 +26,8 @@ constexpr int INVALID_PARAMS { -32602 };
 constexpr std::string_view INSTRUCTIONS {
     "C++ code intelligence for this workspace, from the compiler's view of it (C++20 modules included). "
     "Prefer these tools to text search for C++ names: cxx_symbol finds declarations and definitions, cxx_references finds uses, "
-    "callers and callees across modules, cxx_diagnostics checks files after edits. Lines and columns start at 1. Every tool is read-only."
+    "callers and callees across modules, cxx_verify checks an edit (changed files and what imports them, or a snippet before it is written). "
+    "Lines and columns start at 1. Every tool is read-only."
 };
 
 Json response(const Json& id, Json result) { return Json { { "jsonrpc", "2.0" }, { "id", id }, { "result", std::move(result) } }; }
