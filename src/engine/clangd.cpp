@@ -428,8 +428,10 @@ public:
             if (accepting_) {
                 open_or_hold_(document, false);
                 prepare_imports_of_(document);
-            } else if (!document.path.empty() && !writtenArguments_.contains(base::path_key(document.path))) {
-                // Opened while clangd starts: the plan it is given may not have the file yet.
+            } else if (!document.path.empty() && !writtenDatabase_.empty() && !writtenArguments_.contains(base::path_key(document.path))
+                       && project::is_cxx_source_name(document.path) && base::is_within(document.path, host_->root_directory())) {
+                // Opened while clangd restarts: the database it reads may not have the file yet. Before the first plan nothing is
+                // held; that plan has every open file, and its requests wait for clangd.
                 held_.try_emplace(base::path_key(document.path), HeldFile { Clock::now(), false });
             }
             break;
