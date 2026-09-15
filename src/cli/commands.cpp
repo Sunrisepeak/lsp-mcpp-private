@@ -230,6 +230,8 @@ int run(int argc, char* argv[]) {
     (void)app.subcommand(query_command(handled, status));
     (void)app.subcommand(diagnostics_command(handled, status));
     (void)app.subcommand(verify_command(handled, status));
+    (void)app.subcommand(impact_command(handled, status));
+    (void)app.subcommand(review_command(handled, status));
 
     cmdline::App versionCommand { "version" };
     (void)versionCommand.description("Print the version");

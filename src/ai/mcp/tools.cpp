@@ -10,6 +10,8 @@ import mcppls.ai.query.modules;
 import mcppls.ai.context.build;
 import mcppls.ai.context.interface;
 import mcppls.ai.verify.changes;
+import mcppls.ai.review.pipeline;
+import mcppls.ai.review.report;
 
 namespace mcppls::ai::mcp {
 
@@ -147,6 +149,19 @@ Json tool_list() {
                                                                            { "replaceLines", Json { { "type", "integer" }, { "minimum", 0 } } },
                                                                            { "code", property("string", "The candidate code") } } },
                                                     { "required", Json::array({ "file", "line", "code" }) } } } }));
+    const Json changeProperties {
+        { "base", property("string", "The git revision the change is against (default HEAD)") },
+        { "files", Json { { "type", "array" }, { "items", Json { { "type", "string" } } }, { "description", "Only these files, against base" } } },
+        { "budget", Json { { "type", "integer" }, { "minimum", 1 }, { "description", "Units searched and built at most (default 32)" } } },
+    };
+    tools.push_back(tool("cxx_impact", "C++ change impact",
+                         "What a change does to module interfaces and what it can break: semantic diff, importers, uses of changed exports, affected sets and tests.",
+                         changeProperties));
+    Json reviewProperties = changeProperties;
+    reviewProperties["format"] = Json { { "type", "string" }, { "enum", Json::array({ "json", "sarif", "markdown" }) }, { "description", "Default json" } };
+    tools.push_back(tool("cxx_review", "C++ review",
+                         "Review a change: findings of deterministic rules, each with the evidence it rests on (references, diff lines, diagnostics).",
+                         std::move(reviewProperties)));
     tools.push_back(tool("cxx_diagnostics", "C++ diagnostics",
                          "Compiler diagnostics of files as they are on disk now, waiting for fresh results unless fresh is false.",
                          Json { { "files", Json { { "type", "array" }, { "items", Json { { "type", "string" } } }, { "description", "Files relative to the workspace root" } } },
@@ -238,6 +253,28 @@ ToolResult call_tool(query::View& view, std::string_view name, const Json& value
         auto verified = verify::verify_changes(view, options, deadline);
         if (!verified) return failure(verified.error());
         return ToolResult { verify::to_json(*verified), false };
+    }
+    if (name == "cxx_impact" || name == "cxx_review") {
+        if (auto wrong = arguments.check("base", Json::value_t::string)) return failure(*wrong);
+        if (auto wrong = arguments.check("budget", Json::value_t::number_integer)) return failure(*wrong);
+        if (auto wrong = arguments.check("format", Json::value_t::string)) return failure(*wrong);
+        review::ReviewRequest request;
+        request.changes.base = arguments.string("base").empty() ? std::string { "HEAD" } : arguments.string("base");
+        request.changes.files = arguments.strings("files");
+        request.budget = static_cast<std::size_t>(std::max(1, arguments.integer("budget", 32)));
+        if (name == "cxx_impact") {
+            request.build = false;
+            auto analyzed = review::analyze_change(view, request, deadline);
+            if (!analyzed) return failure(analyzed.error());
+            return ToolResult { review::impact_json(*analyzed), false };
+        }
+        auto reviewed = review::review_change(view, request, deadline);
+        if (!reviewed) return failure(reviewed.error());
+        Json value = review::review_json(*reviewed);
+        const std::string format { arguments.string("format") };
+        if (format == "sarif") value = review::to_sarif(reviewed->findings, view.root(), request.changes.base);
+        else if (format == "markdown") value = Json { { "markdown", review::to_markdown(reviewed->findings, request.changes.base, value) } };
+        return ToolResult { std::move(value), false };
     }
     if (name == "cxx_diagnostics") {
         const auto files = arguments.strings("files");

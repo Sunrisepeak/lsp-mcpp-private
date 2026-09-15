@@ -16,6 +16,8 @@ import mcppls.ai.query.modules;
 import mcppls.ai.context.build;
 import mcppls.ai.context.interface;
 import mcppls.ai.verify.changes;
+import mcppls.ai.review.pipeline;
+import mcppls.ai.review.report;
 import mcppls.cli.options;
 
 namespace mcppls::cli {
@@ -172,8 +174,9 @@ int run_in_session(const cmdline::ParsedArgs& args, std::string_view file, const
     if (!args.value("log-level")) base::log::set_level(base::log::Level::warning);
     apply_log_level(args);
     const std::string format { args.value("format").value_or("json") };
-    if (format != "json" && format != "text") {
-        std::println(std::cerr, "unknown format {}; use json or text", format);
+    // sarif and markdown are what review renders its result as: JSON, and a document of text.
+    if (format != "json" && format != "text" && format != "sarif" && format != "markdown") {
+        std::println(std::cerr, "unknown format {}; use json or text (review: also sarif or markdown)", format);
         return EXIT_FAILED;
     }
     const orchestrator::KernelOptions options { session_options(args), root_of(args, file) };
@@ -188,8 +191,19 @@ int run_in_session(const cmdline::ParsedArgs& args, std::string_view file, const
         else std::println(std::cerr, "{}: {}", result.error().code, result.error().message);
         return result.error().code == "not-found" || result.error().code == "ambiguous" ? EXIT_NOTHING : EXIT_FAILED;
     }
-    if (format == "json") std::println("{}", result->dump(2));
-    else printText(*result);
+    if (format == "text") {
+        printText(*result);
+        return exitStatus ? exitStatus(*result) : 0;
+    }
+    const std::string document { format == "markdown" ? result->value("markdown", std::string {}) : result->dump(2) + "\n" };
+    if (auto output = args.value("output")) {
+        if (auto written = platform::fs::write_file(absolute(*output), document); !written) {
+            std::println(std::cerr, "cannot write {}: {}", *output, written.error().message);
+            return EXIT_FAILED;
+        }
+    } else {
+        std::print("{}", document);
+    }
     return exitStatus ? exitStatus(*result) : 0;
 }
 
@@ -433,6 +447,104 @@ cmdline::App verify_command(bool& handled, int& status) {
             if (!verified) return std::unexpected { verified.error() };
             return ai::verify::to_json(*verified);
         }, print, verdict_status);
+    });
+    return command;
+}
+
+namespace {
+
+ai::review::ReviewRequest review_request_of(const cmdline::ParsedArgs& args) {
+    ai::review::ReviewRequest request;
+    request.changes.base = args.value("base").value_or("HEAD");
+    for (const auto& file : args.positionals) request.changes.files.push_back(absolute(file));
+    if (auto budget = args.value("budget")) {
+        try {
+            request.budget = static_cast<std::size_t>(std::max(1, std::stoi(*budget)));
+        } catch (...) {
+        }
+    }
+    return request;
+}
+
+void add_change_options(cmdline::App& command) {
+    (void)command.arg("file").help("Only these files, against the base");
+    (void)command.option("base").takes_value().help("The git revision the change is against (default HEAD)");
+    (void)command.option("budget").takes_value().help("Units searched and built at most (default 32)");
+}
+
+void print_text_impact(const Json& result) {
+    for (const auto& diff : result.value("diffs", Json::array())) {
+        if (!diff.value("interfaceChanged", false)) continue;
+        std::println("{}: interface changed", diff.value("file", std::string {}));
+        for (const auto& change : diff.value("exports", Json::array())) {
+            std::println("  {} {} {}", change.value("change", std::string {}), change.value("kind", std::string {}), change.value("qualifiedName", std::string {}));
+        }
+    }
+    const Json impact = result.value("impact", Json::object());
+    for (const auto& name : impact.value("names", Json::array())) {
+        std::println("{}: {} use(s)", name.value("qualifiedName", std::string {}), name.value("uses", Json::array()).size());
+        for (const auto& use : name.value("uses", Json::array())) std::println("  {}  {}", location_text(use), base::trim(use.value("text", std::string {})));
+    }
+    for (const auto& test : impact.value("tests", Json::array())) {
+        std::println("test set {}{}", test.value("set", std::string {}), test.value("changed", false) ? " (changed)" : "");
+    }
+}
+
+} // namespace
+
+cmdline::App impact_command(bool& handled, int& status) {
+    cmdline::App command { "impact" };
+    (void)command.description("What a change does to module interfaces and what it can break");
+    add_change_options(command);
+    add_session_options(command);
+    (void)command.action([&](const cmdline::ParsedArgs& args) {
+        handled = true;
+        auto request = review_request_of(args);
+        request.build = false;
+        status = run_in_session(args, request.changes.files.empty() ? std::string {} : request.changes.files.front(),
+                                [&](query::View& view, Clock::time_point deadline) -> query::Outcome<Json> {
+            auto analyzed = ai::review::analyze_change(view, request, deadline);
+            if (!analyzed) return std::unexpected { analyzed.error() };
+            return ai::review::impact_json(*analyzed);
+        }, print_text_impact);
+    });
+    return command;
+}
+
+cmdline::App review_command(bool& handled, int& status) {
+    cmdline::App command { "review" };
+    (void)command.description("Review a change: findings of the rules, with their evidence; SARIF for code scanning");
+    add_change_options(command);
+    add_session_options(command);
+    (void)command.option("output").takes_value().help("Write the report to this file instead of standard output");
+    (void)command.action([&](const cmdline::ParsedArgs& args) {
+        handled = true;
+        const auto request = review_request_of(args);
+        const std::string format { args.value("format").value_or("json") };
+        std::optional<ai::review::ReviewResult> kept;
+        const int code = run_in_session(args, request.changes.files.empty() ? std::string {} : request.changes.files.front(),
+                                        [&](query::View& view, Clock::time_point deadline) -> query::Outcome<Json> {
+            auto reviewed = ai::review::review_change(view, request, deadline);
+            if (!reviewed) return std::unexpected { reviewed.error() };
+            Json value = ai::review::review_json(*reviewed);
+            if (format == "sarif") value = ai::review::to_sarif(reviewed->findings, view.root(), request.changes.base);
+            else if (format == "markdown") value = Json { { "markdown", ai::review::to_markdown(reviewed->findings, request.changes.base, value) } };
+            kept = std::move(*reviewed);
+            return value;
+        }, [](const Json& result) {
+            for (const auto& finding : result.value("findings", Json::array())) {
+                std::println("{}: {}: {} [{}]", location_text(finding["location"]), finding.value("severity", std::string {}), finding.value("message", std::string {}),
+                             finding.value("rule", std::string {}));
+                for (const auto& evidence : finding.value("evidence", Json::array())) {
+                    std::println("  {} {} {}", evidence.value("id", std::string {}), evidence.value("kind", std::string {}), location_text(evidence["location"]));
+                }
+            }
+        }, [](const Json&) { return 0; });
+        if (code != 0 || !kept) {
+            status = code;
+            return;
+        }
+        status = std::ranges::any_of(kept->findings, [](const spec::Finding& finding) { return finding.severity == spec::Severity::error; }) ? 1 : 0;
     });
     return command;
 }
