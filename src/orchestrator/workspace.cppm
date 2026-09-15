@@ -112,6 +112,9 @@ public:
     Json module_info(std::string_view name) const;
     Json module_info_at(std::string_view path, base::Position at) const;
     Json contexts() const;
+    // What a report of a problem needs about this root (robustness design O3): model, plan, engines with their
+    // own details, request statistics by method, and the recent events.
+    Json report() const;
     // Replies to `id` itself, then replans if it changed anything.
     void set_context(const Json& id, std::string_view context);
 

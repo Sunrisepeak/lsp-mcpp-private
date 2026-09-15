@@ -16,6 +16,7 @@ import mcppls.platform.task;
 import mcppls.lsp.jsonrpc;
 import mcppls.lsp.protocol;
 import mcppls.engine.payload;
+import mcppls.orchestrator.report;
 import mcppls.orchestrator.client;
 import mcppls.orchestrator.routing;
 import mcppls.orchestrator.workspace;
@@ -41,6 +42,7 @@ using orchestrator::Workspace;
 class Session {
 private:
     SessionOptions options_;
+    const std::chrono::steady_clock::time_point started_ { std::chrono::steady_clock::now() };
     std::shared_ptr<EventChannel> events_ { std::make_shared<EventChannel>() };
 
     // Editor side.
@@ -353,6 +355,13 @@ private:
                                       static_cast<int>(lsp::int_at(*position, "character").value_or(0)) };
             Workspace* root { root_for_path_(path) };
             reply_(id, root ? root->module_info_at(path, at) : Json(nullptr));
+        } else if (method == "cxxModules/report") {
+            // robustness design O3: what a bug report needs, for every root.
+            Json roots = Json::array();
+            for (const auto& root : roots_) roots.push_back(root->report());
+            const Json* clientInfo { lsp::find(clientParams_, "clientInfo") };
+            reply_(id, orchestrator::make_report(std::move(roots), clientInfo != nullptr ? *clientInfo : Json(nullptr), options_.engine, payload_, payloadCorrupt_,
+                                                 std::chrono::steady_clock::now() - started_));
         } else if (method == "cxxModules/contexts") {
             Workspace* root { root_for_message_(params) };
             reply_(id, root ? root->contexts() : Json(nullptr));

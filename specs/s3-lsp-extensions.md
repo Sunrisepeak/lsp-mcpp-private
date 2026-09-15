@@ -92,6 +92,8 @@ interface CxxModulesIssue {
   code: "unresolved-module" | "ambiguous-module" | "engine-timeout" | "engine-crashed"
       | "toolchain-not-found" | "sdk-missing" | "untrusted-workspace" | "module-build-failed"
       | "model-stale"               // the producer failed to answer again; the last model is kept (S2 5)
+      | "std-fallback-kit"          // the engine could not build the toolchain's standard library module; a semantic kit reads the files
+      | "file-quarantined"          // the engine stopped answering for some files; they are answered from the module index until they change
       | string;
   message: string;
   command?: Command;               // an optional action that fixes the issue
@@ -186,6 +188,25 @@ interface CxxModulesSetContextParams { textDocument: TextDocumentIdentifier; con
 ```
 
 After answering, the server rewrites the engine's input for the new context and sends `cxxModules/status` as the engine prepares. A `context` that is not in the file's `available` list is answered with the LSP error `InvalidParams`.
+
+### 5.5 `cxxModules/report`
+
+Direction: client → server. What a report of a problem needs, gathered by the server for a person or a bug report.
+
+```ts
+// Params: {}
+interface CxxModulesReport {
+  generatedAt: string;             // UTC, ISO 8601
+  server: { name: string; version: string; platform: string; uptimeSeconds: number; logLevel: string; logFile: string };
+  client: { name: string; version?: string } | null;   // the client's clientInfo, as it sent it
+  roots: object[];                 // one entry per workspace root
+  logTail: string[];               // the latest lines of the server's log
+}
+```
+
+A server **SHOULD** answer at once with what it knows rather than wait for its engines. <a id="S3-5.5-1"></a><sup>S3-5.5-1</sup>
+
+The content of each `roots` entry is the server's own and may change between server versions: a client **MUST NOT** base features on it. <a id="S3-5.5-2"></a><sup>S3-5.5-2</sup>
 
 ## 6. Module features through standard LSP
 

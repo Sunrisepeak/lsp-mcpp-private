@@ -1,4 +1,4 @@
-// The four commands: select context, show module graph, restart, show logs.
+// The commands: select context, show module graph, restart, show logs, collect a diagnostic report.
 
 import * as vscode from 'vscode';
 import type { LanguageClient } from 'vscode-languageclient/node';
@@ -150,11 +150,67 @@ async function showModuleGraph(access: ServerAccess): Promise<void> {
     await vscode.window.showTextDocument(document, { preview: true });
 }
 
+function withTimeout<T>(promise: Thenable<T>, milliseconds: number, what: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`${what} did not answer within ${milliseconds / 1000} s`)), milliseconds);
+        promise.then((value) => { clearTimeout(timer); resolve(value); }, (error: unknown) => { clearTimeout(timer); reject(error); });
+    });
+}
+
+// robustness design O3: what a bug report needs, in one document a person can read, copy or save. The
+// server's part (cxxModules/report) comes with the extension's own: versions, settings, other C++ extensions.
+async function collectReport(access: ServerAccess): Promise<void> {
+    const client = access.runningClient();
+    const extension = vscode.extensions.getExtension('mcpp-community.mcpp-language-server');
+    const settings = vscode.workspace.getConfiguration('mcppls');
+    const report: Record<string, unknown> = {
+        extension: {
+            version: (extension?.packageJSON as { version?: string } | undefined)?.version,
+            vscode: vscode.version,
+            platform: `${process.platform}-${process.arch}`,
+            otherCppExtensions: ['ms-vscode.cpptools', 'llvm-vs-code-extensions.vscode-clangd', 'mcpp-community.mcpp-vscode']
+                .filter((id) => vscode.extensions.getExtension(id) !== undefined),
+            settings: {
+                compiler: settings.get('compiler'),
+                semanticKit: settings.get('semanticKit'),
+                engine: settings.get('engine'),
+                aiEnabled: settings.get('ai.enabled'),
+                detectConflicts: settings.get('detectConflicts'),
+            },
+        },
+        workspaceFolders: (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath),
+    };
+    if (!client) {
+        report.server = 'not running';
+    } else if (!declaresModules(client.initializeResult?.capabilities)) {
+        report.server = NO_MODULE_REQUESTS;
+    } else {
+        try {
+            report.server = await withTimeout(client.sendRequest('cxxModules/report', {}), 30000, 'cxxModules/report');
+        } catch (error) {
+            access.log(`cxxModules/report failed: ${errorText(error)}`);
+            report.server = `cxxModules/report failed: ${errorText(error)}`;
+        }
+    }
+    const content = JSON.stringify(report, null, 2);
+    const document = await vscode.workspace.openTextDocument({ language: 'json', content });
+    await vscode.window.showTextDocument(document, { preview: false });
+    const choice = await vscode.window.showInformationMessage(
+        'C++ Modules: the diagnostic report is open. It names paths on this machine; attach it to an issue as it is or after editing.',
+        'Copy to Clipboard', 'Show Logs');
+    if (choice === 'Copy to Clipboard') {
+        await vscode.env.clipboard.writeText(content);
+    } else if (choice === 'Show Logs') {
+        access.showLogs();
+    }
+}
+
 export function registerCommands(context: vscode.ExtensionContext, access: ServerAccess): void {
     context.subscriptions.push(
         vscode.commands.registerCommand('mcppls.selectContext', () => selectContext(access)),
         vscode.commands.registerCommand('mcppls.showModuleGraph', () => showModuleGraph(access)),
         vscode.commands.registerCommand('mcppls.restartServer', () => access.restart()),
         vscode.commands.registerCommand('mcppls.showLogs', () => access.showLogs()),
+        vscode.commands.registerCommand('mcppls.collectReport', () => collectReport(access)),
     );
 }

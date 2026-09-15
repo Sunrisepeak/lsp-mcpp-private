@@ -1,5 +1,5 @@
-// Diagnostic logging to standard error. The protocol owns standard output, so
-// nothing here may ever write there.
+// Diagnostic logging to standard error, each line with its time, and optionally to a rotated file. The
+// protocol owns standard output, so nothing here may ever write there.
 export module mcppls.base.log;
 
 import std;
@@ -14,6 +14,13 @@ bool enabled(Level level);
 void write(Level level, std::string_view message);
 // Where lines go instead of standard error, for a process nobody reads the standard error of (the daemon).
 void set_sink(std::function<void(std::string_view line)> sink);
+// Every line also goes to this file, which outlives the editor's output (robustness design O2). It is rotated
+// when it passes `maxBytes`: the previous `keep` files stay beside it as <path>.1, <path>.2, ... False when the
+// file cannot be opened.
+bool add_file(std::string_view path, std::uintmax_t maxBytes = 5 * 1024 * 1024, int keep = 2);
+std::string file_path();
+// The most recent lines written, oldest first, at most `limit` of them (robustness design O3).
+std::vector<std::string> recent(std::size_t limit);
 std::optional<Level> parse_level(std::string_view name);
 
 template <class... Args>

@@ -125,6 +125,11 @@ public:
     virtual std::string path_of_uri(std::string_view uri) const = 0;
     // The modules a source imports, from the workspace's source index.
     virtual std::vector<std::string> imports_of(std::string_view path) const = 0;
+    // A moment a report of a problem needs (robustness design O1): what happened, with its details.
+    virtual void record_event(std::string_view kind, Json detail) {
+        (void)kind;
+        (void)detail;
+    }
 };
 
 class Engine {
@@ -160,6 +165,9 @@ public:
     virtual void handle_event(const Json& event) = 0;
     virtual std::optional<Clock::time_point> next_deadline() const = 0;
     virtual void handle_timers() = 0;
+
+    // What this engine knows that a report of a problem needs (robustness design O3).
+    virtual Json report() const { return Json::object(); }
 };
 
 } // namespace mcppls::engine

@@ -27,6 +27,7 @@ import mcppls.normalize.plan;
 import mcppls.engine;
 import mcppls.engine.payload;
 import mcppls.engine.native.index;
+import mcppls.orchestrator.journal;
 import mcppls.orchestrator.client;
 import mcppls.orchestrator.documents;
 import mcppls.orchestrator.instance;
@@ -168,8 +169,23 @@ struct Workspace::Impl final : engine::Host {
     std::map<std::string, Json, std::less<>> reviewDiagnostics;
     std::shared_ptr<platform::Process> reviewProcess;
 
+    // robustness design O1, O3: what happened, and how requests fared, for a report of a problem.
+    Journal journal;
+    struct MethodStats {
+        std::size_t count { 0 };
+        std::size_t empty { 0 };
+        std::size_t errors { 0 };
+        std::size_t cancelled { 0 };
+        double maxMs { 0 };
+        std::deque<double> recentMs;   // the latest durations, for percentiles
+        std::map<std::string, std::size_t, std::less<>> answeredBy;
+    };
+    std::map<std::string, MethodStats, std::less<>> requestStats;
+
     // Requests in flight across engines.
     struct Job {
+        Clock::time_point started {};
+        std::string answeredBy;   // the engine whose answer went out; "merged" when several were
         Json clientId;
         std::string method;
         std::vector<engine::Engine*> answerers;
@@ -285,6 +301,7 @@ struct Workspace::Impl final : engine::Host {
 
     void status_changed() override { update_status(); }
     void request_replan() override { schedule_replan(); }
+    void record_event(std::string_view kind, Json detail) override { journal.add(kind, std::move(detail)); }
 
     std::vector<engine::DocumentView> documents() const override {
         std::vector<engine::DocumentView> views;
@@ -428,6 +445,7 @@ struct Workspace::Impl final : engine::Host {
     void route_client_request(const Json& message) {
         const std::uint64_t jobId { nextJob++ };
         Job& job = jobs[jobId];
+        job.started = Clock::now();
         job.clientId = message["id"];
         job.method = message.value("method", std::string {});
         job.message = message;
@@ -468,12 +486,13 @@ struct Workspace::Impl final : engine::Host {
             return;
         }
         engine::Engine* answerer { job.answerers[job.next++] };
-        answerer->request(job.view, job.message, [this, jobId](engine::Answer answer) {
+        answerer->request(job.view, job.message, [this, jobId, engineId = std::string { answerer->id() }](engine::Answer answer) {
             auto current = jobs.find(jobId);
             if (current == jobs.end()) return;
             switch (answer.kind) {
             case engine::Answer::Kind::result:
                 if (!answer.value.is_null()) {
+                    current->second.answeredBy = engineId;
                     finish_job(jobId, std::move(answer.value));
                     return;
                 }
@@ -499,6 +518,7 @@ struct Workspace::Impl final : engine::Host {
         case engine::Answer::Kind::cancelled: job.cancelled = true; break;
         }
         if (--job.awaiting > 0) return;
+        job.answeredBy = "merged";
         if (job.cancelled) {
             finish_job_cancelled(jobId);
         } else if (job.error) {
@@ -508,9 +528,28 @@ struct Workspace::Impl final : engine::Host {
         }
     }
 
+    // One request done: its duration, outcome and answering engine counted by method (robustness design O3).
+    void note_request(const Job& job, std::string_view outcome) {
+        auto& stats = requestStats[job.method];
+        ++stats.count;
+        if (outcome == "empty") ++stats.empty;
+        else if (outcome == "error") ++stats.errors;
+        else if (outcome == "cancelled") ++stats.cancelled;
+        const double ms { std::chrono::duration<double, std::milli>(Clock::now() - job.started).count() };
+        stats.recentMs.push_back(ms);
+        if (stats.recentMs.size() > 256) stats.recentMs.pop_front();
+        stats.maxMs = std::max(stats.maxMs, ms);
+        if (!job.answeredBy.empty()) ++stats.answeredBy[job.answeredBy];
+        if (ms >= 5000) {
+            journal.add("slow-request", Json { { "method", job.method }, { "file", job.path }, { "ms", static_cast<std::int64_t>(ms) },
+                                               { "outcome", std::string { outcome } }, { "answeredBy", job.answeredBy } });
+        }
+    }
+
     void finish_job(std::uint64_t jobId, Json result) {
         auto it = jobs.find(jobId);
         if (it == jobs.end()) return;
+        note_request(it->second, result.is_null() ? "empty" : "result");
         const Json id = it->second.clientId;
         jobs.erase(it);
         client.reply(id, std::move(result));
@@ -519,6 +558,7 @@ struct Workspace::Impl final : engine::Host {
     void finish_job_with_error(std::uint64_t jobId, Json error) {
         auto it = jobs.find(jobId);
         if (it == jobs.end()) return;
+        note_request(it->second, "error");
         Json response { { "jsonrpc", "2.0" }, { "id", it->second.clientId }, { "error", std::move(error) } };
         jobs.erase(it);
         client.send(response);
@@ -527,6 +567,7 @@ struct Workspace::Impl final : engine::Host {
     void finish_job_cancelled(std::uint64_t jobId) {
         auto it = jobs.find(jobId);
         if (it == jobs.end()) return;
+        note_request(it->second, "cancelled");
         const Json id = it->second.clientId;
         jobs.erase(it);
         client.reply_error(id, lsp::REQUEST_CANCELLED, "cancelled");
@@ -676,6 +717,7 @@ struct Workspace::Impl final : engine::Host {
             staleModelReason = std::format("{} could not describe the project again{}; the last model that loaded is kept and may be stale",
                                            project::to_string(model->source), why);
             for (const auto& issue : loadedModel->issues) log::warning("model reload failed ({}): [{}] {}", root, issue.code, issue.message);
+            journal.add("model-stale", Json { { "reason", staleModelReason } });
             if (reloadAfterLoad) {
                 reloadAfterLoad = false;
                 start_model_load();
@@ -700,6 +742,7 @@ struct Workspace::Impl final : engine::Host {
             // The usual answer to a saved source the producer watches: the same project. The index
             // already has the file and the plan already has the graph, so the work of a new model is skipped.
             log::info("project model ({}) loaded again: unchanged", root);
+            journal.add("model-unchanged");
             for (const auto& issue : model->issues) log::info("model issue [{}] {}", issue.code, issue.message);
             if (reloadAfterLoad) {
                 reloadAfterLoad = false;
@@ -712,6 +755,12 @@ struct Workspace::Impl final : engine::Host {
         log::info("project model ({}): source {}, level {}, {} sets, profile {} {} {}", root, project::to_string(model->source), model->level,
                   model->database.sets.size(), model->profile.kind, model->profile.compiler, model->profile.stdlib);
         for (const auto& issue : model->issues) log::info("model issue [{}] {}", issue.code, issue.message);
+        {
+            Json issues = Json::array();
+            for (const auto& issue : model->issues) issues.push_back(Json { { "code", issue.code }, { "message", issue.message } });
+            journal.add("model-loaded", Json { { "source", std::string { project::to_string(model->source) } }, { "level", model->level },
+                                               { "sets", model->database.sets.size() }, { "profile", profile_json() }, { "issues", std::move(issues) } });
+        }
 
         save_model_cache();
         index.clear();
@@ -767,6 +816,9 @@ struct Workspace::Impl final : engine::Host {
             if (const auto* scan = index.scan_of(path)) structures[base::path_key(path)] = structure_of(*scan);
         }
         firstPlanWritten = true;
+        journal.add("plan", Json { { "context", contextSet.empty() ? std::string { "default" } : contextSet }, { "entries", plan.entries.size() },
+                                   { "stdUnits", plan.stdUnits }, { "standIns", plan.stubModules }, { "leftOut", plan.excludedFiles.size() },
+                                   { "issues", plan.issues.size() } });
         for (const auto& engine : engines) engine->apply(&plan);
         for (const Document* document : documents_.all()) publish_diagnostics(document->uri);
         update_status();
@@ -1157,12 +1209,69 @@ Json Workspace::contexts() const {
     return Json { { "current", impl_->contextSet.empty() ? std::string { "default" } : impl_->contextSet }, { "available", available } };
 }
 
+Json Workspace::report() const {
+    const auto& impl = *impl_;
+    Json project = nullptr;
+    if (impl.model) {
+        Json issues = Json::array();
+        for (const auto& issue : impl.model->issues) issues.push_back(Json { { "code", issue.code }, { "message", issue.message } });
+        Json toolchains = Json::array();
+        for (const auto& [id, facts] : impl.model->facts) toolchains.push_back(id);
+        project = Json { { "source", std::string { project::to_string(impl.model->source) } }, { "level", impl.model->level },
+                         { "sets", impl.model->database.sets.size() }, { "toolchains", std::move(toolchains) }, { "profile", impl.profile_json() },
+                         { "issues", std::move(issues) }, { "staleReason", impl.staleModelReason } };
+    }
+    Json leftOut = Json::array();
+    for (const auto& file : impl.plan.excludedFiles) {
+        if (leftOut.size() >= 100) break;
+        leftOut.push_back(file);
+    }
+    Json planIssues = Json::array();
+    for (const auto& issue : impl.plan.issues) {
+        if (planIssues.size() >= 100) break;
+        planIssues.push_back(Json { { "code", issue.code }, { "message", issue.message }, { "file", issue.file }, { "module", issue.module } });
+    }
+    Json plan { { "context", impl.contextSet.empty() ? std::string { "default" } : impl.contextSet }, { "entries", impl.plan.entries.size() },
+                { "stdUnits", impl.plan.stdUnits }, { "standIns", impl.plan.stubModules }, { "leftOutCount", impl.plan.excludedFiles.size() },
+                { "leftOut", std::move(leftOut) }, { "issueCount", impl.plan.issues.size() }, { "issues", std::move(planIssues) } };
+    Json engines = Json::array();
+    for (const auto& engine : impl.engines) {
+        const engine::EngineStatus status { engine->status() };
+        Json issues = Json::array();
+        for (const auto& issue : status.issues) issues.push_back(Json { { "code", issue.code }, { "message", issue.message } });
+        Json entry { { "name", status.name }, { "version", status.version }, { "role", status.role }, { "state", status.state },
+                     { "accepting", status.accepting }, { "prepared", status.prepared }, { "toPrepare", status.toPrepare }, { "issues", std::move(issues) } };
+        entry["details"] = engine->report();
+        engines.push_back(std::move(entry));
+    }
+    Json requests = Json::object();
+    for (const auto& [method, stats] : impl.requestStats) {
+        std::vector<double> durations { stats.recentMs.begin(), stats.recentMs.end() };
+        std::ranges::sort(durations);
+        const auto percentile = [&](double fraction) -> std::int64_t {
+            if (durations.empty()) return 0;
+            const std::size_t index { std::min(durations.size() - 1, static_cast<std::size_t>(fraction * static_cast<double>(durations.size()))) };
+            return static_cast<std::int64_t>(durations[index]);
+        };
+        Json answeredBy = Json::object();
+        for (const auto& [engineId, count] : stats.answeredBy) answeredBy[engineId] = count;
+        requests[method] = Json { { "count", stats.count }, { "empty", stats.empty }, { "errors", stats.errors }, { "cancelled", stats.cancelled },
+                                  { "p50Ms", percentile(0.5) }, { "p95Ms", percentile(0.95) }, { "maxMs", static_cast<std::int64_t>(stats.maxMs) },
+                                  { "answeredBy", std::move(answeredBy) } };
+    }
+    return Json { { "root", root_ }, { "key", key_ }, { "cacheDirectory", impl.cacheDirectory },
+                  { "trusted", impl.options.trusted }, { "state", std::string { to_string(impl.compute_state()) } }, { "project", std::move(project) },
+                  { "plan", std::move(plan) }, { "engines", std::move(engines) }, { "requests", std::move(requests) },
+                  { "eventTotals", impl.journal.totals() }, { "events", impl.journal.recent(300) } };
+}
+
 void Workspace::set_context(const Json& id, std::string_view context) {
     if (context != "default" && (!impl_->model || !spec::find_set(impl_->model->database, context))) {
         impl_->client.reply_error(id, lsp::INVALID_PARAMS, std::format("unknown context {}", context));
         return;
     }
     impl_->contextSet = context == "default" ? std::string {} : std::string { context };
+    impl_->journal.add("context", Json { { "context", std::string { context } } });
     impl_->client.reply(id, nullptr);
     if (impl_->model) impl_->replan();
 }

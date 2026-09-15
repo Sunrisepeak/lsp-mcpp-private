@@ -502,7 +502,7 @@ bool includes(const Json& candidate, const Json& expected) {
 }
 
 // A fixture's expectations of a JSON result (conformance/README.md, S5 checks): each names a pointer and
-// one of equals, contains, min-items, exists or absent, and holds when any value the pointer names satisfies it.
+// one of equals, contains, min-items, max-items, exists or absent, and holds when any value the pointer names satisfies it.
 std::pair<bool, std::string> expectations_hold(const Json& value, const Json& expectations) {
     for (const auto& expectation : expectations) {
         const std::string pointer { expectation.value("path", std::string {}) };
@@ -524,6 +524,9 @@ std::pair<bool, std::string> expectations_hold(const Json& value, const Json& ex
         } else if (expectation.contains("min-items")) {
             const std::size_t wanted { expectation.value("min-items", std::size_t { 1 }) };
             held = std::ranges::any_of(matches, [&](const Json* match) { return (match->is_array() || match->is_object()) && match->size() >= wanted; });
+        } else if (expectation.contains("max-items")) {
+            const std::size_t wanted { expectation.value("max-items", std::size_t { 0 }) };
+            held = std::ranges::any_of(matches, [&](const Json* match) { return (match->is_array() || match->is_object()) && match->size() <= wanted; });
         }
         if (!held) {
             std::string found { matches.empty() ? std::string { "nothing" } : lsp::dump(*matches.front()) };
@@ -1029,6 +1032,22 @@ public:
                     return std::ranges::any_of(value, [&](const Json& symbol) { return symbol.value("name", std::string {}) == expected; });
                 });
             return { ok, lsp::dump(result).substr(0, 160) };
+        }
+        if (kind == "report") {
+            // robustness design O3: cxxModules/report, held to "expect" like a tool's result, retried within the check's time
+            // (a plan or an engine may still be on its way).
+            const auto deadline = Clock::now() + timeout_;
+            std::string why { "no answer" };
+            do {
+                const auto remaining = std::chrono::duration_cast<std::chrono::seconds>(deadline - Clock::now());
+                auto answer = client_.request("cxxModules/report", Json::object(), std::max(std::chrono::seconds { 1 }, remaining));
+                if (!answer) break;
+                auto [held, detail] = expectations_hold(*answer, check.value("expect", Json::array()));
+                if (held) return { true, lsp::dump(answer->value("roots", Json::array())).substr(0, 160) };
+                why = detail;
+                client_.drain(std::chrono::milliseconds { 500 });
+            } while (Clock::now() < deadline);
+            return { false, why };
         }
         if (kind == "set-context") {
             // usable plan W9.2: cxxModules/setContext (S3 5.4), then a hover that should have

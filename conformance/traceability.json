@@ -904,6 +904,19 @@
    "check": "multi-root/W1-mcpp-watched"
   }
  ],
+ "S3-5.5-1": [
+  {
+   "check": "module-faults/F0-stand-in"
+  },
+  {
+   "check": "module-faults/F8-no-restart-nothing-set-aside"
+  }
+ ],
+ "S3-5.5-2": [
+  {
+   "manual": "The VS Code extension only shows the report as a document (editors/vscode/src/commands.ts, collectReport); no feature reads it."
+  }
+ ],
  "S3-6-1": [
   {
    "test": "tests/test_server.cpp: merging"

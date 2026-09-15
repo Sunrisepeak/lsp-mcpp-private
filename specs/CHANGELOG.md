@@ -70,6 +70,11 @@ First draft of 0.2.0:
 
 ## S3 — Language Server Protocol Extensions for C++ Modules
 
+### 2026-09-16 (protocol version 1, backward compatible)
+
+- `cxxModules/report` request (section 5.5, S3-5.5-1, S3-5.5-2): what a report of a problem needs, gathered by the server; the content of each root's entry is the server's own.
+- Issue codes `std-fallback-kit` and `file-quarantined`.
+
 ### 2026-09-15 (protocol version 1, backward compatible)
 
 - `cxxModules/status`: `engine.name` is any engine name, `"none"` when a root has no core semantic engine; the optional `engines` lists every engine serving the root with its role and state (section 4, S3-4-5). Clients already reading `engine` keep working.

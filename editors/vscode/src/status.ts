@@ -43,6 +43,7 @@ export interface CxxModulesStatus {
 }
 
 const SHOW_LOGS: vscode.Command = { title: 'Show Logs', command: 'mcppls.showLogs' };
+const COLLECT_REPORT: vscode.Command = { title: 'Collect Report', command: 'mcppls.collectReport' };
 const RESTART: vscode.Command = { title: 'Restart', command: 'mcppls.restartServer' };
 const BUSY_STATES: readonly ModuleState[] = ['starting', 'loading', 'preparing'];
 
@@ -160,9 +161,10 @@ export class StatusController implements vscode.Disposable {
                 ? vscode.LanguageStatusSeverity.Warning
                 : vscode.LanguageStatusSeverity.Information;
         const withCommand = issues.find((issue) => issue.command !== undefined);
+        // A limited state without a fix of its own offers the report a bug report needs (robustness design O4).
         this.item.command = withCommand?.command
             ? { title: withCommand.command.title, command: withCommand.command.command, arguments: withCommand.command.arguments }
-            : SHOW_LOGS;
+            : status.state === 'degraded' || status.state === 'error' ? COLLECT_REPORT : SHOW_LOGS;
 
         for (const waiter of [...this.waiters]) {
             if (waiter.states.includes(status.state)) {

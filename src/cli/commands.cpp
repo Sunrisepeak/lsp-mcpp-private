@@ -28,6 +28,7 @@ import mcppls.engine.clangd;
 import mcppls.server.session;
 import mcppls.cli.options;
 import mcppls.cli.query;
+import mcppls.orchestrator.report;
 import mcppls.orchestrator.kernel;
 import mcppls.ai.mcp.server;
 import mcppls.ai.mcp.daemon;
@@ -186,6 +187,8 @@ int run(int argc, char* argv[]) {
     auto serve = [&](const cmdline::ParsedArgs& args) {
         handled = true;
         apply_log_level(args);
+        // robustness design O2: the session's log outlives the editor's output.
+        if (const std::string logFile { orchestrator::open_log_file("server") }; !logFile.empty()) base::log::info("log file {}", logFile);
         status = server::run_session(session_options(args));
     };
 
@@ -220,6 +223,34 @@ int run(int argc, char* argv[]) {
     (void)checkCommand.arg("file").required();
     (void)checkCommand.action([&](const cmdline::ParsedArgs& args) { handled = true; status = command_check(args); });
     (void)app.subcommand(std::move(checkCommand));
+
+    cmdline::App reportCommand { "report" };
+    (void)reportCommand.description("Load a workspace, let it settle, and print what a bug report needs as JSON (robustness design O3)");
+    (void)reportCommand.option("root").takes_value().help("Workspace root (default: the current directory)");
+    (void)reportCommand.option("settle").takes_value().help("Seconds to wait for the engines to settle first (default 60)");
+    (void)reportCommand.action([&](const cmdline::ParsedArgs& args) {
+        handled = true;
+        apply_log_level(args);
+        const std::string root { args.value("root") ? absolute(*args.value("root")) : platform::fs::current_directory() };
+        const auto started = std::chrono::steady_clock::now();
+        orchestrator::KernelOptions options { session_options(args), root };
+        auto kernel = orchestrator::Kernel::start(options);
+        const auto settle = seconds_option(args, "settle", std::chrono::seconds { 60 });
+        // The core engine accepting (or known unavailable) first: a report taken before its handshake says little.
+        (void)kernel->wait_until([&] {
+            const auto core = kernel->workspace().core_engine_status();
+            return !core || core->accepting || core->state == "unavailable";
+        }, settle);
+        (void)kernel->wait_settled(settle);
+        Json roots = Json::array({ kernel->workspace().report() });
+        const auto core = kernel->workspace().core_engine_status();
+        std::println("{}", orchestrator::make_report(std::move(roots), Json { { "name", "mcppls report" } }, options.session.engine, engine::PayloadPaths {},
+                                                     false, std::chrono::steady_clock::now() - started).dump(2));
+        (void)core;
+        kernel->shut_down();
+        status = 0;
+    });
+    (void)app.subcommand(std::move(reportCommand));
 
     cmdline::App modelCommand { "model" };
     (void)modelCommand.description("Print the project model as S1, as compile_commands.json, or the engine database");
@@ -261,6 +292,7 @@ int run(int argc, char* argv[]) {
                 return;
             }
         }
+        if (const std::string logFile { orchestrator::open_log_file("mcp") }; !logFile.empty()) base::log::info("log file {}", logFile);
         status = ai::mcp::run_server(ai::mcp::ServerOptions { orchestrator::KernelOptions { session_options(args), root },
                                                               seconds_option(args, "tool-timeout", std::chrono::seconds { 120 }), *model });
     });
