@@ -21,6 +21,8 @@ std::vector<std::string> clangd_arguments(const ProcessConfig& config) {
         "--pretty=false",
         config.verboseLog ? "--log=verbose" : "--log=error",
     };
+    const bool workersGiven { std::ranges::any_of(config.extraArguments, [](const std::string& argument) { return argument.starts_with("-j"); }) };
+    if (config.workers > 0 && !workersGiven) arguments.push_back(std::format("-j={}", config.workers));
     arguments.insert(arguments.end(), config.extraArguments.begin(), config.extraArguments.end());
     return arguments;
 }

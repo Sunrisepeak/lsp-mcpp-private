@@ -123,7 +123,19 @@ private:
     RestartGate restartGate_;
     Quarantine quarantine_;                                   // path keys
     std::optional<Clock::time_point> lastAnswerAt_;           // clangd's last answer to any client request
+    // robustness design O1, O3: for a report of a problem.
+    std::deque<std::pair<std::string, std::string>> restartHistory_;   // (UTC time, reason), the latest 20
+    std::size_t linesLeftOut_ { 0 };                                   // clangd log lines the limiter left out
+    ProcessConfig lastConfig_;
     std::map<std::string, Clock::time_point, std::less<>> touchedAt_;   // path key -> when the document was last opened or changed
+    // robustness design C6: files that wait for diagnostics clangd never publishes. A unit of a module that did not
+    // compile gets FAILED_MODULE_PATIENCE (clangd was seen to stop building such a unit for good); any file gets
+    // GENERAL_PATIENCE while module preparation makes no progress.
+    static constexpr std::chrono::seconds FAILED_MODULE_PATIENCE { 5 };
+    static constexpr std::chrono::seconds GENERAL_PATIENCE { 120 };
+    std::map<std::string, Clock::time_point, std::less<>> awaitingSince_;     // client URI -> when it was handed to clangd
+    std::map<std::string, Clock::time_point, std::less<>> modulesFailedAt_;   // module -> when clangd said it did not compile
+    std::optional<Clock::time_point> stuckCheckAt_;
 
 public:
     explicit ClangdEngine(Options options) : options_ { std::move(options) }, traits_ { traits_for_version(options_.version) } {}
@@ -149,6 +161,39 @@ public:
                 std::format("clangd {} has not been run through this server's conformance suite; every workaround for clangd 23.1 stays on", options_.version), "" });
         }
         return status;
+    }
+
+    Json report() const override {
+        Json restarts = Json::array();
+        for (const auto& [at, reason] : restartHistory_) restarts.push_back(Json { { "at", at }, { "reason", reason } });
+        Json unresolved = Json::object();
+        for (const auto& [name, module] : unresolvedModules_) unresolved[name] = Json { { "reason", module.reason }, { "provider", module.provider } };
+        Json compileFailures = Json::array();
+        for (const auto& name : reportedFailures_) compileFailures.push_back(name);
+        const auto [done, wanted] = primer_.progress();
+        return Json {
+            { "executable", options_.executable },
+            { "arguments", clangd_arguments(lastConfig_) },
+            { "generation", generation_ },
+            { "handshakeDone", handshakeDone_ },
+            { "accepting", accepting_ },
+            { "unavailable", unavailable_ },
+            { "recentExits", crashes_.size() },
+            { "restarts", std::move(restarts) },
+            { "restartScheduled", restartAt_.has_value() },
+            { "filesSetAside", quarantine_.members() },
+            { "unresolvedModules", std::move(unresolved) },
+            { "modulesThatDidNotCompile", std::move(compileFailures) },
+            { "stdFromSemanticKit", stdFromKit_ },
+            { "preparation", Json { { "done", done }, { "wanted", wanted }, { "running", primer_.running() },
+                                    { "limit", preparation_limit(std::thread::hardware_concurrency(), mcppls::os::FAMILY == mcppls::os::Family::macos,
+                                                                 awaitingDiagnostics_.size()) } } },
+            { "pendingRequests", pending_.size() },
+            { "deferredRequests", deferred_.size() },
+            { "filesAwaitingDiagnostics", awaitingDiagnostics_.size() },
+            { "logLinesLeftOut", linesLeftOut_ },
+            { "databaseDirectory", databaseDirectory_ },
+        };
     }
 
     void start(Host& host) override {
@@ -210,6 +255,8 @@ public:
             writtenDatabase_ = database;
             log::info("engine database ({}): {} entries ({} standard library units, {} stand-ins), {} left out, {} issues", host_->root_directory(),
                       plan->entries.size(), plan->stdUnits, plan->stubModules.size(), plan->excludedFiles.size(), plan->issues.size());
+            host_->record_event("engine-database", Json { { "entries", plan->entries.size() }, { "standIns", plan->stubModules.size() },
+                                                          { "leftOut", plan->excludedFiles.size() } });
         }
         std::set<std::string> newExcluded;
         for (const auto& file : plan->excludedFiles) newExcluded.insert(base::path_key(file));
@@ -304,6 +351,7 @@ public:
         case DocumentChange::closed: {
             const bool wasExcluded { excluded_path_(document.path) || quarantined_(document.path) };
             awaitingDiagnostics_.erase(document.uri);
+            awaitingSince_.erase(document.uri);
             diagnosed_.erase(document.uri);
             if (accepting_ && !wasExcluded && event.message != nullptr) (void)send_(*event.message);
             release_prime_units_if_idle_();
@@ -327,6 +375,7 @@ public:
     }
 
     void sources_changed() override {
+        modulesFailedAt_.clear();   // a module that still does not compile is reported again
         if (forget_changed_unresolved_()) host_->request_replan();
     }
 
@@ -377,6 +426,9 @@ public:
             handle_closed_();
         } else if (kind == "module-failed") {
             handle_module_failure_(event["failure"]);
+        } else if (kind == "log-left-out") {
+            linesLeftOut_ += event.value("count", std::size_t { 0 });
+            host_->record_event("engine-log-left-out", Json { { "count", event.value("count", std::size_t { 0 }) } });
         }
     }
 
@@ -388,6 +440,7 @@ public:
         for (const auto& [id, request] : pending_) consider(request.deadline);
         for (const auto& [module, at] : primeDeadlines_) consider(at);
         consider(restartAt_);
+        consider(stuckCheckAt_);
         return deadline;
     }
 
@@ -411,6 +464,8 @@ public:
                     break;
                 }
                 log::warning("clangd ({}) did not answer {} in time", host_->root_directory(), request.method);
+                host_->record_event("request-timeout", Json { { "method", request.method }, { "file", host_->path_of_uri(request.uri) },
+                                                              { "seconds", std::chrono::duration_cast<std::chrono::seconds>(now - request.sent).count() } });
                 if (request.reply) request.reply(Answer {});
                 (void)send_(lsp::make_notification("$/cancelRequest", Json { { "id", id } }));
                 // A file whose modules are still being built is slow, not stuck: setting it aside would throw that work away.
@@ -434,6 +489,7 @@ public:
         }
         if (stalled) {
             // clangd answered nobody: the engine is stuck. The file asked about first is the likeliest cause.
+            host_->record_event("engine-stalled", Json { { "firstFile", quarantine_.first_stalled().value_or(std::string {}) } });
             if (auto first = quarantine_.first_stalled()) {
                 for (const auto& document : host_->documents()) {
                     if (!document.path.empty() && base::path_key(document.path) == *first) set_aside_(document.path, "clangd stopped answering after it");
@@ -448,6 +504,7 @@ public:
             for (const auto& document : host_->documents()) {
                 if (document.path.empty() || base::path_key(document.path) != key) continue;
                 log::info("handing {} back to clangd ({})", document.path, host_->root_directory());
+                host_->record_event("file-handed-back", Json { { "file", document.path } });
                 if (accepting_ && !excluded_path_(document.path)) open_in_engine_(document);
             }
             update_quarantine_issue_();
@@ -460,6 +517,7 @@ public:
             log::warning("stopped waiting for module {} to be prepared ({})", module, host_->root_directory());
             if (const auto* planned = primer_.find(module)) (void)finish_prime_(base::path_to_uri(planned->primeFile));
         }
+        if (stuckCheckAt_ && *stuckCheckAt_ <= now) check_stuck_files_(now);
         if (restartAt_ && *restartAt_ <= now) {
             restartAt_.reset();
             restart_(restartReason_.empty() ? std::string_view { "recovering from an exit" } : std::string_view { restartReason_ });
@@ -543,6 +601,7 @@ private:
         config.databaseDirectory = databaseDirectory_;
         config.workDirectory = host_->root_directory();
         config.verboseLog = options_.verboseLog;
+        config.workers = engine_workers(std::thread::hardware_concurrency(), mcppls::os::FAMILY == mcppls::os::Family::macos);
         config.extraArguments = options_.extraArguments;
         // Extra engine arguments for troubleshooting, e.g. MCPPLS_ENGINE_ARGUMENTS="-j=8 --background-index-priority=background".
         if (auto extra = platform::env::get("MCPPLS_ENGINE_ARGUMENTS")) {
@@ -551,14 +610,18 @@ private:
             }
         }
         if (!process_) process_ = make_process_();
+        lastConfig_ = config;
+        host_->record_event("engine-start", Json { { "engine", std::string { ENGINE_ID } }, { "generation", generation }, { "arguments", clangd_arguments(config) } });
         auto sink = sink_;
         const std::string root { host_->root_directory() };
         // robustness design C7: clangd's errors are forwarded without flooding the log; failures are read from every line.
+        // A verbose log is asked for to see everything, so it is not limited.
         struct LimitedLog {
+            explicit LimitedLog(std::size_t burst) : limiter { burst, std::chrono::seconds { 10 } } {}
             std::mutex mutex;
-            LineLimiter limiter { 40, std::chrono::seconds { 10 } };
+            LineLimiter limiter;
         };
-        auto limited = std::make_shared<LimitedLog>();
+        auto limited = std::make_shared<LimitedLog>(options_.verboseLog ? std::numeric_limits<std::size_t>::max() : std::size_t { 40 });
         auto started = process_->start(
             config,
             [sink, generation](Json message) { sink(Json { { "kind", "message" }, { "generation", generation }, { "message", std::move(message) } }); },
@@ -569,7 +632,10 @@ private:
                     const std::lock_guard lock { limited->mutex };
                     decision = limited->limiter.admit(GuardClock::now());
                 }
-                if (decision.suppressedBefore > 0) log::info("clangd ({}): {} more lines left out of this log", root, decision.suppressedBefore);
+                if (decision.suppressedBefore > 0) {
+                    log::info("clangd ({}): {} more lines left out of this log", root, decision.suppressedBefore);
+                    sink(Json { { "kind", "log-left-out" }, { "generation", generation }, { "count", decision.suppressedBefore } });
+                }
                 if (decision.forward) log::info("clangd ({}): {}", root, line);
                 if (auto failure = parse_module_failure(line)) {
                     sink(Json { { "kind", "module-failed" }, { "generation", generation },
@@ -603,6 +669,9 @@ private:
     void restart_(std::string_view reason) {
         log::info("restarting clangd ({}): {}", host_->root_directory(), reason);
         restartGate_.record(Clock::now());
+        restartHistory_.emplace_back(std::format("{:%FT%TZ}", std::chrono::floor<std::chrono::milliseconds>(std::chrono::system_clock::now())), std::string { reason });
+        if (restartHistory_.size() > 20) restartHistory_.pop_front();
+        host_->record_event("engine-restart", Json { { "reason", std::string { reason } } });
         restartAt_.reset();
         // Requests to the old process are answered by the other engines.
         auto old = std::move(pending_);
@@ -642,8 +711,47 @@ private:
         Json params { { "textDocument", Json { { "uri", document.uri }, { "languageId", document.languageId },
                                                { "version", document.version }, { "text", std::string { document.text } } } } };
         if (send_(lsp::make_notification("textDocument/didOpen", std::move(params)))) {
-            if (!diagnosed_.contains(document.uri)) awaitingDiagnostics_.insert(document.uri);
+            if (!diagnosed_.contains(document.uri)) {
+                awaitingDiagnostics_.insert(document.uri);
+                const auto now = Clock::now();
+                awaitingSince_[document.uri] = now;
+                schedule_stuck_check_(now + GENERAL_PATIENCE);
+            }
         }
+    }
+
+    void schedule_stuck_check_(Clock::time_point at) {
+        if (!stuckCheckAt_ || at < *stuckCheckAt_) stuckCheckAt_ = at;
+    }
+
+    // Files clangd will not publish diagnostics for go to mcppls's engine until they change.
+    void check_stuck_files_(Clock::time_point now) {
+        stuckCheckAt_.reset();
+        std::vector<std::pair<std::string, std::string>> stuck;
+        const bool preparing { lastPrimeProgressAt_ && now - *lastPrimeProgressAt_ < std::chrono::seconds { 60 } };
+        for (const auto& document : host_->documents()) {
+            const auto since = awaitingSince_.find(document.uri);
+            if (document.path.empty() || since == awaitingSince_.end() || !awaitingDiagnostics_.contains(document.uri)) continue;
+            // A unit of a module other than its interface: an implementation unit or a partition.
+            const auto scan = project::scan_source(document.text);
+            if (scan.declaration && (!scan.declaration->isExported || !scan.declaration->partition.empty())) {
+                if (const auto failed = modulesFailedAt_.find(scan.declaration->module); failed != modulesFailedAt_.end()) {
+                    const auto due = std::max(failed->second, since->second) + FAILED_MODULE_PATIENCE;
+                    if (now >= due) {
+                        stuck.emplace_back(document.path, std::format("module {} did not compile and clangd published nothing for this unit of it", failed->first));
+                        continue;
+                    }
+                    schedule_stuck_check_(due);
+                }
+            }
+            const auto due = since->second + GENERAL_PATIENCE;
+            if (now >= due && !preparing) {
+                stuck.emplace_back(document.path, "clangd published no diagnostics for it in two minutes, and no module was being prepared");
+                continue;
+            }
+            schedule_stuck_check_(now >= due ? now + std::chrono::seconds { 30 } : due);
+        }
+        for (const auto& [path, why] : stuck) set_aside_(path, why);
     }
 
     void accept_traffic_if_ready_() {
@@ -730,6 +838,7 @@ private:
             if (finish_prime_(params.value("uri", std::string {}))) return;
             const std::string uri { host_->client_uri(params.value("uri", std::string {})) };
             awaitingDiagnostics_.erase(uri);
+            awaitingSince_.erase(uri);
             release_prime_units_if_idle_();
             if (!host_->has_document(uri)) {
                 Json forwarded = message;
@@ -779,6 +888,7 @@ private:
             const auto touched = touchedAt_.find(base::path_key(document.path));
             if (!document.path.empty() && touched != touchedAt_.end() && now - touched->second < std::chrono::seconds { 10 }) suspects.insert(document.path);
         }
+        host_->record_event("engine-exit", Json { { "recentExits", crashes_.size() }, { "suspects", Json(std::vector<std::string> { suspects.begin(), suspects.end() }) } });
         for (const auto& path : suspects) set_aside_(path, "clangd exited while working on it");
         if (crashes_.size() >= 5) {
             unavailable_ = true;
@@ -804,21 +914,30 @@ private:
             stdFromKit_ = true;
             log::warning("clangd could not build the standard library module ({}): {}; reading the project with the semantic kit",
                          host_->root_directory(), parsed.reason);
+            host_->record_event("std-fallback-kit", Json { { "module", parsed.module }, { "reason", parsed.reason } });
             add_issue_(Issue { "std-fallback-kit",
                 std::format("clangd could not build the toolchain's standard library module ({}); files are read with the semantic kit", parsed.reason),
                 "mcppls.showLogs" });
             host_->request_replan();
             host_->status_changed();
         }
+        if (kind == FailureKind::compile) {
+            const auto now = Clock::now();
+            modulesFailedAt_[parsed.module] = now;
+            schedule_stuck_check_(now + FAILED_MODULE_PATIENCE);
+        }
         if (kind != FailureKind::unresolved) {
             // Found and not compiled: its importers get errors, they do not hang (experiment S3). Nothing to replan.
             if (reportedFailures_.insert(parsed.module).second) {
                 log::info("clangd could not build module {} ({}): {}", parsed.module, host_->root_directory(), parsed.reason);
+                host_->record_event("module-failed", Json { { "module", parsed.module }, { "kind", kind == FailureKind::compile ? "compile" : "other" },
+                                                            { "reason", parsed.reason } });
             }
             return;
         }
         if (unresolvedModules_.contains(parsed.module)) return;
         log::warning("clangd could not find module {} ({}): {}", parsed.module, host_->root_directory(), parsed.reason);
+        host_->record_event("module-failed", Json { { "module", parsed.module }, { "kind", "unresolved" }, { "reason", parsed.reason } });
         UnresolvedModule unresolved { parsed.reason, {}, {}, {} };
         if (const auto provider = moduleSources_.find(parsed.module); provider != moduleSources_.end()) {
             unresolved.provider = provider->second;
@@ -841,6 +960,7 @@ private:
                                  || (!current.empty() && (command == moduleCommands_.end() ? std::string {} : command->second) != it->second.command) };
             if (changed) {
                 log::info("trying module {} again ({})", it->first, host_->root_directory());
+                host_->record_event("module-retry", Json { { "module", it->first } });
                 it = unresolvedModules_.erase(it);
                 forgot = true;
             } else {
@@ -862,9 +982,11 @@ private:
         const std::string key { base::path_key(path) };
         if (!quarantine_.contains(key)) quarantine_.put(key, Clock::now());
         log::warning("setting {} aside from clangd for a while ({}): {}; mcppls's engine answers for it", path, host_->root_directory(), why);
+        host_->record_event("file-set-aside", Json { { "file", path }, { "why", std::string { why } } });
         for (const auto& document : host_->documents()) {
             if (document.path.empty() || base::path_key(document.path) != key) continue;
             awaitingDiagnostics_.erase(document.uri);
+            awaitingSince_.erase(document.uri);
             if (accepting_) (void)send_(lsp::make_notification("textDocument/didClose", Json { { "textDocument", Json { { "uri", document.uri } } } }));
         }
         update_quarantine_issue_();
@@ -891,6 +1013,8 @@ private:
         if (!restartAt_ || at < *restartAt_) {
             restartAt_ = at;
             restartReason_ = std::string { reason };
+            host_->record_event("engine-restart-deferred", Json { { "reason", std::string { reason } },
+                                                                  { "seconds", std::chrono::duration_cast<std::chrono::seconds>(at - now).count() } });
             log::info("restarting clangd ({}) in {} s: {}", host_->root_directory(),
                       std::chrono::duration_cast<std::chrono::seconds>(at - now).count(), reason);
         }

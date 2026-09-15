@@ -95,6 +95,14 @@ std::size_t Quarantine::size() const {
     return static_cast<std::size_t>(std::ranges::count_if(entries_, [](const auto& item) { return item.second.until.has_value(); }));
 }
 
+std::vector<std::string> Quarantine::members() const {
+    std::vector<std::string> files;
+    for (const auto& [uri, entry] : entries_) {
+        if (entry.until) files.push_back(uri);
+    }
+    return files;
+}
+
 LineLimiter::Decision LineLimiter::admit(GuardClock::time_point now) {
     Decision decision;
     if (!windowStart_ || now - *windowStart_ >= window_) {
@@ -112,11 +120,15 @@ LineLimiter::Decision LineLimiter::admit(GuardClock::time_point now) {
     return decision;
 }
 
-std::size_t preparation_limit(std::size_t hardwareThreads, bool macos, std::size_t waitingFiles) {
+std::size_t engine_workers(std::size_t hardwareThreads, bool macos) {
     const std::size_t threads { std::max<std::size_t>(1, hardwareThreads) };
     const std::size_t cores { macos ? threads : std::max<std::size_t>(1, threads / 2) };
-    const std::size_t limit { std::max<std::size_t>(1, cores / 4) };
-    return waitingFiles > 0 ? std::max<std::size_t>(1, limit / 2) : limit;
+    return std::max<std::size_t>(2, cores / 4);
+}
+
+std::size_t preparation_limit(std::size_t hardwareThreads, bool macos, std::size_t waitingFiles) {
+    const std::size_t workers { engine_workers(hardwareThreads, macos) };
+    return std::max<std::size_t>(1, waitingFiles > 0 ? workers / 4 : workers / 2);
 }
 
 } // namespace mcppls::engine::clangd

@@ -104,6 +104,10 @@ def run_fixture(fixture, server, payload, scratch, timeout, mock_model):
     problems = []
     if not unchanged:
         problems.append("the review changed the workspace")
+    # A review that ran out of time (a unit clangd never built, a module it never searched) is a problem too, unless the
+    # fixture expects it: the server must not let one stuck unit hold the whole review (robustness design C6).
+    if not result.get("complete", True) and not meta.get("incomplete", False):
+        problems.append(f"the review is incomplete: {json.dumps(result.get('unbuilt', []))[:200]}")
     matched_must = []
     for entry in meta.get("must", []):
         hit = any(matches(finding, entry) for finding in findings)

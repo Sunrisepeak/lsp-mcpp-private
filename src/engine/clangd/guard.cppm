@@ -55,6 +55,8 @@ public:
     // Of the files that timed out while clangd answered nobody, the one asked about first.
     std::optional<std::string> first_stalled() const;
     std::size_t size() const;
+    // The files set aside now.
+    std::vector<std::string> members() const;
 
 private:
     struct Entry {
@@ -84,8 +86,13 @@ private:
     std::size_t suppressed_ { 0 };
 };
 
-// How many modules are prepared at once: a quarter of the physical cores (hardware threads count as
-// two per core except on macOS), at least one, and half of that while a person waits for a file.
+// clangd's workers (-j), which also bound its background index: a quarter of the physical cores (hardware
+// threads count as two per core except on macOS), at least two. On a 16-core machine xlings' first open
+// took 21 cores at its busiest second with clangd's default of one worker per core, 8 with four, and its
+// first hover came in 7.5 s instead of 13.5 s (robustness design C7).
+std::size_t engine_workers(std::size_t hardwareThreads, bool macos);
+// How many modules are prepared at once: half of clangd's workers, which prime units occupy, and a quarter
+// of them while a person waits for a file; at least one.
 std::size_t preparation_limit(std::size_t hardwareThreads, bool macos, std::size_t waitingFiles);
 
 } // namespace mcppls::engine::clangd

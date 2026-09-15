@@ -20,6 +20,7 @@ import mcppls.engine.clangd.guard;
 import mcppls.engine.clangd.primer;
 import mcppls.orchestrator.client;
 import mcppls.orchestrator.documents;
+import mcppls.orchestrator.journal;
 import mcppls.orchestrator.routing;
 import mcppls.orchestrator.workspace;
 
@@ -294,11 +295,36 @@ int main() {
         expect(limiter.admit(t0 + 12s).suppressedBefore == 0u);
     };
 
-    "module preparation takes a quarter of the cores"_test = [] {
-        expect(cld::preparation_limit(32, false, 0) == 4u) << "16 cores";
-        expect(cld::preparation_limit(32, false, 2) == 2u) << "half while a person waits for a file";
-        expect(cld::preparation_limit(10, true, 0) == 2u) << "macOS counts cores as threads";
+    "the journal keeps the latest events and counts them all"_test = [] {
+        orch::Journal journal;
+        for (std::size_t i { 0 }; i < orch::Journal::CAPACITY + 20; ++i) journal.add("request-timeout", Json { { "n", i } });
+        journal.add("engine-restart", Json { { "reason", "a module's unit left the engine database" } });
+        const Json recent = journal.recent(3);
+        expect(fatal(recent.size() == 3u));
+        expect(recent[2]["kind"] == "engine-restart" && recent[2]["detail"]["reason"] == "a module's unit left the engine database");
+        expect(recent[1]["detail"]["n"] == orch::Journal::CAPACITY + 19) << "oldest first, newest last";
+        expect(recent[0]["at"].get<std::string>().ends_with("Z"));
+        expect(journal.recent(10000).size() == orch::Journal::CAPACITY) << "only the latest are kept";
+        expect(journal.total("request-timeout") == orch::Journal::CAPACITY + 20) << "every one is counted";
+        expect(journal.totals()["engine-restart"] == 1 && journal.total("engine-exit") == 0u);
+    };
+
+    "clangd takes a quarter of the cores, and module preparation half of that"_test = [] {
+        expect(cld::engine_workers(32, false) == 4u) << "16 cores";
+        expect(cld::engine_workers(128, false) == 16u);
+        expect(cld::engine_workers(10, true) == 2u) << "macOS counts cores as threads";
+        expect(cld::engine_workers(4, false) == 2u && cld::engine_workers(0, false) == 2u) << "never less than two";
+        expect(cld::preparation_limit(32, false, 0) == 2u) << "half of clangd's workers";
+        expect(cld::preparation_limit(32, false, 2) == 1u) << "a quarter while a person waits for a file";
+        expect(cld::preparation_limit(128, false, 0) == 8u && cld::preparation_limit(128, false, 1) == 4u);
         expect(cld::preparation_limit(4, false, 0) == 1u && cld::preparation_limit(0, false, 5) == 1u) << "never less than one";
+        cld::ProcessConfig config;
+        config.workers = 4;
+        const auto defaults = cld::clangd_arguments(config);
+        expect(std::ranges::find(defaults, std::string { "-j=4" }) != defaults.end());
+        config.extraArguments = { "-j=16" };
+        const auto arguments = cld::clangd_arguments(config);
+        expect(std::ranges::count_if(arguments, [](const std::string& argument) { return argument.starts_with("-j"); }) == 1) << "an explicit -j wins";
     };
 
     "merging"_test = [] {
