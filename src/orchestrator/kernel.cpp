@@ -87,12 +87,14 @@ public:
     std::set<std::string> progress;                 // tokens with work begun and not ended
     int progressBegun { 0 };
     std::deque<Json> engineRequests;                // requests to the client, answered on the loop
+    std::set<std::string> abandoned;                // requests that timed out: a late answer is dropped
 
     void send(const Json& message) override {
         switch (lsp::kind_of(message)) {
         case lsp::Kind::response: {
             const Json& id { message["id"] };
-            if (id.is_string()) responses[id.get<std::string>()] = message;
+            if (!id.is_string() || abandoned.erase(id.get<std::string>()) > 0) break;
+            responses[id.get<std::string>()] = message;
             break;
         }
         case lsp::Kind::notification: note(message); break;
@@ -278,8 +280,11 @@ std::optional<Json> Kernel::request(std::string_view method, Json params, std::c
         impl.pump(until);
     }
     impl.workspace->cancel(Json(id));
-    // A reply that still comes is dropped with the others the next time a request finds its own.
+    // An engine can still answer a request it was told to cancel; that answer is dropped when it comes,
+    // so a long-lived session (the daemon's) does not keep one per timeout.
     impl.sink.responses.erase(id);
+    if (impl.sink.abandoned.size() > 4096) impl.sink.abandoned.clear();
+    impl.sink.abandoned.insert(id);
     return std::nullopt;
 }
 

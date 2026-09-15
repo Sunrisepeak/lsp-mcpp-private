@@ -46,15 +46,6 @@ std::vector<Token> tokenize(std::string_view text) {
             i = end == std::string_view::npos ? n : end + 2;
             continue;
         }
-        if (c == 'R' && i + 1 < n && text[i + 1] == '"') {
-            const std::size_t open { text.find('(', i + 2) };
-            if (open != std::string_view::npos) {
-                const std::string close { ")" + std::string { text.substr(i + 2, open - i - 2) } + "\"" };
-                const std::size_t end { text.find(close, open + 1) };
-                i = end == std::string_view::npos ? n : end + close.size();
-                continue;
-            }
-        }
         if (c == '"' || c == '\'') {
             ++i;
             while (i < n && text[i] != c && text[i] != '\n') {
@@ -67,8 +58,19 @@ std::vector<Token> tokenize(std::string_view text) {
         if (base::is_identifier_start(c)) {
             const std::size_t start { i };
             while (i < n && base::is_identifier_char(text[i])) ++i;
-            // A digit-separated literal suffix or a number is not an identifier; those start with a digit, handled below.
-            tokens.push_back(Token { text.substr(start, i - start), start, true });
+            const std::string_view word { text.substr(start, i - start) };
+            // A raw string literal, with or without an encoding prefix (R, LR, uR, UR, u8R), is not code.
+            const bool rawPrefix { word == "R" || word == "LR" || word == "uR" || word == "UR" || word == "u8R" };
+            if (rawPrefix && i < n && text[i] == '"') {
+                const std::size_t open { text.find('(', i + 1) };
+                if (open != std::string_view::npos) {
+                    const std::string close { ")" + std::string { text.substr(i + 1, open - i - 1) } + "\"" };
+                    const std::size_t end { text.find(close, open + 1) };
+                    i = end == std::string_view::npos ? n : end + close.size();
+                    continue;
+                }
+            }
+            tokens.push_back(Token { word, start, true });
             continue;
         }
         if (c >= '0' && c <= '9') {

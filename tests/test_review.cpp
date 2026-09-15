@@ -70,6 +70,9 @@ int main() {
         expect(unqualified[0].line == 4);
         const std::string raw { "auto text = R\"x(decorate)x\"; int n = decorate(1);\n" };
         expect(review::identifier_uses(raw, "a.cpp", "decorate", "").size() == 1u) << "a raw string is not code";
+        // An encoding prefix before R, and a quote inside the raw string, change nothing.
+        const std::string wide { "auto path = LR\"(C:\\Data\\\"decorate\")\"; auto s = u8R\"y(decorate)y\"; int m = decorate(2);\n" };
+        expect(review::identifier_uses(wide, "a.cpp", "decorate", "").size() == 1u) << review::identifier_uses(wide, "a.cpp", "decorate", "").size();
     };
 
     "compiler output of every family becomes diagnostics in the workspace"_test = [] {
