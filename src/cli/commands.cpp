@@ -28,6 +28,8 @@ import mcppls.engine.clangd;
 import mcppls.server.session;
 import mcppls.cli.options;
 import mcppls.cli.query;
+import mcppls.orchestrator.kernel;
+import mcppls.ai.mcp.server;
 
 namespace mcppls::cli {
 
@@ -209,6 +211,21 @@ int run(int argc, char* argv[]) {
     (void)modelCommand.option("export").takes_value().help("s1 | compile-commands | engine");
     (void)modelCommand.action([&](const cmdline::ParsedArgs& args) { handled = true; status = command_model(args); });
     (void)app.subcommand(std::move(modelCommand));
+
+    cmdline::App mcpCommand { "mcp" };
+    (void)mcpCommand.description("Serve the Model Context Protocol on standard input and output, for coding agents");
+    (void)mcpCommand.option("root").takes_value().help("Workspace root (default: the current directory)");
+    (void)mcpCommand.option("tool-timeout").takes_value().help("Seconds a tool call waits for the engines (default 120)");
+    (void)mcpCommand.action([&](const cmdline::ParsedArgs& args) {
+        handled = true;
+        // Standard output carries the protocol; the log goes to standard error, warnings only unless asked.
+        if (!args.value("log-level")) base::log::set_level(base::log::Level::warning);
+        apply_log_level(args);
+        const std::string root { args.value("root") ? absolute(*args.value("root")) : platform::fs::current_directory() };
+        status = ai::mcp::run_server(ai::mcp::ServerOptions { orchestrator::KernelOptions { session_options(args), root },
+                                                              seconds_option(args, "tool-timeout", std::chrono::seconds { 120 }) });
+    });
+    (void)app.subcommand(std::move(mcpCommand));
 
     (void)app.subcommand(query_command(handled, status));
     (void)app.subcommand(diagnostics_command(handled, status));

@@ -393,8 +393,19 @@ Outcome<Symbols> find_symbols(View& view, const SymbolTarget& target, Limit limi
             symbol.declaration = at;
         }
         finish(view, symbol);
+        // The engine's index can name one symbol twice, by its declaration and by its definition.
+        const auto same = std::ranges::find_if(found.symbols, [&](const Symbol& other) { return !symbol.id.empty() && other.id == symbol.id; });
+        if (same != found.symbols.end()) {
+            if (!same->declaration) same->declaration = symbol.declaration;
+            if (!same->definition) same->definition = symbol.definition;
+            if (same->signature.empty()) same->signature = symbol.signature;
+            if (same->documentation.empty()) same->documentation = symbol.documentation;
+            --found.total;
+            continue;
+        }
         found.symbols.push_back(std::move(symbol));
     }
+    found.truncated = found.total > found.symbols.size();
     std::ranges::sort(found.symbols, before);
     found.snapshot = view.snapshot();
     return found;
