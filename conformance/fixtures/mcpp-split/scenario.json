@@ -1,6 +1,6 @@
 {
   "name": "mcpp-split",
-  "description": "Interface units in .cppm and implementation units in .cpp (module hello.greet; in two files), an interface partition re-exported by the primary interface and an implementation partition, described by mcpp's own `emit build-database`, completed to level 3 by the S1 library: navigation from importers to declarations and to definitions in implementation units, from implementation units into partitions, completion and hover inside implementation units, and nothing written into the project.",
+  "description": "Interface units in .cppm and implementation units in .cpp (module hello.greet; in two files), an interface partition re-exported by the primary interface and an implementation partition, described by mcpp's own `emit build-database`, completed to level 3 by the S1 library: navigation from importers to declarations and to definitions in implementation units, before any of them is open, from implementation units into partitions, completion and hover inside implementation units, a file outside the build (apps/gui/main.cpp, importing a module nothing provides) answered by clangd with the nearest unit's arguments, and nothing written into the project.",
   "checks": [
     {
       "id": "S1",
@@ -14,6 +14,17 @@
       "id": "C1",
       "kind": "diagnostics-empty",
       "file": "src/main.cpp"
+    },
+    {
+      "id": "C2-definition-in-an-implementation-unit-not-open",
+      "kind": "definition",
+      "file": "src/main.cpp",
+      "at": [
+        4,
+        31
+      ],
+      "expect": "src/greet/greet.cpp",
+      "timeout": 60
     },
     {
       "id": "C1-implementation",
@@ -539,6 +550,47 @@
         {
           "path": "/ok",
           "equals": true
+        }
+      ]
+    },
+    {
+      "id": "O1-file-outside-the-build",
+      "kind": "hover-contains",
+      "file": "apps/gui/main.cpp",
+      "at": [
+        6,
+        31
+      ],
+      "expect": "string_view",
+      "timeout": 90
+    },
+    {
+      "id": "O1-definition",
+      "kind": "definition",
+      "file": "apps/gui/main.cpp",
+      "at": [
+        6,
+        31
+      ],
+      "expect": "src/greet/greet.cpp",
+      "timeout": 60
+    },
+    {
+      "id": "O1-planned-with-a-stand-in",
+      "kind": "report",
+      "timeout": 10,
+      "expect": [
+        {
+          "path": "/roots/0/plan/openSources",
+          "min-items": 1
+        },
+        {
+          "path": "/roots/0/plan/standIns",
+          "contains": "hello.gui"
+        },
+        {
+          "path": "/roots/0/engines/*/details/filesSetAside",
+          "max-items": 0
         }
       ]
     },

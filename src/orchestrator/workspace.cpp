@@ -214,6 +214,10 @@ struct Workspace::Impl final : engine::Host {
     bool firstPlanWritten { false };
     std::string contextSet;
     std::map<std::string, std::string, std::less<>> structures;   // path key -> module structure at planning time
+    // robustness design C2: C++ sources of the workspace that the editor opened and no set describes. They join the engine
+    // database with the nearest unit's arguments and stay for the session, so opening one again leaves the database as it is.
+    std::set<std::string> openedOutsideModel;
+    std::set<std::string> plannedFiles;      // path keys of the plan's units and of the files it left out
     // S5 2.2: advanced whenever a document, a watched file, the model or the plan changes.
     std::uint64_t snapshotGeneration { 0 };
 
@@ -585,6 +589,15 @@ struct Workspace::Impl final : engine::Host {
         if (model->source == project::SourceKind::inferred && project::is_cxx_source_name(path) && base::is_within(path, root)) schedule_reload();
     }
 
+    // A C++ source of the workspace the plan has no unit for is planned at once (robustness design C2); the core engine
+    // holds it until then. A new source of an inferred model is in the model reloaded for it.
+    void note_opened(std::string_view path) {
+        if (!model || model->source == project::SourceKind::inferred) return;
+        if (!project::is_cxx_source_name(path) || !base::is_within(path, root) || plannedFiles.contains(base::path_key(path))) return;
+        const auto soon = Clock::now() + std::chrono::milliseconds { 100 };
+        if (!replanAt || soon < *replanAt) replanAt = soon;
+    }
+
     void document_event(engine::DocumentChange change, const Document& document, const Json* message) {
         const engine::DocumentEvent event { change, view_of(document), message };
         for (const auto& engine : engines) engine->document(event);
@@ -808,16 +821,29 @@ struct Workspace::Impl final : engine::Host {
             return text ? project::scan_source(*text) : project::ScanResult {};
         };
         input.metadataReader = metadataReader;
+        std::set<std::string> openSources;
+        for (const auto& path : openedOutsideModel) {
+            if (platform::fs::is_regular_file(path)) openSources.insert(path);
+        }
+        for (const Document* document : documents_.all()) {
+            if (!document->path.empty() && project::is_cxx_source_name(document->path) && base::is_within(document->path, root)) openSources.insert(document->path);
+        }
+        input.openSources.assign(openSources.begin(), openSources.end());
         if (coreEngine != nullptr) coreEngine->configure_plan(input);
         normalize::EnginePlan newPlan { normalize::plan_engine(input) };
         plan = std::move(newPlan);
+        openedOutsideModel = { plan.openSources.begin(), plan.openSources.end() };
+        plannedFiles.clear();
+        for (const auto& entry : plan.entries) plannedFiles.insert(base::path_key(entry.file));
+        for (const auto& file : plan.excludedFiles) plannedFiles.insert(base::path_key(file));
         structures.clear();
         for (const auto& path : index.files()) {
             if (const auto* scan = index.scan_of(path)) structures[base::path_key(path)] = structure_of(*scan);
         }
         firstPlanWritten = true;
         journal.add("plan", Json { { "context", contextSet.empty() ? std::string { "default" } : contextSet }, { "entries", plan.entries.size() },
-                                   { "stdUnits", plan.stdUnits }, { "standIns", plan.stubModules }, { "leftOut", plan.excludedFiles.size() },
+                                   { "stdUnits", plan.stdUnits }, { "standIns", plan.stubModules }, { "openSources", plan.openSources },
+                                   { "leftOut", plan.excludedFiles.size() },
                                    { "issues", plan.issues.size() } });
         for (const auto& engine : engines) engine->apply(&plan);
         for (const Document* document : documents_.all()) publish_diagnostics(document->uri);
@@ -1078,6 +1104,7 @@ void Workspace::did_open(const Json& params) {
     if (!path.empty()) {
         impl_->index.update(path, document.text);
         impl_->note_structure_change(path);
+        impl_->note_opened(path);
     }
     impl_->publish_diagnostics(uri);
     impl_->document_event(engine::DocumentChange::opened, document, nullptr);
@@ -1232,7 +1259,8 @@ Json Workspace::report() const {
         planIssues.push_back(Json { { "code", issue.code }, { "message", issue.message }, { "file", issue.file }, { "module", issue.module } });
     }
     Json plan { { "context", impl.contextSet.empty() ? std::string { "default" } : impl.contextSet }, { "entries", impl.plan.entries.size() },
-                { "stdUnits", impl.plan.stdUnits }, { "standIns", impl.plan.stubModules }, { "leftOutCount", impl.plan.excludedFiles.size() },
+                { "stdUnits", impl.plan.stdUnits }, { "standIns", impl.plan.stubModules }, { "openSources", impl.plan.openSources },
+                { "leftOutCount", impl.plan.excludedFiles.size() },
                 { "leftOut", std::move(leftOut) }, { "issueCount", impl.plan.issues.size() }, { "issues", std::move(planIssues) } };
     Json engines = Json::array();
     for (const auto& engine : impl.engines) {

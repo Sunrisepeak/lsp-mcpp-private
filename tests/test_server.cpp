@@ -16,6 +16,7 @@ import mcppls.engine.native;
 import mcppls.engine.native.index;
 import mcppls.engine.clangd;
 import mcppls.engine.clangd.process;
+import mcppls.engine.clangd.definition;
 import mcppls.engine.clangd.guard;
 import mcppls.engine.clangd.primer;
 import mcppls.orchestrator.client;
@@ -268,7 +269,13 @@ int main() {
         expect(!quarantine.contains("/p/a.cppm"));
         expect(quarantine.timed_out("/p/a.cppm", t0 + 3min, t0 + 3min + 10s, t0 + 3min + 5s) == Verdict::wait);
         expect(quarantine.timed_out("/p/a.cppm", t0 + 4min, t0 + 4min + 10s, t0 + 4min + 5s) == Verdict::quarantined);
+        expect(quarantine.timed_out("/p/a.cppm", t0 + 4min + 1s, t0 + 4min + 11s, t0 + 4min + 6s) == Verdict::wait
+               && quarantine.timed_out("/p/a.cppm", t0 + 4min + 2s, t0 + 4min + 12s, t0 + 4min + 7s) == Verdict::wait)
+            << "requests sent before the file was set aside time out without setting it aside again";
         expect(quarantine.due(t0 + 4min + 10s + 3min).empty()) << "the second term is longer";
+        expect(!quarantine.due(t0 + 4min + 10s + 4min).empty()) << "and not doubled again by the late timeouts";
+        expect(quarantine.timed_out("/p/a.cppm", t0 + 9min, t0 + 9min + 10s, t0 + 9min + 5s) == Verdict::wait);
+        expect(quarantine.timed_out("/p/a.cppm", t0 + 9min + 11s, t0 + 9min + 21s, t0 + 9min + 15s) == Verdict::quarantined);
         expect(quarantine.release("/p/a.cppm") && !quarantine.contains("/p/a.cppm")) << "a change hands the file back";
         const auto answeredAgain = t0 + 10min;
         quarantine.timed_out("/p/b.cppm", answeredAgain, answeredAgain + 10s, answeredAgain + 5s);
@@ -281,6 +288,42 @@ int main() {
         expect(stalled.timed_out("/p/main.cpp", t1, t1 + 10s, t1 - 1s) == Verdict::wait);
         expect(stalled.timed_out("/p/plain.cpp", t1 + 2s, t1 + 12s, t1 - 1s) == Verdict::stalled);
         expect(stalled.first_stalled() == std::optional<std::string> { "/p/main.cpp" }) << "the file asked about first is the likeliest cause";
+    };
+
+    "clangd's state for a file says whether it is working on it"_test = [] {
+        expect(cld::engine_working("parsing main file") && cld::engine_working("parsing includes") && cld::engine_working("running Hover"));
+        expect(cld::engine_working("parsing includes, file is queued")) << "building its preamble while the file waits for a worker";
+        expect(!cld::engine_working("idle") && !cld::engine_working("file is queued") && !cld::engine_working("preamble (queued)"));
+        expect(!cld::engine_working("preamble (queued), file is queued") && !cld::engine_working(""));
+    };
+
+    "a location is a declaration only when nothing defines it there"_test = [] {
+        using Kind = cld::DeclarationKind;
+        const auto kind = [](std::string_view text, std::string_view name) {
+            return cld::declaration_kind(text, text.find(name) + name.size());
+        };
+        expect(kind("export void emit(const Diagnostic& d);\n", "emit") == Kind::declaration);
+        expect(kind("void emit(const Diagnostic& d) {\n}\n", "emit") == Kind::definition);
+        expect(kind("export int answer() { return 42; }", "answer") == Kind::definition);
+        expect(kind("struct Segment {\n    static Segment number(unsigned long long v);\n};", "number") == Kind::declaration) << "a member declared in its class";
+        expect(kind("auto parse(std::string_view text, int base = 10) -> std::optional<Version>;", "parse") == Kind::declaration) << "default arguments and a trailing return";
+        expect(kind("void run(std::function<void()> f = [] { return; });", "run") == Kind::declaration) << "a lambda in a default argument";
+        expect(kind("template <class T> requires std::integral<T> T twice(T x) noexcept(true);", "twice") == Kind::declaration);
+        expect(kind("Widget::Widget(int x) : value { x } {}", "Widget::Widget") == Kind::definition) << "a constructor's initializers";
+        expect(kind("struct Model : Base { int x; };", "Model") == Kind::definition && kind("struct Model;", "Model") == Kind::declaration);
+        expect(kind("Widget(const Widget&) = default;", "Widget") == Kind::definition && kind("extern int counter;", "counter") == Kind::declaration);
+        expect(kind("int limit = 3;", "limit") == Kind::definition && kind("std::vector<std::string> names;", "names") == Kind::declaration);
+        expect(kind("void f(/* ; */ int x) // {\n;", "f") == Kind::declaration) << "comments are not code";
+        expect(kind("void f(const char* s = \";{\");", "f") == Kind::declaration) << "nor are strings";
+        expect(kind("enum class Color { red, green };", "red") == Kind::unknown);
+    };
+
+    "the units searched for a definition come in the order they likely hold it"_test = [] {
+        const std::vector<cld::UnitOfModule> units { { "/p/src/core/detail.cppm", true }, { "/p/src/core/other.cpp", false },
+                                                     { "/p/src/core/diag.cpp", false }, { "/p/src/elsewhere/diag_impl.cpp", false } };
+        const auto chosen = cld::units_to_search("/p/src/core/diag.cppm", units, 3);
+        expect(chosen == std::vector<std::string> { "/p/src/core/diag.cpp", "/p/src/core/other.cpp", "/p/src/elsewhere/diag_impl.cpp" }) << std::format("{}", chosen);
+        expect(cld::units_to_search("/p/src/core/diag.cppm", units, 10).back() == "/p/src/core/detail.cppm") << "partitions last";
     };
 
     "clangd's log is forwarded without flooding"_test = [] {

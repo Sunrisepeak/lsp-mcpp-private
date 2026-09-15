@@ -24,6 +24,8 @@ std::size_t RestartGate::recent(GuardClock::time_point now) const {
 Quarantine::Verdict Quarantine::timed_out(std::string_view uri, GuardClock::time_point sent, GuardClock::time_point now,
                                          std::optional<GuardClock::time_point> lastAnswer) {
     while (!unanswered_.empty() && now - std::get<0>(unanswered_.front()) > STALL_WINDOW) unanswered_.pop_front();
+    // A request sent before the file was set aside, timing out after: nothing new about the file, nor about clangd.
+    if (contains(uri)) return Verdict::wait;
     if (lastAnswer && *lastAnswer >= sent) {
         // clangd kept answering others while this file waited: the file is what is stuck.
         auto& entry = entries_[std::string { uri }];
@@ -118,6 +120,19 @@ LineLimiter::Decision LineLimiter::admit(GuardClock::time_point now) {
         decision.suppressedBefore = 0;
     }
     return decision;
+}
+
+bool engine_working(std::string_view state) {
+    for (std::size_t start { 0 }; start <= state.size();) {
+        const std::size_t comma { state.find(',', start) };
+        std::string_view part { state.substr(start, comma == std::string_view::npos ? std::string_view::npos : comma - start) };
+        while (part.starts_with(' ')) part.remove_prefix(1);
+        while (part.ends_with(' ')) part.remove_suffix(1);
+        if (!part.empty() && part != "idle" && !part.ends_with("queued") && !part.ends_with("(queued)")) return true;
+        if (comma == std::string_view::npos) break;
+        start = comma + 1;
+    }
+    return false;
 }
 
 std::size_t engine_workers(std::size_t hardwareThreads, bool macos) {

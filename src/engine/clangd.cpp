@@ -15,6 +15,7 @@ import mcppls.lsp.protocol;
 import mcppls.project.scan;
 import mcppls.normalize.plan;
 import mcppls.engine;
+import mcppls.engine.clangd.definition;
 import mcppls.engine.clangd.guard;
 import mcppls.engine.clangd.primer;
 import mcppls.engine.clangd.process;
@@ -136,6 +137,56 @@ private:
     std::map<std::string, Clock::time_point, std::less<>> awaitingSince_;     // client URI -> when it was handed to clangd
     std::map<std::string, Clock::time_point, std::less<>> modulesFailedAt_;   // module -> when clangd said it did not compile
     std::optional<Clock::time_point> stuckCheckAt_;
+    // robustness design C2: files of the workspace clangd is not given yet. A C++ source the editor opens that the engine
+    // database does not have joins it with the next plan, and clangd 23.1 reads compile_commands.json again at most every
+    // five seconds: a file it is given before then gets a guessed command and imports without stand-ins, and one importing a
+    // module nothing provides kept a core busy for as long as clangd ran (xlings' apps/gui/main.cpp). Such a file waits,
+    // answered by mcppls's own engine, until clangd has read a database that has it.
+    static constexpr std::chrono::seconds DATABASE_REREAD { 6 };
+    static constexpr std::chrono::seconds PLAN_PATIENCE { 15 };
+    struct HeldFile {
+        Clock::time_point since;
+        bool planned { false };   // a plan was applied after the file was held
+    };
+    std::map<std::string, HeldFile, std::less<>> held_;                // path key
+    std::map<std::string, Clock::time_point, std::less<>> joinedAt_;   // path key -> when a database this clangd had read gained it
+    bool databaseRead_ { false };                                      // this clangd was given a file, and so read the database
+    // robustness design C6: why each file was set aside. It goes back to clangd when its time is up, when the plan gives it
+    // another command, when its imports change, or, for a unit of a module that did not compile, when a source is saved.
+    struct Aside {
+        std::string structure;      // what it provided and imported then
+        bool moduleFailed { false };
+    };
+    std::map<std::string, Aside, std::less<>> aside_;                  // path key
+    std::map<std::string, std::string, std::less<>> fileStatus_;       // client URI -> clangd's last textDocument/clangd.fileStatus state
+    // robustness design C10: a definition that clangd finds only as a declaration in a module's interface is looked for in that
+    // module's other units, which are opened in clangd without the editor (background units) and closed again when unused.
+    static constexpr std::chrono::seconds DEFINITION_PATIENCE { 8 };
+    static constexpr std::chrono::minutes BACKGROUND_IDLE { 10 };
+    static constexpr std::chrono::minutes BACKGROUND_BUILD_LIMIT { 2 };
+    static constexpr std::size_t BACKGROUND_UNITS { 12 };
+    static constexpr std::size_t UNITS_PER_SEARCH { 4 };
+    std::map<std::string, std::vector<UnitOfModule>, std::less<>> moduleUnits_;   // module -> its units other than its interface
+    std::map<std::string, std::string, std::less<>> interfaceModules_;          // path key of an importable unit -> its module
+    struct BackgroundUnit {
+        std::string path;
+        std::string uri;
+        Clock::time_point openedAt;
+        Clock::time_point usedAt;
+        bool built { false };
+        std::string state;   // clangd's last fileStatus state for it
+    };
+    std::map<std::string, BackgroundUnit, std::less<>> background_;           // path key
+    std::set<std::string, std::less<>> closedBackground_;                     // path keys whose closing diagnostics are still to come
+    std::map<std::string, std::optional<platform::fs::FileStamp>, std::less<>> backgroundRefused_;   // units that did not build in time, as they were
+    struct DefinitionSearch {
+        Json message;          // the client's request
+        Json firstAnswer;      // clangd's answer before the units were built
+        Reply reply;
+        std::set<std::string> waitingFor;   // path keys
+        Clock::time_point deadline;
+    };
+    std::vector<DefinitionSearch> searches_;
 
 public:
     explicit ClangdEngine(Options options) : options_ { std::move(options) }, traits_ { traits_for_version(options_.version) } {}
@@ -150,7 +201,7 @@ public:
         status.version = options_.version.empty() ? std::string { "unknown" } : options_.version;
         status.role = "core";
         status.accepting = accepting_;
-        status.preparing = (!awaitingDiagnostics_.empty() || primer_.busy()) && accepting_;
+        status.preparing = (!awaitingDiagnostics_.empty() || primer_.busy() || !held_.empty()) && accepting_;
         status.failed = options_.payloadCorrupt || (unavailable_ && crashes_.size() >= 3);
         if (primer_.busy()) std::tie(status.prepared, status.toPrepare) = primer_.progress();
         status.issues = issues_;
@@ -182,6 +233,10 @@ public:
             { "restarts", std::move(restarts) },
             { "restartScheduled", restartAt_.has_value() },
             { "filesSetAside", quarantine_.members() },
+            { "filesWaitingForDatabase", held_files_() },
+            { "fileStates", fileStatus_ },
+            { "backgroundUnits", background_files_() },
+            { "definitionSearches", searches_.size() },
             { "unresolvedModules", std::move(unresolved) },
             { "modulesThatDidNotCompile", std::move(compileFailures) },
             { "stdFromSemanticKit", stdFromKit_ },
@@ -289,7 +344,16 @@ public:
                 || (!primeDirectory_.empty() && base::is_within(file, base::path_key(primeDirectory_)))) continue;
             if (const auto now = newArguments.find(file); now != newArguments.end() && now->second != arguments) argumentsChanged = true;
         }
+        const auto appliedAt = Clock::now();
+        std::vector<std::string> commandChanged;   // path keys whose command the database gained or changed
+        for (const auto& [file, arguments] : newArguments) {
+            const auto before = writtenArguments_.find(file);
+            if (before == writtenArguments_.end() && databaseRead_) joinedAt_[file] = appliedAt;
+            if (before == writtenArguments_.end() || before->second != arguments) commandChanged.push_back(file);
+        }
+        std::erase_if(joinedAt_, [&](const auto& item) { return !newArguments.contains(item.first); });
         writtenArguments_ = std::move(newArguments);
+        for (auto& [key, held] : held_) held.planned = true;
         (void)structureChanged;
         const bool restartNeeded { (providerLeft || argumentsChanged) && planApplied_ && handshakeDone_ };
         if (!restartNeeded && accepting_) {
@@ -298,13 +362,25 @@ public:
                 const std::string pathKey { base::path_key(document.path) };
                 const bool wasExcluded { excluded_.contains(pathKey) };
                 const bool isExcluded { newExcluded.contains(pathKey) };
-                if (wasExcluded && !isExcluded) open_in_engine_(document);
+                if (wasExcluded && !isExcluded) open_or_hold_(document, true);
                 if (!wasExcluded && isExcluded) {
                     (void)send_(lsp::make_notification("textDocument/didClose", Json { { "textDocument", Json { { "uri", document.uri } } } }));
                 }
             }
         }
         excluded_ = std::move(newExcluded);
+        // A file set aside that the database now gives another command goes back to clangd with it.
+        for (const auto& file : commandChanged) {
+            if (!quarantine_.release(file)) continue;
+            aside_.erase(file);
+            log::info("handing {} back to clangd ({}): the engine database has another command for it", file, host_->root_directory());
+            host_->record_event("file-handed-back", Json { { "file", file }, { "why", "command changed" } });
+            if (restartNeeded || !accepting_) continue;
+            for (const auto& document : host_->documents()) {
+                if (!document.path.empty() && base::path_key(document.path) == file && !excluded_path_(document.path)) open_or_hold_(document, true);
+            }
+        }
+        update_quarantine_issue_();
         {
             std::vector<PrimeModule> modules;
             for (const auto& module : plan->modules) modules.push_back(PrimeModule { module.name, module.requires_, module.primeFile });
@@ -316,6 +392,18 @@ public:
         }
         moduleSources_ = std::move(newModuleSources);
         moduleCommands_ = std::move(newModuleCommands);
+        moduleUnits_.clear();
+        interfaceModules_.clear();
+        for (const auto& entry : plan->entries) {
+            if (entry.module.empty()) continue;
+            if (!entry.provides.empty()) interfaceModules_.emplace(base::path_key(entry.file), entry.module);
+            if (entry.provides != entry.module) moduleUnits_[entry.module].push_back(UnitOfModule { entry.file, !entry.provides.empty() });
+        }
+        std::vector<std::string> backgroundLeaving;
+        for (const auto& [key, unit] : background_) {
+            if (!writtenArguments_.contains(key) || excluded_.contains(key) || restartNeeded) backgroundLeaving.push_back(key);
+        }
+        for (const auto& key : backgroundLeaving) close_background_(key);
         startupBmis_.reset();
         planApplied_ = true;
         const bool forgot { forget_changed_unresolved_() };
@@ -323,6 +411,7 @@ public:
             request_restart_(providerLeft ? "a module's unit left the engine database" : "units are compiled with other arguments");
         } else {
             accept_traffic_if_ready_();
+            open_held_files_(appliedAt);
             prepare_modules_();
         }
         if (forgot) host_->request_replan();
@@ -333,32 +422,47 @@ public:
         switch (event.change) {
         case DocumentChange::opened:
             touch_(document.path);
-            if (accepting_ && !excluded_path_(document.path) && !quarantined_(document.path)) {
-                open_in_engine_(document);
+            // clangd has it open without the editor: it is opened again as the editor's, so its diagnostics come again.
+            if (!document.path.empty()) close_background_(base::path_key(document.path));
+            if (excluded_path_(document.path) || quarantined_(document.path)) break;
+            if (accepting_) {
+                open_or_hold_(document, false);
                 prepare_imports_of_(document);
+            } else if (!document.path.empty() && !writtenArguments_.contains(base::path_key(document.path))) {
+                // Opened while clangd starts: the plan it is given may not have the file yet.
+                held_.try_emplace(base::path_key(document.path), HeldFile { Clock::now(), false });
             }
             break;
         case DocumentChange::changed:
             touch_(document.path);
-            // A file set aside goes back to clangd when it changes, with its whole text.
-            if (!document.path.empty() && quarantine_.release(base::path_key(document.path))) {
+            // clangd is given the whole text when it is given the file.
+            if (held_path_(document.path)) break;
+            if (quarantined_(document.path)) {
+                const std::string key { base::path_key(document.path) };
+                // What clangd stopped on is still there: the file stays aside until its time is up or what it imports changes.
+                if (const auto aside = aside_.find(key); aside != aside_.end() && aside->second.structure == structure_of_text_(document.text)) break;
+                quarantine_.release(key);
+                aside_.erase(key);
                 update_quarantine_issue_();
-                if (accepting_ && !excluded_path_(document.path)) open_in_engine_(document);
+                if (accepting_ && !excluded_path_(document.path)) open_or_hold_(document, true);
                 break;
             }
             if (accepting_ && !excluded_path_(document.path) && event.message != nullptr) (void)send_(*event.message);
             break;
         case DocumentChange::closed: {
-            const bool wasExcluded { excluded_path_(document.path) || quarantined_(document.path) };
+            const bool wasExcluded { excluded_path_(document.path) || quarantined_(document.path) || held_path_(document.path) };
+            if (!document.path.empty()) held_.erase(base::path_key(document.path));
             awaitingDiagnostics_.erase(document.uri);
             awaitingSince_.erase(document.uri);
             diagnosed_.erase(document.uri);
+            fileStatus_.erase(document.uri);
             if (accepting_ && !wasExcluded && event.message != nullptr) (void)send_(*event.message);
             release_prime_units_if_idle_();
             break;
         }
         case DocumentChange::saved:
-            if (!document.path.empty() && !excluded_path_(document.path) && !quarantined_(document.path) && accepting_ && event.message != nullptr) {
+            if (!document.path.empty() && !excluded_path_(document.path) && !quarantined_(document.path) && !held_path_(document.path) && accepting_
+                && event.message != nullptr) {
                 (void)send_(*event.message);
             }
             sources_changed();
@@ -376,10 +480,29 @@ public:
 
     void sources_changed() override {
         modulesFailedAt_.clear();   // a module that still does not compile is reported again
+        // A unit set aside because its module did not compile goes back to clangd: the module may compile now.
+        std::vector<std::string> released;
+        for (auto it = aside_.begin(); it != aside_.end();) {
+            if (it->second.moduleFailed && quarantine_.release(it->first)) {
+                released.push_back(it->first);
+                it = aside_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        if (!released.empty()) {
+            update_quarantine_issue_();
+            for (const auto& document : host_->documents()) {
+                if (document.path.empty() || std::ranges::find(released, base::path_key(document.path)) == released.end()) continue;
+                if (accepting_ && !excluded_path_(document.path)) open_or_hold_(document, true);
+            }
+        }
         if (forget_changed_unresolved_()) host_->request_replan();
     }
 
-    bool claims(const RequestView& request) const override { return !unavailable_ && !excluded_path_(request.path) && !quarantined_(request.path); }
+    bool claims(const RequestView& request) const override {
+        return !unavailable_ && !excluded_path_(request.path) && !quarantined_(request.path) && !held_path_(request.path);
+    }
 
     void request(const RequestView&, const Json& message, Reply reply) override {
         if (unavailable_) {
@@ -441,6 +564,12 @@ public:
         for (const auto& [module, at] : primeDeadlines_) consider(at);
         consider(restartAt_);
         consider(stuckCheckAt_);
+        for (const auto& [key, held] : held_) {
+            if (const auto joined = joinedAt_.find(key); joined != joinedAt_.end()) consider(joined->second + DATABASE_REREAD);
+            else if (!held.planned) consider(held.since + PLAN_PATIENCE);
+        }
+        for (const auto& search : searches_) consider(search.deadline);
+        for (const auto& [key, unit] : background_) consider(unit.built ? unit.usedAt + BACKGROUND_IDLE : unit.openedAt + BACKGROUND_BUILD_LIMIT);
         return deadline;
     }
 
@@ -474,7 +603,7 @@ public:
                 if (path.empty()) break;
                 switch (quarantine_.timed_out(base::path_key(path), request.sent, now, lastAnswerAt_)) {
                 case Quarantine::Verdict::wait: break;
-                case Quarantine::Verdict::quarantined: set_aside_(path, "it stopped answering its requests"); break;
+                case Quarantine::Verdict::quarantined: set_aside_(path, "it stopped answering its requests", Reclaim::if_busy); break;
                 case Quarantine::Verdict::stalled: stalled = true; break;
                 }
                 break;
@@ -492,7 +621,7 @@ public:
             host_->record_event("engine-stalled", Json { { "firstFile", quarantine_.first_stalled().value_or(std::string {}) } });
             if (auto first = quarantine_.first_stalled()) {
                 for (const auto& document : host_->documents()) {
-                    if (!document.path.empty() && base::path_key(document.path) == *first) set_aside_(document.path, "clangd stopped answering after it");
+                    if (!document.path.empty() && base::path_key(document.path) == *first) set_aside_(document.path, "clangd stopped answering after it", Reclaim::no);
                 }
             }
             add_issue_(Issue { "engine-timeout", "clangd stopped answering; it was restarted", "mcppls.restartServer" });
@@ -501,14 +630,18 @@ public:
             request_restart_("clangd did not answer initialize");
         }
         for (const auto& key : quarantine_.due(now)) {
+            aside_.erase(key);
             for (const auto& document : host_->documents()) {
                 if (document.path.empty() || base::path_key(document.path) != key) continue;
                 log::info("handing {} back to clangd ({})", document.path, host_->root_directory());
-                host_->record_event("file-handed-back", Json { { "file", document.path } });
-                if (accepting_ && !excluded_path_(document.path)) open_in_engine_(document);
+                host_->record_event("file-handed-back", Json { { "file", document.path }, { "why", "its time was up" } });
+                if (accepting_ && !excluded_path_(document.path)) open_or_hold_(document, true);
             }
             update_quarantine_issue_();
         }
+        std::erase_if(joinedAt_, [&](const auto& item) { return now >= item.second + DATABASE_REREAD && !held_.contains(item.first); });
+        open_held_files_(now);
+        handle_background_timers_(now);
         std::vector<std::string> overdue;
         for (const auto& [module, at] : primeDeadlines_) {
             if (at <= now) overdue.push_back(module);
@@ -578,6 +711,12 @@ private:
     void start_process_() {
         handshakeDone_ = false;
         accepting_ = false;
+        // A new clangd reads the database when it is given its first file.
+        databaseRead_ = false;
+        joinedAt_.clear();
+        fileStatus_.clear();
+        background_.clear();
+        closedBackground_.clear();
         if (options_.payloadCorrupt) {
             unavailable_ = true;
             add_issue_(Issue { "payload-corrupt", "the extension's payload is corrupt or was modified; reinstall the extension", "mcppls.showLogs" });
@@ -652,7 +791,8 @@ private:
         }
         unavailable_ = false;
         Json params = host_->client_initialize_params();
-        params.erase("initializationOptions");
+        // What clangd is doing with each file (textDocument/clangd.fileStatus) tells a file it is still building from one it gave up on.
+        params["initializationOptions"] = Json { { "clangdFileStatus", true } };
         params["processId"] = nullptr;
         // Positions are UTF-16 everywhere in this server.
         if (params.contains("capabilities") && params["capabilities"].is_object()) {
@@ -679,6 +819,7 @@ private:
         for (auto& [id, request] : old) {
             if (request.purpose == Purpose::client && request.reply) request.reply(Answer {});
         }
+        answer_searches_();
         forget_primes_();
         ++generation_;   // late events of the old process are ignored
         if (process_) process_->stop(std::chrono::milliseconds { 500 });
@@ -687,9 +828,12 @@ private:
         start_process_();
     }
 
-    void request_now_(const Json& message, Reply reply) {
+    void request_now_(const Json& message, Reply reply, bool searchDefinitions = true) {
         const Json& id { message["id"] };
         const std::string method { message.value("method", std::string {}) };
+        if (searchDefinitions && method == lsp::method::TEXT_DOCUMENT_DEFINITION && !moduleUnits_.empty()) {
+            reply = [this, message, reply = std::move(reply)](Answer answer) mutable { search_definition_(message, std::move(answer), std::move(reply)); };
+        }
         const Json* params { lsp::find(message, "params") };
         const Json* uri { params != nullptr ? lsp::find_path(*params, { "textDocument", "uri" }) : nullptr };
         const std::int64_t engineId { nextId_++ };
@@ -711,6 +855,7 @@ private:
         Json params { { "textDocument", Json { { "uri", document.uri }, { "languageId", document.languageId },
                                                { "version", document.version }, { "text", std::string { document.text } } } } };
         if (send_(lsp::make_notification("textDocument/didOpen", std::move(params)))) {
+            databaseRead_ = true;
             if (!diagnosed_.contains(document.uri)) {
                 awaitingDiagnostics_.insert(document.uri);
                 const auto now = Clock::now();
@@ -727,7 +872,7 @@ private:
     // Files clangd will not publish diagnostics for go to mcppls's engine until they change.
     void check_stuck_files_(Clock::time_point now) {
         stuckCheckAt_.reset();
-        std::vector<std::pair<std::string, std::string>> stuck;
+        std::vector<std::tuple<std::string, std::string, bool>> stuck;   // (path, why, its module did not compile)
         const bool preparing { lastPrimeProgressAt_ && now - *lastPrimeProgressAt_ < std::chrono::seconds { 60 } };
         for (const auto& document : host_->documents()) {
             const auto since = awaitingSince_.find(document.uri);
@@ -738,7 +883,7 @@ private:
                 if (const auto failed = modulesFailedAt_.find(scan.declaration->module); failed != modulesFailedAt_.end()) {
                     const auto due = std::max(failed->second, since->second) + FAILED_MODULE_PATIENCE;
                     if (now >= due) {
-                        stuck.emplace_back(document.path, std::format("module {} did not compile and clangd published nothing for this unit of it", failed->first));
+                        stuck.emplace_back(document.path, std::format("module {} did not compile and clangd published nothing for this unit of it", failed->first), true);
                         continue;
                     }
                     schedule_stuck_check_(due);
@@ -746,19 +891,19 @@ private:
             }
             const auto due = since->second + GENERAL_PATIENCE;
             if (now >= due && !preparing) {
-                stuck.emplace_back(document.path, "clangd published no diagnostics for it in two minutes, and no module was being prepared");
+                stuck.emplace_back(document.path, "clangd published no diagnostics for it in two minutes, and no module was being prepared", false);
                 continue;
             }
             schedule_stuck_check_(now >= due ? now + std::chrono::seconds { 30 } : due);
         }
-        for (const auto& [path, why] : stuck) set_aside_(path, why);
+        for (const auto& [path, why, moduleFailed] : stuck) set_aside_(path, why, moduleFailed ? Reclaim::no : Reclaim::if_busy, moduleFailed);
     }
 
     void accept_traffic_if_ready_() {
         if (!handshakeDone_ || !planApplied_ || accepting_) return;
         accepting_ = true;
         for (const auto& document : host_->documents()) {
-            if (!excluded_path_(document.path) && !quarantined_(document.path)) open_in_engine_(document);
+            if (!excluded_path_(document.path) && !quarantined_(document.path)) open_or_hold_(document, planApplied_);
         }
         std::vector<std::pair<Json, Reply>> toFlush;
         toFlush.swap(deferred_);
@@ -767,7 +912,7 @@ private:
                 const Json* params { lsp::find(message, "params") };
                 const Json* uri { params != nullptr ? lsp::find_path(*params, { "textDocument", "uri" }) : nullptr };
                 const std::string path { uri != nullptr && uri->is_string() ? host_->path_of_uri(uri->get<std::string>()) : std::string {} };
-                if (excluded_path_(path) || quarantined_(path)) {
+                if (excluded_path_(path) || quarantined_(path) || held_path_(path)) {
                     if (reply) reply(Answer {});
                 } else {
                     request_now_(message, std::move(reply));
@@ -833,10 +978,40 @@ private:
 
     void handle_notification_(const Json& message) {
         const std::string method { message.value("method", std::string {}) };
+        if (method == "textDocument/clangd.fileStatus") {
+            const Json* params { lsp::find(message, "params") };
+            if (params != nullptr && params->is_object()) {
+                const std::string uri { host_->client_uri(params->value("uri", std::string {})) };
+                if (host_->has_document(uri)) {
+                    fileStatus_[uri] = params->value("state", std::string {});
+                } else if (const std::string path { host_->path_of_uri(uri) }; !path.empty()) {
+                    if (const auto unit = background_.find(base::path_key(path)); unit != background_.end()) unit->second.state = params->value("state", std::string {});
+                }
+            }
+            return;
+        }
         if (method == lsp::method::TEXT_DOCUMENT_PUBLISH_DIAGNOSTICS) {
             const Json& params { message["params"] };
             if (finish_prime_(params.value("uri", std::string {}))) return;
             const std::string uri { host_->client_uri(params.value("uri", std::string {})) };
+            const std::string diagnosedPath { host_->path_of_uri(uri) };
+            const std::string diagnosedKey { diagnosedPath.empty() ? std::string {} : base::path_key(diagnosedPath) };
+            // A unit opened without the editor: its diagnostics are nobody's.
+            if (const auto unit = background_.find(diagnosedKey); unit != background_.end() && !host_->has_document(uri)) {
+                if (!unit->second.built) {
+                    unit->second.built = true;
+                    log::info("{} built in clangd in {} ms to find definitions ({})", unit->second.path,
+                              std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - unit->second.openedAt).count(), host_->root_directory());
+                }
+                unit_built_(diagnosedKey);
+                return;
+            }
+            // The empty list clangd sends when such a unit is closed, even when the editor opens the file right after.
+            if (closedBackground_.contains(diagnosedKey) && !lsp::int_at(params, "version") && params.value("diagnostics", Json::array()).empty()) {
+                closedBackground_.erase(diagnosedKey);
+                return;
+            }
+            if (!searches_.empty() && !diagnosedKey.empty()) unit_built_(diagnosedKey);
             awaitingDiagnostics_.erase(uri);
             awaitingSince_.erase(uri);
             release_prime_units_if_idle_();
@@ -872,6 +1047,7 @@ private:
         for (auto& [id, request] : old) {
             if (request.purpose == Purpose::client && request.reply) request.reply(Answer {});
         }
+        answer_searches_();
         const auto now = Clock::now();
         crashes_.push_back(now);
         while (!crashes_.empty() && now - crashes_.front() > std::chrono::minutes { 5 }) crashes_.pop_front();
@@ -889,7 +1065,7 @@ private:
             if (!document.path.empty() && touched != touchedAt_.end() && now - touched->second < std::chrono::seconds { 10 }) suspects.insert(document.path);
         }
         host_->record_event("engine-exit", Json { { "recentExits", crashes_.size() }, { "suspects", Json(std::vector<std::string> { suspects.begin(), suspects.end() }) } });
-        for (const auto& path : suspects) set_aside_(path, "clangd exited while working on it");
+        for (const auto& path : suspects) set_aside_(path, "clangd exited while working on it", Reclaim::no);
         if (crashes_.size() >= 5) {
             unavailable_ = true;
             flush_deferred_without_engine_();
@@ -978,18 +1154,110 @@ private:
 
     bool quarantined_(std::string_view path) const { return !path.empty() && quarantine_.contains(base::path_key(path)); }
 
-    void set_aside_(const std::string& path, std::string_view why) {
+    // Whether a restart gets back what clangd spends on a file it is no longer given.
+    enum class Reclaim { no, if_busy };
+
+    void set_aside_(const std::string& path, std::string_view why, Reclaim reclaim, bool moduleFailed = false) {
         const std::string key { base::path_key(path) };
+        if (aside_.contains(key) && quarantine_.contains(key)) return;   // set aside already
         if (!quarantine_.contains(key)) quarantine_.put(key, Clock::now());
-        log::warning("setting {} aside from clangd for a while ({}): {}; mcppls's engine answers for it", path, host_->root_directory(), why);
-        host_->record_event("file-set-aside", Json { { "file", path }, { "why", std::string { why } } });
+        Aside aside { {}, moduleFailed };
+        std::optional<std::string> state;
         for (const auto& document : host_->documents()) {
             if (document.path.empty() || base::path_key(document.path) != key) continue;
+            aside.structure = structure_of_text_(document.text);
+            if (const auto status = fileStatus_.find(document.uri); status != fileStatus_.end()) state = status->second;
             awaitingDiagnostics_.erase(document.uri);
             awaitingSince_.erase(document.uri);
             if (accepting_) (void)send_(lsp::make_notification("textDocument/didClose", Json { { "textDocument", Json { { "uri", document.uri } } } }));
         }
+        aside_[key] = std::move(aside);
+        log::warning("setting {} aside from clangd for a while ({}): {}; clangd was {}; mcppls's engine answers for it", path, host_->root_directory(), why,
+                     state.value_or("in an unknown state"));
+        host_->record_event("file-set-aside", Json { { "file", path }, { "why", std::string { why } }, { "clangdState", state.value_or("") } });
         update_quarantine_issue_();
+        // clangd does not stop building a file it is no longer given: a build that never ends (the spin in experiment S17) keeps a
+        // core and one of clangd's workers for as long as clangd runs. A fresh clangd, without the file, gets both back.
+        if (reclaim == Reclaim::if_busy && accepting_ && (!state || engine_working(*state))) {
+            schedule_restart_(std::format("clangd kept working on {} after it was set aside", base::file_name(path)));
+        }
+    }
+
+    // A file's module structure: what it provides and what it imports.
+    static std::string structure_of_text_(std::string_view text) {
+        const auto scan = project::scan_source(text);
+        std::string structure { project::provided_name(scan) };
+        for (const auto& name : project::required_names(scan)) structure += "|" + name;
+        return structure;
+    }
+
+    bool held_path_(std::string_view path) const { return !path.empty() && held_.contains(base::path_key(path)); }
+
+    std::vector<std::string> held_files_() const {
+        std::vector<std::string> files;
+        for (const auto& [key, held] : held_) files.push_back(key);
+        return files;
+    }
+
+    // Whether clangd may be given the file now (held_): its database has had it long enough to have been read, or the
+    // plan did not take it, or no plan will.
+    bool ready_for_engine_(std::string_view path, const std::string& key, const HeldFile& held, Clock::time_point now) const {
+        if (const auto joined = joinedAt_.find(key); joined != joinedAt_.end()) return now >= joined->second + DATABASE_REREAD;
+        if (writtenArguments_.contains(key) || writtenDatabase_.empty()) return true;
+        if (!project::is_cxx_source_name(path) || !base::is_within(path, host_->root_directory())) return true;
+        return held.planned || now >= held.since + PLAN_PATIENCE;
+    }
+
+    // Gives clangd the document, or holds it until clangd's database has it.
+    void open_or_hold_(const DocumentView& document, bool planned) {
+        if (document.path.empty()) {
+            open_in_engine_(document);
+            return;
+        }
+        const auto now = Clock::now();
+        const std::string key { base::path_key(document.path) };
+        const auto [it, fresh] = held_.try_emplace(key, HeldFile { now, planned });
+        if (!ready_for_engine_(document.path, key, it->second, now)) {
+            if (fresh) {
+                log::info("{} waits for clangd to read an engine database that has it ({})", document.path, host_->root_directory());
+                host_->record_event("file-waits-for-database", Json { { "file", document.path } });
+            }
+            return;
+        }
+        held_.erase(it);
+        open_in_engine_(document);
+    }
+
+    void open_held_files_(Clock::time_point now) {
+        if (held_.empty() || !accepting_) return;
+        for (const auto& document : host_->documents()) {
+            if (document.path.empty()) continue;
+            const std::string key { base::path_key(document.path) };
+            const auto it = held_.find(key);
+            if (it == held_.end()) continue;
+            if (excluded_.contains(key) || quarantine_.contains(key)) {
+                held_.erase(it);
+                continue;
+            }
+            if (!ready_for_engine_(document.path, key, it->second, now)) continue;
+            held_.erase(it);
+            host_->record_event("file-given-to-engine", Json { { "file", document.path } });
+            open_in_engine_(document);
+            prepare_imports_of_(document);
+        }
+        release_prime_units_if_idle_();
+    }
+
+    // A restart at the next timer, as soon as the gate allows: for callers in the middle of work on the requests a restart ends.
+    void schedule_restart_(std::string_view reason) {
+        const auto now = Clock::now();
+        const auto at = restartGate_.earliest(now);
+        if (restartAt_ && *restartAt_ <= at) return;
+        restartAt_ = at;
+        restartReason_ = std::string { reason };
+        host_->record_event("engine-restart-scheduled", Json { { "reason", std::string { reason } },
+                                                               { "seconds", std::chrono::duration_cast<std::chrono::seconds>(at - now).count() } });
+        log::info("restarting clangd ({}) in {} s: {}", host_->root_directory(), std::chrono::duration_cast<std::chrono::seconds>(at - now).count(), reason);
     }
 
     void update_quarantine_issue_() {
@@ -1018,6 +1286,229 @@ private:
             log::info("restarting clangd ({}) in {} s: {}", host_->root_directory(),
                       std::chrono::duration_cast<std::chrono::seconds>(at - now).count(), reason);
         }
+    }
+
+    // ---- definitions in implementation units (robustness design C10) ---------------------------
+
+    std::vector<std::string> background_files_() const {
+        std::vector<std::string> files;
+        for (const auto& [key, unit] : background_) files.push_back(unit.path);
+        return files;
+    }
+
+    static void for_each_location_(const Json& result, const std::function<void(const std::string&, const Json&)>& visit) {
+        const auto one = [&](const Json& location) {
+            if (!location.is_object()) return;
+            if (const Json* target = lsp::find(location, "targetUri"); target != nullptr && target->is_string()) {
+                const Json* range { lsp::find(location, "targetSelectionRange") };
+                visit(target->get<std::string>(), range != nullptr ? *range : Json::object());
+            } else if (const Json* uri = lsp::find(location, "uri"); uri != nullptr && uri->is_string()) {
+                const Json* range { lsp::find(location, "range") };
+                visit(uri->get<std::string>(), range != nullptr ? *range : Json::object());
+            }
+        };
+        if (result.is_array()) {
+            for (const auto& location : result) one(location);
+        } else {
+            one(result);
+        }
+    }
+
+    DeclarationKind declaration_kind_at_(const std::string& path, const Json& range) const {
+        const Json* end { lsp::find(range, "end") };
+        if (end == nullptr || !end->is_object()) return DeclarationKind::unknown;
+        const base::Position position { end->value("line", 0), end->value("character", 0) };
+        std::string text;
+        bool open { false };
+        for (const auto& document : host_->documents()) {
+            if (!document.path.empty() && base::same_path(document.path, path)) {
+                text = std::string { document.text };
+                open = true;
+                break;
+            }
+        }
+        if (!open) {
+            auto read = platform::fs::read_file(path);
+            if (!read) return DeclarationKind::unknown;
+            text = std::move(*read);
+        }
+        const auto offset = base::offset_at(text, position);
+        return offset ? declaration_kind(text, *offset) : DeclarationKind::unknown;
+    }
+
+    // clangd's answer to a definition request. When every location it gives is a declaration only, in a module's interface,
+    // the module's other units are built and the question asked again.
+    void search_definition_(const Json& message, Answer answer, Reply reply) {
+        if (answer.kind != Answer::Kind::result || !accepting_) {
+            reply(std::move(answer));
+            return;
+        }
+        std::set<std::string, std::less<>> modules;
+        std::size_t locations { 0 };
+        bool onlyDeclarations { true };
+        for_each_location_(answer.value, [&](const std::string& uri, const Json& range) {
+            ++locations;
+            const std::string path { host_->path_of_uri(uri) };
+            const auto module = path.empty() ? interfaceModules_.end() : interfaceModules_.find(base::path_key(path));
+            if (module == interfaceModules_.end() || declaration_kind_at_(path, range) != DeclarationKind::declaration) {
+                onlyDeclarations = false;
+                return;
+            }
+            modules.insert(module->second);
+        });
+        if (locations == 0 || !onlyDeclarations) {
+            reply(std::move(answer));
+            return;
+        }
+        const auto now = Clock::now();
+        std::set<std::string> waiting;
+        std::vector<std::string> opened;
+        for (const auto& module : modules) {
+            const auto units = moduleUnits_.find(module);
+            if (units == moduleUnits_.end()) continue;
+            const auto interface = moduleSources_.find(module);
+            for (const auto& path : units_to_search(interface == moduleSources_.end() ? std::string_view {} : std::string_view { interface->second },
+                                                    units->second, UNITS_PER_SEARCH)) {
+                const std::string key { base::path_key(path) };
+                if (const auto uri = editor_uri_of_(key)) {
+                    // The editor has it open: clangd builds it anyway.
+                    if (awaitingDiagnostics_.contains(*uri)) waiting.insert(key);
+                    continue;
+                }
+                if (const auto unit = background_.find(key); unit != background_.end()) {
+                    unit->second.usedAt = now;
+                    if (!unit->second.built) waiting.insert(key);
+                    continue;
+                }
+                if (open_in_background_(path, module, now)) {
+                    waiting.insert(key);
+                    opened.push_back(path);
+                }
+            }
+        }
+        if (waiting.empty()) {
+            reply(std::move(answer));
+            return;
+        }
+        if (!opened.empty()) host_->record_event("definition-search", Json { { "modules", Json(std::vector<std::string> { modules.begin(), modules.end() }) }, { "opened", opened } });
+        searches_.push_back(DefinitionSearch { message, std::move(answer.value), std::move(reply), std::move(waiting), now + DEFINITION_PATIENCE });
+    }
+
+    std::optional<std::string> editor_uri_of_(std::string_view key) const {
+        for (const auto& document : host_->documents()) {
+            if (document.path.empty() || base::path_key(document.path) != key) continue;
+            // A document clangd does not have is no help.
+            if (excluded_path_(document.path) || quarantined_(document.path) || held_path_(document.path)) return std::string {};
+            return document.uri;
+        }
+        return std::nullopt;
+    }
+
+    bool open_in_background_(const std::string& path, std::string_view module, Clock::time_point now) {
+        const std::string key { base::path_key(path) };
+        if (const auto refused = backgroundRefused_.find(key); refused != backgroundRefused_.end()) {
+            if (platform::fs::stamp(path) == refused->second) return false;
+            backgroundRefused_.erase(refused);   // it changed: it may build now
+        }
+        if (excluded_.contains(key) || quarantine_.contains(key) || !writtenArguments_.contains(key)) return false;
+        if (const auto joined = joinedAt_.find(key); joined != joinedAt_.end() && now < joined->second + DATABASE_REREAD) return false;
+        // A unit of a module that did not compile can be one clangd never finishes (robustness design C6).
+        if (modulesFailedAt_.contains(module) || reportedFailures_.contains(module)) return false;
+        while (background_.size() >= BACKGROUND_UNITS) {
+            auto oldest = background_.end();
+            for (auto it = background_.begin(); it != background_.end(); ++it) {
+                if (!it->second.built || waited_on_(it->first)) continue;
+                if (oldest == background_.end() || it->second.usedAt < oldest->second.usedAt) oldest = it;
+            }
+            if (oldest == background_.end()) return false;
+            close_background_(std::string { oldest->first });
+        }
+        auto text = platform::fs::read_file(path);
+        if (!text) return false;
+        const std::string uri { base::path_to_uri(path) };
+        Json params { { "textDocument", Json { { "uri", uri }, { "languageId", "cpp" }, { "version", 1 }, { "text", std::move(*text) } } } };
+        if (!send_(lsp::make_notification("textDocument/didOpen", std::move(params)))) return false;
+        databaseRead_ = true;
+        closedBackground_.erase(key);
+        background_[key] = BackgroundUnit { path, uri, now, now, false, {} };
+        log::info("opening {} in clangd to find definitions in module {} ({})", path, module, host_->root_directory());
+        return true;
+    }
+
+    bool waited_on_(std::string_view key) const {
+        return std::ranges::any_of(searches_, [&](const DefinitionSearch& search) { return search.waitingFor.contains(std::string { key }); });
+    }
+
+    void close_background_(const std::string& key) {
+        const auto unit = background_.find(key);
+        if (unit == background_.end()) return;
+        if (accepting_ && send_(lsp::make_notification("textDocument/didClose", Json { { "textDocument", Json { { "uri", unit->second.uri } } } }))) {
+            closedBackground_.insert(key);
+        }
+        background_.erase(unit);
+    }
+
+    void unit_built_(const std::string& key) {
+        std::vector<DefinitionSearch> ready;
+        for (auto it = searches_.begin(); it != searches_.end();) {
+            it->waitingFor.erase(key);
+            if (it->waitingFor.empty()) {
+                ready.push_back(std::move(*it));
+                it = searches_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (auto& search : ready) ask_definition_again_(std::move(search));
+    }
+
+    void ask_definition_again_(DefinitionSearch search) {
+        if (!accepting_) {
+            search.reply(Answer { Answer::Kind::result, std::move(search.firstAnswer) });
+            return;
+        }
+        request_now_(search.message, [first = std::move(search.firstAnswer), reply = std::move(search.reply)](Answer answer) mutable {
+            const bool found { answer.kind == Answer::Kind::result && !answer.value.is_null() && !(answer.value.is_array() && answer.value.empty()) };
+            if (found) reply(std::move(answer));
+            else reply(Answer { Answer::Kind::result, std::move(first) });
+        }, false);
+    }
+
+    // Searches get what clangd answered first, as when it stops.
+    void answer_searches_() {
+        auto searches = std::move(searches_);
+        searches_.clear();
+        for (auto& search : searches) {
+            if (search.reply) search.reply(Answer { Answer::Kind::result, std::move(search.firstAnswer) });
+        }
+    }
+
+    void handle_background_timers_(Clock::time_point now) {
+        std::vector<DefinitionSearch> overdue;
+        for (auto it = searches_.begin(); it != searches_.end();) {
+            if (it->deadline <= now) {
+                overdue.push_back(std::move(*it));
+                it = searches_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        // Asked again with what clangd has built by now.
+        for (auto& search : overdue) ask_definition_again_(std::move(search));
+        std::vector<std::string> closing;
+        for (const auto& [key, unit] : background_) {
+            if (!unit.built && now >= unit.openedAt + BACKGROUND_BUILD_LIMIT) {
+                log::warning("{} did not build in clangd in {} minutes; it is not opened without the editor again until it changes ({}); clangd was {}",
+                             unit.path, BACKGROUND_BUILD_LIMIT.count(), host_->root_directory(), unit.state.empty() ? std::string { "in an unknown state" } : unit.state);
+                host_->record_event("background-unit-stuck", Json { { "file", unit.path }, { "clangdState", unit.state } });
+                backgroundRefused_[key] = platform::fs::stamp(unit.path);
+                closing.push_back(key);
+                if (unit.state.empty() || engine_working(unit.state)) schedule_restart_(std::format("clangd kept working on {}", base::file_name(unit.path)));
+            } else if (unit.built && now >= unit.usedAt + BACKGROUND_IDLE && !waited_on_(key)) {
+                closing.push_back(key);
+            }
+        }
+        for (const auto& key : closing) close_background_(key);
     }
 
     // ---- parallel module preparation ------------------------------------------------------
@@ -1122,6 +1613,7 @@ private:
                 primer_.finish(module->name);
                 continue;
             }
+            databaseRead_ = true;
             primeModuleByPath_[base::path_key(module->primeFile)] = module->name;
             primeDeadlines_[module->name] = Clock::now() + std::chrono::minutes { 3 };
         }
@@ -1147,7 +1639,8 @@ private:
     }
 
     void release_prime_units_if_idle_() {
-        if (heldPrimeUnits_.empty() || primer_.busy() || !awaitingDiagnostics_.empty()) return;
+        // A file waiting for the database needs the same modules once it is given to clangd.
+        if (heldPrimeUnits_.empty() || primer_.busy() || !awaitingDiagnostics_.empty() || !held_.empty()) return;
         log::info("module preparation idle ({}): closing {} prime units", host_->root_directory(), heldPrimeUnits_.size());
         close_prime_units_();
     }

@@ -378,6 +378,62 @@ int main() {
         expect(plan.excludedFiles == std::vector<std::string> { "/p/src/lost.cppm" }) << std::format("{}", plan.excludedFiles);
     };
 
+    "a file the editor opened that no set describes joins with the nearest unit's arguments"_test = [] {
+        // robustness design C2: clangd guessed the command of xlings' apps/gui/main.cpp, a target of a feature the build did not
+        // enable, and without a stand-in for the module it imports that nothing provides, kept a core busy for good.
+        const std::map<std::string, std::string> sources {
+            { "/p/src/core/a.cppm", "export module core.a;\n" },
+            { "/p/src/main.cpp", "import core.a;\nint main() {}\n" },
+            { "/p/apps/tui/main.cpp", "import tui.view;\nint main() {}\n" },
+            { "/p/apps/tui/view.cppm", "export module tui.view;\nimport core.a;\n" },
+            { "/p/apps/gui/main.cpp", "import core.a;\nimport gui.window;\nint main() {}\n" },
+            { "/p/apps/gui/panel.cppm", "export module gui.panel;\nimport core.a;\n" },
+        };
+        s::Database database;
+        database.hasIde = true;
+        for (const auto& [name, prefix, define] : { std::tuple { "core", "/p/src/", "-DCORE" }, std::tuple { "tui", "/p/apps/tui/", "-DTUI" } }) {
+            s::Set set;
+            set.name = name;
+            set.hasIde = true;
+            set.toolchain = "gcc-16.1.0-x86_64-linux-gnu";
+            for (const auto& [path, text] : sources) {
+                if (!path.starts_with(prefix)) continue;
+                s::TranslationUnit unit;
+                unit.source = path;
+                unit.workDirectory = "/p";
+                unit.arguments = { "/opt/gcc/bin/g++", "-std=c++23", "-fmodules", define, "-c", path };
+                set.units.push_back(std::move(unit));
+            }
+            database.sets.push_back(std::move(set));
+        }
+        std::map<std::string, ToolchainFacts, std::less<>> facts { { "gcc-16.1.0-x86_64-linux-gnu", gcc_facts() } };
+        n::PlanInput input;
+        input.database = &database;
+        input.facts = &facts;
+        input.engineDriverDirectory = "/payload/clangd/bin";
+        input.stubDirectory = "/cache/stubs";
+        input.moduleHintDirectory = "/cache/hints";
+        input.scanner = [&](std::string_view path) {
+            const auto it = sources.find(std::string { path });
+            return it == sources.end() ? p::ScanResult {} : p::scan_source(it->second);
+        };
+        input.openSources = { "/p/apps/gui/main.cpp", "/p/apps/gui/panel.cppm", "/p/src/main.cpp" };
+        const auto plan = n::plan_engine(input);
+        std::map<std::string, std::vector<const n::EngineEntry*>> byFile;
+        for (const auto& entry : plan.entries) byFile[entry.file].push_back(&entry);
+        expect(plan.openSources == std::vector<std::string> { "/p/apps/gui/main.cpp", "/p/apps/gui/panel.cppm" }) << std::format("{}", plan.openSources);
+        expect(byFile["/p/src/main.cpp"].size() == 1u) << "a unit of a set is not planned twice";
+        expect(fatal(byFile["/p/apps/gui/main.cpp"].size() == 1u && byFile["/p/apps/gui/panel.cppm"].size() == 1u));
+        const auto& main = *byFile["/p/apps/gui/main.cpp"].front();
+        expect(contains(main.arguments, "-DTUI") && !contains(main.arguments, "-DCORE")) << "the nearest unit's arguments: " << std::format("{}", main.arguments);
+        expect(!contains(main.arguments, "c++-module") && main.arguments.back() == "/p/apps/gui/main.cpp" && main.provides.empty());
+        expect(contains(main.moduleHints, "-fmodule-file=core.a=/cache/hints/core.a.pcm") && contains(main.moduleHints, "-fmodule-file=gui.window=/cache/hints/gui.window.pcm"))
+            << std::format("{}", main.moduleHints);
+        const auto& panel = *byFile["/p/apps/gui/panel.cppm"].front();
+        expect(panel.provides == "gui.panel" && contains(panel.arguments, "c++-module") && contains(panel.arguments, "-DTUI"));
+        expect(plan.stubModules == std::vector<std::string> { "gui.window" }) << "the module nothing provides gets a stand-in: " << std::format("{}", plan.stubModules);
+    };
+
     "a module clangd could not find leaves out only the providers that import it"_test = [] {
         // robustness design C2: clangd deadlocks building a module whose imports it cannot resolve (experiments S2, S6),
         // and nothing else stops it answering, so the providers above that module go and every other unit stays.

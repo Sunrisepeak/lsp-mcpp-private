@@ -39,7 +39,7 @@ public:
     static constexpr std::chrono::seconds STALL_WINDOW { 60 };
 
     // A request about `uri`, sent at `sent`, timed out at `now`; `lastAnswer` is when clangd last
-    // answered any request.
+    // answered any request. A file set aside already only waits.
     Verdict timed_out(std::string_view uri, GuardClock::time_point sent, GuardClock::time_point now,
                       std::optional<GuardClock::time_point> lastAnswer);
     // clangd answered a request about `uri`: its timeouts start over.
@@ -85,6 +85,11 @@ private:
     std::size_t inWindow_ { 0 };
     std::size_t suppressed_ { 0 };
 };
+
+// Whether clangd's state for a file (textDocument/clangd.fileStatus: "parsing includes", "parsing main file", "running Hover",
+// "file is queued", "preamble (queued)" or "idle", several joined by ", ") says it is working on the file, rather than idle or
+// waiting for a worker.
+bool engine_working(std::string_view state);
 
 // clangd's workers (-j), which also bound its background index: a quarter of the physical cores (hardware
 // threads count as two per core except on macOS), at least two. On a 16-core machine xlings' first open

@@ -27,6 +27,7 @@ struct Candidate {
     std::string source;
     spec::Role role { spec::Role::unknown };
     std::string provided;
+    std::string module;                      // the module the unit is part of
     std::vector<std::string> required;
     std::vector<std::string> arguments;      // engine arguments without argv[0] and without the source
     std::string driver;
@@ -46,6 +47,35 @@ bool compiled_as_c(std::span<const std::string> arguments, std::string_view sour
         else if (argument == "/TP" || argument == "-TP") stated = false;
     }
     return stated.value_or(base::extension(source) == ".c");
+}
+
+// The arguments without `-x c++-module`, for a unit that is not a module interface.
+std::vector<std::string> without_module_mode(std::vector<std::string> arguments) {
+    for (std::size_t k { 0 }; k + 1 < arguments.size();) {
+        if (arguments[k] == "-x" && arguments[k + 1] == "c++-module") arguments.erase(arguments.begin() + static_cast<std::ptrdiff_t>(k), arguments.begin() + static_cast<std::ptrdiff_t>(k + 2));
+        else ++k;
+    }
+    return arguments;
+}
+
+// How many leading directories two paths share.
+std::size_t shared_directories(std::string_view left, std::string_view right) {
+    const auto parts = [](std::string_view path) {
+        std::vector<std::string_view> result;
+        for (std::size_t start { 0 }; start <= path.size();) {
+            const std::size_t slash { path.find('/', start) };
+            const std::string_view part { path.substr(start, slash == std::string_view::npos ? std::string_view::npos : slash - start) };
+            if (!part.empty()) result.push_back(part);
+            if (slash == std::string_view::npos) break;
+            start = slash + 1;
+        }
+        return result;
+    };
+    const auto a = parts(left);
+    const auto b = parts(right);
+    std::size_t shared { 0 };
+    while (shared < a.size() && shared < b.size() && a[shared] == b[shared]) ++shared;
+    return shared;
 }
 
 // The C driver beside a Clang toolchain's own driver: the driver's directory decides where Clang
@@ -144,6 +174,11 @@ EnginePlan plan_engine(const PlanInput& input) {
             }
             candidate.required = unit.requiredModules;
             if (candidate.required.empty()) candidate.required = project::required_names(scan());
+            if (!candidate.provided.empty()) {
+                candidate.module = candidate.provided.substr(0, candidate.provided.find(':'));
+            } else if (candidate.role == spec::Role::module_implementation && scan().declaration) {
+                candidate.module = scan().declaration->module;
+            }
 
             const bool importable { spec::is_importable(candidate.role) };
             const auto syntax { mcppls::os::FAMILY == mcppls::os::Family::windows ? project::CommandSyntax::windows
@@ -187,6 +222,43 @@ EnginePlan plan_engine(const PlanInput& input) {
             }
             candidates.push_back(std::move(candidate));
         }
+    }
+
+    // 1b. Files the editor has open that no set describes (a target of a feature not built, a scratch file). clangd
+    //     guesses their commands and does not know their imports; one importing a module nothing provides made clang spin
+    //     on a core for as long as clangd ran (xlings' apps/gui/main.cpp, robustness design C2). They take the arguments of
+    //     the nearest C++ unit, and their imports resolve, or get stand-ins, like any unit's.
+    for (const auto& openSource : input.openSources) {
+        const std::string source { base::normalize_path(openSource) };
+        const std::string key { base::path_key(source) };
+        if (standardSources.contains(key) || seenSources.contains(key)) continue;
+        std::optional<std::size_t> nearest;
+        std::size_t best { 0 };
+        const std::string directory { base::parent_path(base::path_key(source)) };
+        for (std::size_t i { 0 }; i < candidates.size(); ++i) {
+            if (candidates[i].c) continue;
+            const std::size_t shared { shared_directories(base::parent_path(base::path_key(candidates[i].source)), directory) };
+            if (!nearest || shared > best) {
+                nearest = i;
+                best = shared;
+            }
+        }
+        if (!nearest) continue;
+        seenSources.insert(key);
+        const project::ScanResult scanned { input.scanner ? input.scanner(source) : project::ScanResult {} };
+        Candidate candidate { candidates[*nearest] };
+        candidate.source = source;
+        candidate.role = project::role_of(scanned);
+        candidate.provided = project::provided_name(scanned);
+        candidate.required = project::required_names(scanned);
+        candidate.module = scanned.declaration ? scanned.declaration->module : std::string {};
+        candidate.arguments = without_module_mode(std::move(candidate.arguments));
+        if (spec::is_importable(candidate.role)) {
+            candidate.arguments.emplace_back("-x");
+            candidate.arguments.emplace_back("c++-module");
+        }
+        candidates.push_back(std::move(candidate));
+        plan.openSources.push_back(source);
     }
 
     // 2. Providers in the context, and the standard library manifest the context uses.
@@ -334,6 +406,7 @@ EnginePlan plan_engine(const PlanInput& input) {
         entry.arguments.insert(entry.arguments.end(), candidate.arguments.begin(), candidate.arguments.end());
         entry.arguments.push_back(candidate.source);
         if (spec::is_importable(candidate.role)) entry.provides = candidate.provided;
+        entry.module = candidate.module;
         entry.imports = candidate.required;
         plan.entries.push_back(std::move(entry));
     }
@@ -347,13 +420,6 @@ EnginePlan plan_engine(const PlanInput& input) {
             if (!fallback) fallback = i;
         }
         return fallback;
-    };
-    auto without_module_mode = [](std::vector<std::string> arguments) {
-        for (std::size_t k { 0 }; k + 1 < arguments.size();) {
-            if (arguments[k] == "-x" && arguments[k + 1] == "c++-module") arguments.erase(arguments.begin() + static_cast<std::ptrdiff_t>(k), arguments.begin() + static_cast<std::ptrdiff_t>(k + 2));
-            else ++k;
-        }
-        return arguments;
     };
     auto add_module = [&](const std::string& name, std::vector<std::string> requires_, std::optional<std::size_t> importer,
                           const std::string& workDirectory) {

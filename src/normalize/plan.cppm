@@ -20,6 +20,7 @@ struct EngineEntry {
     std::string file;
     std::vector<std::string> arguments;   // argv[0] first, source last
     std::string provides;                 // the module the unit provides when it is importable
+    std::string module;                   // the module the unit is part of, whatever its role (M for M's interface, partitions and implementation units)
     std::vector<std::string> imports;     // the modules it imports directly
     // Written before the source (usable plan W7): -fmodule-file=<name>=<path> for every module the
     // unit reaches and -fmodule-output=<path> for the one it provides, at paths nothing writes. They
@@ -48,6 +49,7 @@ struct EnginePlan {
     // Stand-ins (robustness design C2): an empty unit per module nothing usable provides, and those modules.
     std::vector<std::pair<std::string, std::string>> stubSources;    // stand-in file -> its content
     std::vector<std::string> stubModules;
+    std::vector<std::string> openSources;     // open files no set describes, planned with the nearest unit's arguments
     std::vector<PlanIssue> issues;
     std::vector<std::string> excludedFiles;   // providers left out because they cannot be built
     std::string contextSet;                   // empty: every set
@@ -74,6 +76,9 @@ struct PlanInput {
     // Where stand-ins for modules nothing usable provides are written (robustness design C2). Empty: no
     // stand-ins; providers whose imports cannot resolve leave the database instead.
     std::string stubDirectory;
+    // Files the editor has open that no set describes: they join the database with the arguments of the nearest C++
+    // unit, so their imports resolve or get stand-ins instead of clangd guessing (robustness design C2).
+    std::vector<std::string> openSources;
     // Engine decisions (overall design 5.4), set by the core engine's configure_plan. Providers whose
     // imports cannot resolve, and providers importing them, stay out of the database: clangd 23.1
     // deadlocks building them (robustness design, experiments S2, S6). Other units always stay.
