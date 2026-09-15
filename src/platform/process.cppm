@@ -17,6 +17,7 @@ struct SpawnOptions {
                                                            // because this process's stdout carries the protocol
     bool pipeError { false };                              // false: the child writes to this process's stderr
     bool ownUnit { false };                                // the child starts a unit that kill() ends with everything in it
+    bool detached { false };                               // the child outlives this process (the workspace daemon)
 };
 
 class Process {
@@ -41,6 +42,8 @@ public:
     // nullopt when the bound expired and the child is still running.
     base::Result<std::optional<int>> wait_for(std::chrono::milliseconds timeout);
     void terminate();
+    // Lets the child go on without this process: its channels are closed, and nothing waits for it or ends it.
+    void detach();
     // Ends the child without asking: a child that does not end when asked (clangd stuck building a
     // module does not) is killed, with its unit when it has one.
     void kill();

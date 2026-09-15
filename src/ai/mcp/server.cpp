@@ -83,13 +83,23 @@ std::unique_ptr<model::ModelClient> Session::make_client(model::SourceKind sourc
             }
             messages.push_back(Json { { "role", message.role == "assistant" ? "assistant" : "user" }, { "content", Json { { "type", "text" }, { "text", message.content } } } });
         }
-        const std::string id { std::format("mcppls-sampling-{}", nextRequest_++) };
+        // Unique across the sessions a daemon serves at once, whose responses share one queue.
+        static std::atomic<std::uint64_t> serial { 0 };
+        const std::string id { std::format("mcppls-sampling-{}-{}", ++serial, nextRequest_++) };
         send_(Json { { "jsonrpc", "2.0" }, { "id", id }, { "method", "sampling/createMessage" },
                      { "params", Json { { "messages", std::move(messages) }, { "systemPrompt", system }, { "includeContext", "none" }, { "temperature", 0 },
                                         { "maxTokens", request.maxTokens > 0 ? request.maxTokens : 4096 } } } });
-        auto response = kernel_.take_external([&](const Json& message) { return message.is_object() && !message.contains("method") && message.value("id", Json {}) == Json(id); },
-                                              toolTimeout_);
+        // A daemon wraps each connection's messages with the connection they came from.
+        const auto unwrap = [](const Json& message) -> const Json& { return message.is_object() && message.contains("message") && message.contains("mcppls-daemon") ? message["message"] : message; };
+        auto response = kernel_.take_external([&](const Json& message) {
+            const Json& inner = unwrap(message);
+            return inner.is_object() && !inner.contains("method") && inner.value("id", Json {}) == Json(id);
+        }, toolTimeout_);
         if (!response) return base::fail("sampling-timeout", "the client did not answer sampling/createMessage in time");
+        if (response->contains("mcppls-daemon")) {
+            Json inner = (*response)["message"];
+            response = std::move(inner);
+        }
         if (response->contains("error")) return base::fail("sampling-refused", response->value("error", Json::object()).value("message", std::string { "refused" }));
         const Json result = response->value("result", Json::object());
         std::string text { result.value("content", Json::object()).value("text", std::string {}) };

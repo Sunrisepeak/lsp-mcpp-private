@@ -12,6 +12,8 @@ void set_level(Level level);
 Level level();
 bool enabled(Level level);
 void write(Level level, std::string_view message);
+// Where lines go instead of standard error, for a process nobody reads the standard error of (the daemon).
+void set_sink(std::function<void(std::string_view line)> sink);
 std::optional<Level> parse_level(std::string_view name);
 
 template <class... Args>

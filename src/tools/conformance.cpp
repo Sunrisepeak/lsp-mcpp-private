@@ -413,10 +413,11 @@ private:
 
 public:
     base::Result<void> start(const Options& options, const std::vector<std::string>& serverArguments, const std::string& workspace,
-                             const std::string& cacheDirectory) {
+                             const std::string& cacheDirectory, bool daemon) {
         mcppls::platform::SpawnOptions spawn;
         spawn.program = options.server;
         spawn.arguments = { "mcp", "--root", workspace };
+        if (daemon) spawn.arguments.push_back("--daemon");
         if (!options.payload.empty()) spawn.arguments.insert(spawn.arguments.end(), { "--payload", options.payload });
         if (!options.clangd.empty()) spawn.arguments.insert(spawn.arguments.end(), { "--clangd", options.clangd });
         if (!options.kit.empty()) spawn.arguments.insert(spawn.arguments.end(), { "--kit", options.kit });
@@ -591,23 +592,27 @@ private:
     bool expectWarm_ { false };
     std::map<std::string, std::map<std::string, std::string>> moduleFilesBefore_;   // module -> its published files before the server started
     std::unique_ptr<McpClient> mcp_;                            // started by the first mcp check
+    std::unique_ptr<McpClient> mcpDaemon_;                      // the first mcp check "via": "daemon"
     std::string mcpFailure_;
 
-    McpClient* mcp_client() {
-        if (mcp_ || !mcpFailure_.empty()) return mcp_.get();
+    McpClient* mcp_client(bool daemon) {
+        auto& kept = daemon ? mcpDaemon_ : mcp_;
+        if (kept || !mcpFailure_.empty()) return kept.get();
         auto client = std::make_unique<McpClient>();
-        // The agent's own server beside the editor's: it shares the cache directory as a guest (overall design 6.3).
-        if (auto started = client->start(options_, serverArguments_, workspace_, cacheDirectory_); !started) {
+        // The agent's own server beside the editor's: it shares the cache directory as a guest (overall design 6.3);
+        // through the daemon, a relay to the workspace's one warm session.
+        if (auto started = client->start(options_, serverArguments_, workspace_, cacheDirectory_, daemon); !started) {
             mcpFailure_ = started.error().message;
             return nullptr;
         }
-        mcp_ = std::move(client);
-        return mcp_.get();
+        kept = std::move(client);
+        return kept.get();
     }
 
 public:
     void finish() {
         if (mcp_) mcp_->stop();
+        if (mcpDaemon_) mcpDaemon_->stop();
     }
 
     Scenario(Client& client, const Options& options, std::vector<std::string> serverArguments, std::string workspace, std::chrono::seconds timeout,
@@ -769,7 +774,7 @@ public:
         if (kind == "mcp") {
             // S5 6: a tool call (or, with "method", any request) to `mcppls mcp`, repeated until its result
             // meets the expectations or the check's time is up; "is-error" expects a tool error instead.
-            McpClient* mcp { mcp_client() };
+            McpClient* mcp { mcp_client(check.value("via", std::string {}) == "daemon") };
             if (mcp == nullptr) return { false, "cannot start mcppls mcp: " + mcpFailure_ };
             const std::string method { check.value("method", std::string { "tools/call" }) };
             const Json params = method == "tools/call" ? Json { { "name", check.value("tool", std::string {}) }, { "arguments", check.value("arguments", Json::object()) } }

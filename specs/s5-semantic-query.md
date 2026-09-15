@@ -422,6 +422,16 @@ A server runs as an MCP server over standard input and output (`mcppls mcp`): on
 - A server **MUST** answer `initialize` with the client's protocol version when it supports it, and otherwise with the latest version it supports. <a id="S5-6-4"></a><sup>S5-6-4</sup>
 - A server **MUST NOT** write anything but MCP messages to its standard output. <a id="S5-6-5"></a><sup>S5-6-5</sup>
 
+### 6.1 The workspace daemon
+
+One process per workspace can serve every MCP connection to it from one session whose engines stay warm (`mcppls daemon run`; `mcppls mcp --daemon` relays its standard streams to it, starting it when none runs). The daemon listens on the loopback interface and writes `daemon.json` — `port`, `token`, `version`, `root` — in the workspace's directory of the user cache. A connection's first line is `{"token": string, "session": "mcp" | "control"}`, answered `{"ok": true}` or `{"ok": false, "error": string}`; an MCP connection then carries MCP messages one per line, and a control connection one request per line: `{"method": "status"}` or `{"method": "stop"}`.
+
+- A daemon **MUST** listen on a loopback address only. <a id="S5-6.1-1"></a><sup>S5-6.1-1</sup>
+- A daemon **MUST** refuse a connection whose first line does not carry its token. <a id="S5-6.1-2"></a><sup>S5-6.1-2</sup>
+- An entry **MUST NOT** use a daemon of another version. <a id="S5-6.1-3"></a><sup>S5-6.1-3</sup>
+- A daemon **MUST** exit when no connection has been open for its idle time, removing its `daemon.json` unless another daemon replaced it. <a id="S5-6.1-4"></a><sup>S5-6.1-4</sup>
+- Each MCP connection **MUST** keep its own protocol state (the negotiated version and client capabilities), whatever the daemon's other connections negotiated. <a id="S5-6.1-5"></a><sup>S5-6.1-5</sup>
+
 ## 7. Command-line binding
 
 | Command | Query |
@@ -434,6 +444,7 @@ A server runs as an MCP server over standard input and output (`mcppls mcp`): on
 | `mcppls diagnostics <file>... [--no-fresh]` | 3.6 |
 | `mcppls verify [<file>...] [--changed] [--base REV] [--budget N]`, `mcppls verify --snippet FILE:LINE --code TEXT [--replace-lines N]` | 3.7 |
 | `mcppls query context <file>` | 4.1 |
+| `mcppls daemon run\|start\|status\|stop [--root DIR]` | 6.1 |
 | `mcppls impact [<file>...] [--base REV] [--budget N]` | 5.2, its first steps |
 | `mcppls review [<file>...] [--base REV] [--budget N] [--format json\|text\|sarif\|markdown] [--output FILE]` | 5.2, 5.3 |
 

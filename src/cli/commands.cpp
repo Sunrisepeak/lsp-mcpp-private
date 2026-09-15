@@ -30,6 +30,8 @@ import mcppls.cli.options;
 import mcppls.cli.query;
 import mcppls.orchestrator.kernel;
 import mcppls.ai.mcp.server;
+import mcppls.ai.mcp.daemon;
+import mcppls.ai.model.source;
 
 namespace mcppls::cli {
 
@@ -162,6 +164,20 @@ int command_check(const cmdline::ParsedArgs& args) {
     return result->exitCode == 0 && !result->timedOut ? 0 : 1;
 }
 
+// The options a daemon started for an entry is started with: the entry's own.
+std::vector<std::string> daemon_arguments(const cmdline::ParsedArgs& args) {
+    std::vector<std::string> forwarded;
+    for (const std::string_view name : { "payload", "clangd", "kit", "mcpp", "database", "engine", "request-timeout", "log-level", "tool-timeout",
+                                         "model-source", "model-gateway", "model-name", "model-budget", "idle-minutes" }) {
+        if (auto value = args.value(name)) forwarded.insert(forwarded.end(), { std::format("--{}", name), *value });
+    }
+    for (const auto& pattern : args.option_or_empty("model-exclude").values) forwarded.insert(forwarded.end(), { "--model-exclude", pattern });
+    for (const std::string_view flag : { "untrusted", "no-discover" }) {
+        if (args.is_flag_set(flag)) forwarded.push_back(std::format("--{}", flag));
+    }
+    return forwarded;
+}
+
 } // namespace
 
 int run(int argc, char* argv[]) {
@@ -216,6 +232,7 @@ int run(int argc, char* argv[]) {
     (void)mcpCommand.description("Serve the Model Context Protocol on standard input and output, for coding agents");
     (void)mcpCommand.option("root").takes_value().help("Workspace root (default: the current directory)");
     (void)mcpCommand.option("tool-timeout").takes_value().help("Seconds a tool call waits for the engines (default 120)");
+    (void)mcpCommand.option("daemon").help("Share the workspace daemon's warm session, starting it when none runs");
     add_model_options(mcpCommand, "model-source", "The model cxx_review may use besides the agent: gateway or mcp-sampling (default none)");
     (void)mcpCommand.action([&](const cmdline::ParsedArgs& args) {
         handled = true;
@@ -229,10 +246,102 @@ int run(int argc, char* argv[]) {
             return;
         }
         const std::string root { args.value("root") ? absolute(*args.value("root")) : platform::fs::current_directory() };
+        if (args.is_flag_set("daemon")) {
+            // design 6.3: the workspace's daemon serves this connection, started when there is none yet.
+            std::optional<ai::mcp::DaemonInfo> daemon { ai::mcp::find_daemon(root) };
+            if (daemon && !ai::mcp::control(*daemon, "status")) daemon.reset();
+            if (!daemon) {
+                const auto options = session_options(args);
+                auto started = ai::mcp::start_daemon(options.serverExecutable, root, daemon_arguments(args), std::chrono::seconds { 60 });
+                if (started) daemon = *started;
+                else base::log::warning("the workspace daemon did not start ({}); serving this connection alone", started.error().message);
+            }
+            if (daemon) {
+                status = ai::mcp::relay_mcp(*daemon);
+                return;
+            }
+        }
         status = ai::mcp::run_server(ai::mcp::ServerOptions { orchestrator::KernelOptions { session_options(args), root },
                                                               seconds_option(args, "tool-timeout", std::chrono::seconds { 120 }), *model });
     });
     (void)app.subcommand(std::move(mcpCommand));
+
+    cmdline::App daemonCommand { "daemon" };
+    (void)daemonCommand.description("The workspace daemon that MCP connections share: run, start, status, stop");
+    auto daemonActions = std::make_shared<std::map<std::string, std::function<void(const cmdline::ParsedArgs&)>, std::less<>>>();
+    (void)daemonCommand.action([daemonActions, &handled, &status](const cmdline::ParsedArgs& args) {
+        const auto sub = args.subcommand();
+        const auto found = daemonActions->find(args.subcommand_name());
+        handled = true;
+        if (!sub || found == daemonActions->end()) {
+            std::println(std::cerr, "daemon: run, start, status or stop (mcppls daemon --help)");
+            status = 2;
+            return;
+        }
+        found->second(sub->get());
+    });
+    const auto daemonRoot = [](const cmdline::ParsedArgs& args) {
+        return args.value("root") ? absolute(*args.value("root")) : platform::fs::current_directory();
+    };
+    const auto addDaemon = [&](std::string name, std::string_view description, std::function<void(const cmdline::ParsedArgs&)> action) {
+        cmdline::App sub { name };
+        (void)sub.description(description);
+        (void)sub.option("root").takes_value().help("Workspace root (default: the current directory)");
+        if (name == "run" || name == "start") {
+            (void)sub.option("tool-timeout").takes_value().help("Seconds a tool call waits for the engines (default 120)");
+            (void)sub.option("idle-minutes").takes_value().help("Minutes without a connection before the daemon exits (default 30)");
+            add_model_options(sub, "model-source", "The model cxx_review may use besides the agent: gateway or mcp-sampling (default none)");
+        }
+        (void)sub.action(action);
+        (*daemonActions)[name] = std::move(action);
+        (void)daemonCommand.subcommand(std::move(sub));
+    };
+    addDaemon("run", "Serve as the workspace daemon in the foreground", [&, daemonRoot](const cmdline::ParsedArgs& args) {
+        if (!args.value("log-level")) base::log::set_level(base::log::Level::info);
+        apply_log_level(args);
+        const auto model = model_settings(args, "model-source");
+        ai::mcp::DaemonOptions options;
+        options.server = ai::mcp::ServerOptions { orchestrator::KernelOptions { session_options(args), daemonRoot(args) },
+                                                  seconds_option(args, "tool-timeout", std::chrono::seconds { 120 }), model.value_or(ai::model::ModelSettings {}) };
+        options.idle = std::chrono::minutes { std::max<std::int64_t>(1, seconds_option(args, "idle-minutes", std::chrono::seconds { 30 }).count()) };
+        status = ai::mcp::run_daemon(options);
+    });
+    addDaemon("start", "Start the workspace daemon in the background, unless one serves the workspace", [&, daemonRoot](const cmdline::ParsedArgs& args) {
+        const std::string root { daemonRoot(args) };
+        if (auto running = ai::mcp::find_daemon(root); running && ai::mcp::control(*running, "status")) {
+            std::println("{}", nlohmann::json { { "port", running->port }, { "root", running->root }, { "started", false } }.dump());
+            status = 0;
+            return;
+        }
+        auto started = ai::mcp::start_daemon(session_options(args).serverExecutable, root, daemon_arguments(args), std::chrono::seconds { 60 });
+        if (!started) {
+            std::println(std::cerr, "daemon start: {}", started.error().message);
+            status = 2;
+            return;
+        }
+        std::println("{}", nlohmann::json { { "port", started->port }, { "root", started->root }, { "started", true } }.dump());
+        status = 0;
+    });
+    for (const std::string_view method : { "status", "stop" }) {
+        addDaemon(std::string { method }, method == "status" ? "Print the workspace daemon's state" : "Stop the workspace daemon",
+                  [&, daemonRoot, method](const cmdline::ParsedArgs& args) {
+            const auto daemon = ai::mcp::find_daemon(daemonRoot(args));
+            if (!daemon) {
+                std::println(std::cerr, "no daemon serves {}", daemonRoot(args));
+                status = 1;
+                return;
+            }
+            auto answer = ai::mcp::control(*daemon, method);
+            if (!answer) {
+                std::println(std::cerr, "daemon {}: {}", method, answer.error().message);
+                status = 2;
+                return;
+            }
+            std::println("{}", answer->dump(2));
+            status = 0;
+        });
+    }
+    (void)app.subcommand(std::move(daemonCommand));
 
     (void)app.subcommand(query_command(handled, status));
     (void)app.subcommand(diagnostics_command(handled, status));

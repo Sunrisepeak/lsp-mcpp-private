@@ -9,6 +9,7 @@ namespace {
 
 std::atomic<Level> gLevel { Level::info };
 std::mutex gWriteMutex;
+std::function<void(std::string_view)> gSink;
 
 std::string_view name_of(Level level) {
     switch (level) {
@@ -25,6 +26,11 @@ std::string_view name_of(Level level) {
 
 void set_level(Level level) { gLevel.store(level); }
 
+void set_sink(std::function<void(std::string_view line)> sink) {
+    std::lock_guard lock { gWriteMutex };
+    gSink = std::move(sink);
+}
+
 Level level() { return gLevel.load(); }
 
 bool enabled(Level level) {
@@ -34,6 +40,10 @@ bool enabled(Level level) {
 void write(Level level, std::string_view message) {
     const std::string line { std::format("mcppls [{}] {}\n", name_of(level), message) };
     std::lock_guard lock { gWriteMutex };
+    if (gSink) {
+        gSink(line);
+        return;
+    }
     std::size_t done { 0 };
     while (done < line.size()) {
         const auto written = kal_stream_write(kal_stderr(), line.data() + done, line.size() - done);

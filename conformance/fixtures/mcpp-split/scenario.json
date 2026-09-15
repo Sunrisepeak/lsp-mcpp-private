@@ -510,6 +510,39 @@
       ]
     },
     {
+      "id": "D1-daemon-references",
+      "kind": "mcp",
+      "via": "daemon",
+      "tool": "cxx_references",
+      "arguments": {
+        "name": "hello::greet"
+      },
+      "expect": [
+        {
+          "path": "/groups/*/file",
+          "equals": "src/main.cpp"
+        },
+        {
+          "path": "/scope/complete",
+          "equals": true
+        }
+      ]
+    },
+    {
+      "id": "D1-daemon-stop",
+      "kind": "cli",
+      "args": [
+        "daemon",
+        "stop"
+      ],
+      "expect": [
+        {
+          "path": "/ok",
+          "equals": true
+        }
+      ]
+    },
+    {
       "id": "W1",
       "kind": "workspace-unchanged"
     }

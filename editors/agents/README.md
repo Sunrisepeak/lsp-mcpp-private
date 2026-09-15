@@ -107,6 +107,11 @@ or pass it for one session with `copilot --additional-mcp-config @editors/copilo
 **Any other MCP client**: start `mcppls mcp` in the workspace root (or pass `--root DIR`).
 `--payload`, `--clangd`, `--kit` and `--engine` work as for `mcppls serve`.
 
+**Sharing one warm session**: with `mcppls mcp --daemon`, every connection to a workspace — several agents,
+or an agent that restarts its MCP servers — reaches one workspace daemon whose engines have already loaded the
+project and built its modules; the first connection starts it. `mcppls daemon status` and `mcppls daemon stop`
+manage it, and it exits by itself after 30 idle minutes.
+
 A model for `cxx_review` beyond the agent itself is enabled only where the server is started
 (design §11): `mcppls mcp --model-source gateway --model-gateway PATH --model-name NAME`
 (the gateway is `model-gateway/`), or `--model-source mcp-sampling` for a client that supports
