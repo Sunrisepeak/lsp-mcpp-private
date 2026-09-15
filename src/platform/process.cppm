@@ -16,6 +16,7 @@ struct SpawnOptions {
     bool pipeOutput { true };                              // false: the child writes to this process's stderr,
                                                            // because this process's stdout carries the protocol
     bool pipeError { false };                              // false: the child writes to this process's stderr
+    bool ownUnit { false };                                // the child starts a unit that kill() ends with everything in it
 };
 
 class Process {
@@ -40,6 +41,9 @@ public:
     // nullopt when the bound expired and the child is still running.
     base::Result<std::optional<int>> wait_for(std::chrono::milliseconds timeout);
     void terminate();
+    // Ends the child without asking: a child that does not end when asked (clangd stuck building a
+    // module does not) is killed, with its unit when it has one.
+    void kill();
 
 private:
     struct State;

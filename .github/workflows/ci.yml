@@ -396,6 +396,16 @@ jobs:
             exit 1
           fi
 
+      # The review of changes (overall design 7.4, 10.3, work item RV5): every bench/review fixture's change
+      # reviewed by the payload's server; a missing finding or one a fixture rules out fails the job, and
+      # the precision and recall of each rule are printed.
+      - name: Review fixtures
+        run: |
+          set -euo pipefail
+          exe=''; python=python3
+          if [ "$RUNNER_OS" = Windows ]; then exe='.exe'; python=python; fi
+          "$python" bench/review.py --server "payload/bin/mcppls$exe" --payload payload --report "$RUNNER_TEMP/review-${{ matrix.platform }}.json"
+
       # Startup timing (usable plan W7): the timing fixture cold, then warm with the same
       # workspace and cache. A warm start must reuse the std module the cold one built
       # (SC4). Only severe regressions fail here; nightly.yml records the medians. The

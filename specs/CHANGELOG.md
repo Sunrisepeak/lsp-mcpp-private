@@ -21,7 +21,9 @@ First draft (overall design 7.1, 7.2, 7.6, 8.1):
 - Result conventions: locations counted from 1 in Unicode scalar values with their line's text, the snapshot a result describes, USR symbol identifiers, deterministic order, limits and failures.
 - Queries: symbols by name, identifier or position; references and callers searched in a symbol's module and everything importing it, re-exports included; callees; file outlines; modules and the module graph; fresh diagnostics.
 - The build context of a file, and the data of findings (rule, evidence, origin, fix, fingerprint) for the review of changes of a later version.
-- Bindings: MCP tools over standard input and output, and `mcppls query` and `mcppls diagnostics` with exit statuses.
+- Verification after an edit: changed files and the units importing them, built again; snippets checked in place without writing them.
+- The review of a change: collection from git, semantic diff, impact, six deterministic rules with their evidence, and the LSP and SARIF 2.1.0 forms of findings.
+- Bindings: MCP tools over standard input and output, and `mcppls query`, `diagnostics`, `verify`, `impact` and `review` with exit statuses.
 
 ## S1 — C++ Build Database: IDE Profile
 

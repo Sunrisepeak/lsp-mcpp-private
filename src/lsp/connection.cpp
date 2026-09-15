@@ -87,6 +87,9 @@ void Connection::stop(std::chrono::milliseconds grace) {
     auto waited = process_.wait_for(grace);
     if (!waited || !waited->has_value()) {
         process_.terminate();
+        // A peer can ignore being asked; one stuck in a module build did, and blocked this wait for good.
+        auto asked = process_.wait_for(std::chrono::seconds { 2 });
+        if (!asked || !asked->has_value()) process_.kill();
         (void)process_.wait();
     }
     if (reader_.joinable()) reader_.join();

@@ -162,3 +162,24 @@ reviewed-not-run:
   `claude plugin install clangd-lsp@claude-plugins-official` at user scope, and on `clangd` being on `PATH`.
 - Both agent CLIs' exact flags may drift; re-check `claude -p --help` / the headless docs and `copilot
   --help` before a nightly run.
+
+## Review fixtures
+
+`bench/review/<id>/` measures the review of changes (design §7.4, §10.3, work item RV5): whether `mcppls review`
+reports what a change breaks, with evidence, and nothing on a clean change. No agent and no model are involved;
+CI runs every fixture on every host.
+
+```bash
+python3 bench/review.py --server target/.../bin/mcppls --payload payload [--fixture ID] [--report review.json]
+```
+
+| File | Contents |
+|---|---|
+| `review.json` | `id`, `title`, `category`, `project` (a conformance fixture the change starts from), `remove`, `must`, `must-not` |
+| `change/` | Files written over the project, as they are after the change |
+
+The runner commits the project to a fresh git repository, applies the change, runs `mcppls review --format json`,
+and checks that every `must` entry (`rule`, and optionally `file`, `line`, `evidence-file`) is matched by a finding,
+that no finding matches a `must-not` entry, and that the review left every file as it was. It prints the precision
+and recall of each rule over all fixtures. Categories: `interface-break`, `missed-importer`, `partition-misuse`,
+`build-description`, `build-error`, and `clean` changes that measure false positives.

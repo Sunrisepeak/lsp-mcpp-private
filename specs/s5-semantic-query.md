@@ -10,7 +10,7 @@
 
 ## Abstract
 
-This specification defines the questions a coding agent, a script or an editor asks a C++ language server about a workspace, and the shape of the answers: symbols found by name, position or identifier, their references, callers and callees, file outlines, modules and the module graph, a file's build context, and diagnostics computed for the content files have now. Results name locations the way a reader counts them, say which state of the workspace they describe, and say when they are incomplete. Section 6 binds the queries to the Model Context Protocol (MCP), section 7 to a command line. A later version adds the review of changes (findings, evidence and their LSP and SARIF forms); section 5 defines the finding data it will use.
+This specification defines the questions a coding agent, a script or an editor asks a C++ language server about a workspace, and the shape of the answers: symbols found by name, position or identifier, their references, callers and callees, file outlines, modules and the module graph, a file's build context, and diagnostics computed for the content files have now. Results name locations the way a reader counts them, say which state of the workspace they describe, and say when they are incomplete. Section 3.7 verifies an edit, and section 5 reviews a change: findings of deterministic rules, each with the evidence it rests on, in S5, LSP and SARIF forms. Section 6 binds all of it to the Model Context Protocol (MCP), section 7 to a command line.
 
 ## 1. Conventions
 
@@ -275,9 +275,11 @@ Input: a budget in tokens, four characters counting as one.
 - When the budget does not hold every declaration with its documentation, documentation **MUST** be left out before any declaration is. <a id="S5-4.2-2"></a><sup>S5-4.2-2</sup>
 - Without a core engine, or for a name the core engine does not know, a symbol lookup by name (3.1) **MUST** find the declarations module interfaces export under that name. <a id="S5-4.2-3"></a><sup>S5-4.2-3</sup>
 
-## 5. Findings
+## 5. Review
 
-The review of changes (a later version) reports findings. Their data is defined here so that every producer of findings, rules and models alike, agrees on it.
+### 5.1 Findings
+
+A review reports findings. Every producer of findings, rules and models alike, uses this data.
 
 ```ts
 interface Evidence { id: string; kind: "reference" | "diff" | "diagnostic" | "module-graph" | "import" | "test"; location: Location; detail?: string }
@@ -296,7 +298,82 @@ interface Finding {
 }
 ```
 
-- A fingerprint **MUST** be computed from the rule, the file and the whitespace-normalized text of the location and of the evidence, so it does not change when lines move or are reindented. <a id="S5-5-1"></a><sup>S5-5-1</sup>
+- A fingerprint **MUST** be computed from the rule, the file and the whitespace-normalized text of the location and of the evidence, so it does not change when lines move or are reindented. <a id="S5-5.1-1"></a><sup>S5-5.1-1</sup>
+- Every finding **MUST** carry at least one evidence item. <a id="S5-5.1-2"></a><sup>S5-5.1-2</sup>
+
+### 5.2 Reviewing a change
+
+Input: the revision the change is against (`base`, default `HEAD`; the working tree, untracked files included, is the change), or `files` to take against it; a `budget` of units. A review runs git, and so only in a trusted workspace.
+
+Steps: collect the changed files with their content before and after; diff each C++ unit semantically (module declaration, imports, exported declarations, read by the server's own engine from both texts); find the impact (the search scope of 3.2 of every module whose interface changed, the uses there of every export that went away or changed, the sets and the tests of kind `test` involved); have the core engine build the changed units and the search scope, within the budget; run the rules.
+
+```ts
+interface UnitDiff {
+  file: string;
+  module?: { before: string; after: string };                    // what the unit provides, "m" or "m:p"
+  role?: string | { before: string; after: string };
+  imports: { change: "added" | "removed"; module: string; exported: boolean; location: Location }[];
+  exports: { change: "added" | "removed" | "changed"; qualifiedName: string; kind: string; before?: string; after?: string;
+             baseLocation?: Location; headLocation?: Location }[];
+  interfaceChanged: boolean;
+}
+interface Impact {
+  modules: string[];                                              // whose interface changed
+  files: string[];                                                // their search scope
+  unsearched: string[];
+  sets: string[];
+  tests: { set: string; files: string[]; changed: boolean }[];
+  names: { qualifiedName: string; module: string; semantic: boolean; uses: Location[] }[];
+}
+interface Review {
+  snapshot: Snapshot;
+  base: string;
+  files: { path: string; change: "added" | "modified" | "removed" | "renamed" | "untracked";
+           hunks: { baseStart: number; baseCount: number; headStart: number; headCount: number }[] }[];
+  diffs: UnitDiff[];
+  impact: Impact;
+  findings: Finding[];
+  counts: { error: number; warning: number; information: number; hint: number };
+  unbuilt: string[];
+  complete: boolean;
+}
+```
+
+| Rule | Severity | Reported when |
+|---|---|---|
+| `module/export-removed-in-use` | error | an export went away, or a module is no longer provided, and the search scope still uses it |
+| `module/export-signature-changed` | warning | an export's declaration changed and the search scope uses it |
+| `module/partition-misuse` | error | the change exports an implementation partition, or imports a partition as `import m:p;` |
+| `module/import-unresolved` | error | the change imports a module no unit and no standard library provides, or several units do |
+| `build/diagnostic-introduced` | the diagnostic's | the core engine reports an error or a warning on a line the change added or altered |
+| `test/exported-change-untested` | information | a module's exports changed and no unit of a test set changed |
+
+- A review **MUST** be refused with `untrusted` in a workspace that is not trusted. <a id="S5-5.2-1"></a><sup>S5-5.2-1</sup>
+- A review **MUST** leave every file of the workspace and of its repository as it was. <a id="S5-5.2-2"></a><sup>S5-5.2-2</sup>
+- The semantic diff **MUST** report a removed and an added export of one qualified name and kind as one changed export. <a id="S5-5.2-3"></a><sup>S5-5.2-3</sup>
+- Uses of an export that went away **MUST** be looked for in the text of the search scope as it is now, identifiers in code only. <a id="S5-5.2-4"></a><sup>S5-5.2-4</sup>
+- `module/export-removed-in-use` **MUST** carry the uses it found as `reference` evidence, through re-exporting modules too. <a id="S5-5.2-5"></a><sup>S5-5.2-5</sup>
+- `module/export-signature-changed` **MUST** carry the declaration before and after as `diff` evidence. <a id="S5-5.2-6"></a><sup>S5-5.2-6</sup>
+- `module/partition-misuse` **MUST** be reported for both of its forms. <a id="S5-5.2-7"></a><sup>S5-5.2-7</sup>
+- `module/import-unresolved` **MUST** be limited to imports the change added or altered. <a id="S5-5.2-8"></a><sup>S5-5.2-8</sup>
+- `build/diagnostic-introduced` **MUST** be limited to lines the change added or altered. <a id="S5-5.2-9"></a><sup>S5-5.2-9</sup>
+- A compiler diagnostic on the line of another rule's finding **MUST** be that finding's `diagnostic` evidence rather than a finding of its own. <a id="S5-5.2-10"></a><sup>S5-5.2-10</sup>
+- `test/exported-change-untested` **MUST NOT** be reported when a unit of a test set that uses the module is part of the change. <a id="S5-5.2-11"></a><sup>S5-5.2-11</sup>
+- `complete` **MUST** be false when units of the search scope were not searched or not built. <a id="S5-5.2-12"></a><sup>S5-5.2-12</sup>
+
+### 5.3 Forms
+
+| Finding | LSP Diagnostic | SARIF 2.1.0 result |
+|---|---|---|
+| `rule` | `code` | `ruleId`, with the rule in `tool.driver.rules` |
+| `severity` | `severity` | `level`: `error`, `warning`, or `note` for information and hint |
+| `location` | `range` | `locations`, relative to `%SRCROOT%` |
+| `evidence` | `relatedInformation` | `relatedLocations` |
+| `fingerprint` | `data.fingerprint` | `partialFingerprints["mcppls/v1"]` |
+| `origin`, `model` | `source`: `mcppls review`, or `mcppls review · <model>` | `properties` |
+
+- A SARIF log **MUST** declare `columnKind: "unicodeCodePoints"`, since S5 columns count Unicode scalar values. <a id="S5-5.3-1"></a><sup>S5-5.3-1</sup>
+- An LSP diagnostic of a finding **MUST** give its range in UTF-16 code units, from the location's line text. <a id="S5-5.3-2"></a><sup>S5-5.3-2</sup>
 
 ## 6. MCP binding
 
@@ -311,6 +388,8 @@ A server runs as an MCP server over standard input and output (`mcppls mcp`): on
 | `cxx_build_context` | 4.1 |
 | `cxx_diagnostics` | 3.6 |
 | `cxx_verify` | 3.7 |
+| `cxx_impact` | 5.2, its first steps: `files`, `diffs` and `impact` |
+| `cxx_review` | 5.2; `format: "sarif"` gives the SARIF log, `"markdown"` a report |
 
 - Every tool **MUST** be annotated `readOnlyHint: true`, and leave every file of the workspace as it was. <a id="S5-6-1"></a><sup>S5-6-1</sup>
 - A tool result **MUST** carry its S5 result as JSON text, and also as `structuredContent` when the negotiated protocol version is 2025-06-18 or later. <a id="S5-6-2"></a><sup>S5-6-2</sup>
@@ -330,8 +409,10 @@ A server runs as an MCP server over standard input and output (`mcppls mcp`): on
 | `mcppls diagnostics <file>... [--no-fresh]` | 3.6 |
 | `mcppls verify [<file>...] [--changed] [--base REV] [--budget N]`, `mcppls verify --snippet FILE:LINE --code TEXT [--replace-lines N]` | 3.7 |
 | `mcppls query context <file>` | 4.1 |
+| `mcppls impact [<file>...] [--base REV] [--budget N]` | 5.2, its first steps |
+| `mcppls review [<file>...] [--base REV] [--budget N] [--format json\|text\|sarif\|markdown] [--output FILE]` | 5.2, 5.3 |
 
 Every command takes `--root`, `--timeout` and `--format json|text`.
 
 - With `--format json` (the default) a command **MUST** print exactly one JSON document: the S5 result, or `{"error": Failure}`. <a id="S5-7-1"></a><sup>S5-7-1</sup>
-- A command **MUST** exit with 0 when it has a result, 1 when the query found nothing or diagnostics include an error, and 2 when the command itself failed, diagnostics that could not be completed in time included. <a id="S5-7-2"></a><sup>S5-7-2</sup>
+- A command **MUST** exit with 0 when it has a result, 1 when the query found nothing, diagnostics include an error or a review has a finding of severity error, and 2 when the command itself failed, diagnostics that could not be completed in time included. <a id="S5-7-2"></a><sup>S5-7-2</sup>

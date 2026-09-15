@@ -21,6 +21,7 @@ namespace {
 // which a module does not carry; the layout is frozen by the specification.
 constexpr kal_uintptr SPAWN_BOUND_LIFETIME { kal_uintptr { 1 } << 0 };
 constexpr kal_uintptr PROP_BOUND_LIFETIME { kal_uintptr { 1 } << 5 };
+constexpr kal_uintptr PROP_JOB { kal_uintptr { 1 } << 6 };
 
 std::string describe(int code) {
     switch (code) {
@@ -54,6 +55,8 @@ struct Process::State {
     bool errorOpen { false };
     bool exited { false };
     int exitCode { -1 };
+    kal_job job {};
+    bool hasJob { false };
     std::mutex writeMutex;
     std::mutex waitMutex;
 };
@@ -158,7 +161,10 @@ base::Result<Process> Process::spawn(const SpawnOptions& options) {
     }
 
     const kal_uintptr flags { (kal_process_props() & PROP_BOUND_LIFETIME) != 0 ? SPAWN_BOUND_LIFETIME : kal_uintptr { 0 } };
-    const kal_spawn how { program->directory, workDir, nullptr, nullptr, 0, flags };
+    kal_spawn how { program->directory, workDir, nullptr, nullptr, 0, flags };
+    kal_job job {};
+    const bool unit { options.ownUnit && (kal_process_props() & PROP_JOB) != 0 };
+    if (unit) how.job = &job;
     // A zero stream inherits the parent's; kal_stdin() is zero on openkal-linux, which is the same act.
     const kal_spawn_streams streams {
         options.pipeInput ? childIn : kal_stream {},
@@ -180,6 +186,10 @@ base::Result<Process> Process::spawn(const SpawnOptions& options) {
         return base::fail("spawn-failed", std::format("cannot start {}: {}", options.program, describe(result)));
     }
 
+    if (unit) {
+        state->job = job;
+        state->hasJob = true;
+    }
     Process process;
     process.state_ = std::move(state);
     return process;
@@ -265,6 +275,13 @@ void Process::terminate() {
     if (!state_) return;
     std::lock_guard lock { state_->waitMutex };
     if (!state_->exited) kal_process_terminate(state_->handle);
+}
+
+void Process::kill() {
+    if (!state_) return;
+    std::lock_guard lock { state_->waitMutex };
+    if (state_->exited) return;
+    if (!state_->hasJob || kal_process_job_terminate(state_->job) != kal_ok) kal_process_terminate(state_->handle);
 }
 
 base::Result<RunResult> run(SpawnOptions options, std::chrono::milliseconds timeout) {

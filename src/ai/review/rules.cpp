@@ -239,6 +239,22 @@ std::vector<spec::Finding> run_rules(query::View& view, const RuleInput& input) 
     }
 
     auto& findings = builder.findings;
+    // A compiler diagnostic on the line of another rule's finding is that finding's evidence, not a finding of its own.
+    for (auto diagnostic = findings.begin(); diagnostic != findings.end();) {
+        if (diagnostic->rule != "build/diagnostic-introduced") {
+            ++diagnostic;
+            continue;
+        }
+        const auto owner = std::ranges::find_if(findings, [&](const spec::Finding& other) {
+            return other.rule != "build/diagnostic-introduced" && other.location.file == diagnostic->location.file && other.location.line == diagnostic->location.line;
+        });
+        if (owner == findings.end()) {
+            ++diagnostic;
+            continue;
+        }
+        Builder::evidence(*owner, "diagnostic", diagnostic->location, diagnostic->message);
+        diagnostic = findings.erase(diagnostic);
+    }
     std::ranges::sort(findings, {}, [](const spec::Finding& f) { return std::tuple { f.location.file, f.location.line, f.location.column, f.rule }; });
     for (std::size_t i { 0 }; i < findings.size(); ++i) {
         findings[i].id = std::format("F{}", i + 1);

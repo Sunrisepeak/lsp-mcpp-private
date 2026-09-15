@@ -62,6 +62,7 @@ base::Result<void> ClangdProcess::start(const ProcessConfig& config, MessageHand
     options.program = config.executable;
     options.arguments = clangd_arguments(config);
     options.workDirectory = config.workDirectory;
+    options.ownUnit = true;
     auto connection = lsp::Connection::start(std::move(options), std::move(onMessage), std::move(onClosed), std::move(onLog));
     if (!connection) return std::unexpected { connection.error() };
     connection_ = std::move(*connection);

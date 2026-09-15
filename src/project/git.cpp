@@ -17,7 +17,9 @@ base::Result<platform::RunResult> run_git(std::string_view directory, std::vecto
     if (!git) return base::fail("git-not-found", "git is not on PATH");
     platform::SpawnOptions options;
     options.program = *git;
-    options.arguments = std::move(arguments);
+    // Reading must not write: `git status` otherwise refreshes the index file of the repository.
+    options.arguments = { "--no-optional-locks" };
+    std::ranges::move(arguments, std::back_inserter(options.arguments));
     options.workDirectory = std::string { directory };
     auto result = platform::run(std::move(options), std::chrono::seconds { 60 });
     if (!result) return std::unexpected { result.error() };

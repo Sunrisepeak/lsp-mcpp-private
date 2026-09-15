@@ -2,6 +2,7 @@ module mcppls.ai.review.pipeline;
 
 import std;
 import nlohmann.json;
+import mcppls.base.log;
 import mcppls.base.path;
 import mcppls.base.uri;
 import mcppls.platform.fs;
@@ -48,11 +49,18 @@ void announce(query::View& view, const ChangeSet& changes, Clock::time_point dea
 } // namespace
 
 query::Outcome<ReviewResult> analyze_change(query::View& view, const ReviewRequest& request, Clock::time_point deadline) {
+    const auto started = Clock::now();
+    const auto stage = [&](std::string_view what) {
+        base::log::info("review: {} after {} ms", what, std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - started).count());
+    };
     view.refresh();
     (void)view.settle(deadline);
+    stage("settled");
     auto changes = collect_changes(view, request.changes);
     if (!changes) return std::unexpected { changes.error() };
+    stage("changes collected");
     announce(view, *changes, deadline);
+    stage("changes announced");
     ReviewResult result;
     // Only C++ sources have a semantic diff; other files (the build description) stay in the change.
     std::vector<FileChange> sources;
@@ -66,6 +74,7 @@ query::Outcome<ReviewResult> analyze_change(query::View& view, const ReviewReque
     std::ranges::move(others, std::back_inserter(changes->files));
     result.changes = std::move(*changes);
     result.impact = analyze_impact(view, result.changes, result.diffs, request.budget, deadline);
+    stage("impact analyzed");
     result.snapshot = view.snapshot();
     return result;
 }
@@ -97,8 +106,10 @@ query::Outcome<ReviewResult> review_change(query::View& view, const ReviewReques
             if (!query::diagnostics_fresh(view, path).first) result.unbuilt.push_back(view.display(path));
             result.diagnostics[view.display(path)] = query::published_diagnostics(view, path);
         }
+        base::log::info("review: {} unit(s) built, {} not", units.size(), result.unbuilt.size());
     }
     result.findings = run_rules(view, RuleInput { result.changes, result.diffs, result.impact, result.diagnostics });
+    base::log::info("review: {} finding(s)", result.findings.size());
     for (const std::string_view severity : { "error", "warning", "information", "hint" }) result.counts[std::string { severity }] = 0;
     for (const auto& finding : result.findings) ++result.counts[std::string { spec::to_string(finding.severity) }];
     result.snapshot = view.snapshot();

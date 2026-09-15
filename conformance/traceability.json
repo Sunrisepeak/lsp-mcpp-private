@@ -1,5 +1,5 @@
 {
- "$comment": "Rule identifiers of specifications S1 to S5 mapped to evidence (usable plan W10.2), checked by specs/tools/validate.py. Evidence: validate (a passing check of validate.py, by label prefix), test (tests/<file>.cpp: <name>), check (<fixture>/<check id>), script (a file and a line that enforces the rule), manual (why no automated evidence can exist).",
+ "$comment": "Rule identifiers of specifications S1 to S5 mapped to evidence (usable plan W10.2), checked by specs/tools/validate.py. Evidence: validate (a passing check of validate.py, by label prefix), test (tests/<file>.cpp: <name>), check (<fixture>/<check id>), review (a review fixture under bench/review), script (a file and a line that enforces the rule), manual (why no automated evidence can exist).",
  "$pending": {},
  "S1-3-1": [
   {
@@ -1242,11 +1242,6 @@
    "contains": "context.issues.push_back(BuildIssue { \"not-in-model\","
   }
  ],
- "S5-5-1": [
-  {
-   "test": "tests/test_query.cpp: a finding's fingerprint survives lines moving and reindenting"
-  }
- ],
  "S5-6-1": [
   {
    "check": "mcpp-split/Q7-tools"
@@ -1353,6 +1348,117 @@
   {
    "script": "src/ai/verify/changes.cpp",
    "contains": "if (!workspace.trusted()) return std::unexpected { query::Failure { \"untrusted\", \"the workspace is not trusted, so git is not run\", nullptr } };"
+  }
+ ],
+ "S5-5.1-1": [
+  {
+   "test": "tests/test_query.cpp: a finding's fingerprint survives lines moving and reindenting"
+  }
+ ],
+ "S5-5.1-2": [
+  {
+   "script": "src/ai/review/rules.cpp",
+   "contains": "Builder::evidence(finding, \"diff\", *change.baseLocation, \"-\" + change.before);"
+  },
+  {
+   "review": "removed-export-split"
+  }
+ ],
+ "S5-5.2-1": [
+  {
+   "script": "src/ai/review/changes.cpp",
+   "contains": "if (!workspace.trusted()) return std::unexpected { query::Failure { \"untrusted\", \"the workspace is not trusted, so git is not run\", nullptr } };"
+  }
+ ],
+ "S5-5.2-2": [
+  {
+   "script": "bench/review.py",
+   "contains": "problems.append(\"the review changed the workspace\")"
+  }
+ ],
+ "S5-5.2-3": [
+  {
+   "test": "tests/test_review.cpp: a semantic diff compares exports, imports and the module a unit provides"
+  }
+ ],
+ "S5-5.2-4": [
+  {
+   "test": "tests/test_review.cpp: uses of a name are identifiers in code, qualified or in its namespace"
+  }
+ ],
+ "S5-5.2-5": [
+  {
+   "review": "removed-export-split"
+  },
+  {
+   "review": "removed-export-reexported-all-cppm"
+  },
+  {
+   "review": "module-renamed-all-cppm"
+  }
+ ],
+ "S5-5.2-6": [
+  {
+   "review": "signature-changed-all-cppm"
+  },
+  {
+   "script": "src/ai/review/rules.cpp",
+   "contains": "Builder::evidence(finding, \"diff\", *change.headLocation, \"+\" + change.after);"
+  }
+ ],
+ "S5-5.2-7": [
+  {
+   "review": "partition-implementation-exported-split"
+  },
+  {
+   "review": "partition-imported-outside-split"
+  }
+ ],
+ "S5-5.2-8": [
+  {
+   "review": "unresolved-import-all-cppm"
+  },
+  {
+   "script": "src/ai/review/rules.cpp",
+   "contains": "if (import.isHeaderUnit || !file.changed_head_line(import.nameRange.start.line + 1)) continue;"
+  }
+ ],
+ "S5-5.2-9": [
+  {
+   "review": "introduced-diagnostic-split"
+  },
+  {
+   "review": "clean-implementation-change-split"
+  }
+ ],
+ "S5-5.2-10": [
+  {
+   "review": "partition-implementation-exported-split"
+  },
+  {
+   "script": "src/ai/review/rules.cpp",
+   "contains": "Builder::evidence(*owner, \"diagnostic\", diagnostic->location, diagnostic->message);"
+  }
+ ],
+ "S5-5.2-11": [
+  {
+   "review": "signature-changed-callers-updated-all-cppm"
+  }
+ ],
+ "S5-5.2-12": [
+  {
+   "script": "src/ai/review/pipeline.cpp",
+   "contains": "value[\"complete\"] = result.unbuilt.empty() && result.impact.unsearched.empty();"
+  }
+ ],
+ "S5-5.3-1": [
+  {
+   "test": "tests/test_review.cpp: findings become SARIF results and LSP diagnostics"
+  }
+ ],
+ "S5-5.3-2": [
+  {
+   "test": "tests/test_review.cpp: findings become SARIF results and LSP diagnostics"
   }
  ]
 }
