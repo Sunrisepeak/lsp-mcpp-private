@@ -27,6 +27,11 @@ main = "src/tools/lspgen.cpp"
 kind = "bin"
 main = "src/tools/mockmcpp.cpp"
 
+# Stands in for the mcppls-model gateway in tests: model-gateway/PROTOCOL.md over stdin/stdout.
+[targets.mcppls-mock-model]
+kind = "bin"
+main = "src/tools/mockmodel.cpp"
+
 [toolchain]
 default = "llvm@22.1.8"
 
