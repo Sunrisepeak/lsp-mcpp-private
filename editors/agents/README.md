@@ -1,7 +1,7 @@
 # mcppls with coding agents
 
-mcppls integrates with coding agents through standard protocols: LSP today, for
-editor-style navigation and post-edit diagnostics; MCP once the query layer lands, for
+mcppls integrates with coding agents through standard protocols: LSP, for
+editor-style navigation and post-edit diagnostics, and MCP, for
 structured, symbol-oriented queries. This page covers what is available now and what
 to expect next. Background: `.agents/docs/2026-09-15-mcppls-overall-design.md` §8.2,
 §10.2, work items A1/A2.
@@ -74,10 +74,53 @@ for definitions, references, hover, rename, document symbols, workspace symbols,
 implementations and call hierarchy — the same eight operations it uses any other language
 server for.
 
-## Any MCP client
+## MCP: the agent tools
 
-`mcppls mcp` is planned (design §7.6, roadmap item A6) but **not available yet** — it
-arrives with the agent query layer (`ai/query`, items A4/A5). Once it exists, any MCP
-client will be able to reach mcppls the way it reaches other MCP servers, with no
-project-specific LSP registration needed. There is nothing to configure for this today;
-this section is a placeholder until A6 lands.
+`mcppls mcp` serves the Model Context Protocol on standard input and output (S5, section 6).
+It answers what an agent otherwise pieces together with grep and builds, from the
+compiler's own view of the workspace:
+
+| Tool | What it answers |
+|---|---|
+| `cxx_symbol` | Symbols by name, id or position: declaration, definition, signature, documentation, module |
+| `cxx_references` | References, callers or callees, searched in the symbol's module and everything importing it |
+| `cxx_outline` | A file's declarations |
+| `cxx_module` | A module's units, partitions, imports, importers and interface; the module graph |
+| `cxx_build_context` | How a file is built: sets, role, compiler, standard library, standard, macros |
+| `cxx_diagnostics` | Diagnostics of files as they are on disk now |
+| `cxx_verify` | An edit checked: changed files and their importers, a snippet before it is written, or several toolchains |
+| `cxx_impact` | What a change does to module interfaces and what it can break |
+| `cxx_review` | A review of a change: rule findings with evidence; `model: "agent"` adds the context for you to judge |
+
+Every tool is read-only. Lines and columns start at 1.
+
+**Claude Code**: the `mcppls-lsp` plugin above also registers the MCP server (`.mcp.json`).
+Without the plugin, add it to a project's `.mcp.json`:
+
+```json
+{ "mcpServers": { "mcppls": { "command": "mcppls", "args": ["mcp"] } } }
+```
+
+**GitHub Copilot CLI**: merge `../copilot-cli/mcp-config.json` into `~/.copilot/mcp-config.json`,
+or pass it for one session with `copilot --additional-mcp-config @editors/copilot-cli/mcp-config.json`.
+
+**Any other MCP client**: start `mcppls mcp` in the workspace root (or pass `--root DIR`).
+`--payload`, `--clangd`, `--kit` and `--engine` work as for `mcppls serve`.
+
+A model for `cxx_review` beyond the agent itself is enabled only where the server is started
+(design §11): `mcppls mcp --model-source gateway --model-gateway PATH --model-name NAME`
+(the gateway is `model-gateway/`), or `--model-source mcp-sampling` for a client that supports
+MCP sampling.
+
+## Command line and hooks
+
+The same queries are commands, for scripts, CI and agent hooks; each prints S5 JSON
+(`--format text` for people) and exits 0, 1 (nothing found, errors, error findings) or 2:
+
+```
+mcppls query symbol hello::greet
+mcppls query refs hello::greet
+mcppls diagnostics src/main.cpp
+mcppls verify --changed                  # after an edit: the changed files and their importers
+mcppls review --base origin/main --format sarif --output review.sarif
+```

@@ -116,7 +116,7 @@ much C/C++ tooling the agent gets beyond its default file search and shell):
 | `grep` | `claude -p --bare` (no plugins, no MCP, no CLAUDE.md — file/grep/bash tools only) | no `.github/lsp.json` written |
 | `clangd-lsp` | a normal (non-`--bare`) session; **assumes** `clangd-lsp@claude-plugins-official` is already installed at user scope and `clangd` is on `PATH` — this repository's tooling does not install it | `.github/lsp.json` registering plain `clangd --background-index` |
 | `mcppls-lsp` | `claude -p --bare --plugin-dir editors/claude-code/mcppls-lsp` (self-contained; needs `mcppls` on `PATH`, see `editors/agents/README.md`) | `editors/copilot-cli/lsp.json`'s `mcppls` entry, copied to `.github/lsp.json` |
-| `mcppls-mcp` | not available yet (`mcppls mcp` is design item A6) — `run` prints that and writes an empty result file instead of invoking anything | same |
+| `mcppls-mcp` | `claude -p --bare --mcp-config <mcppls mcp> --strict-mcp-config --allowedTools mcp__mcppls` — the MCP tools alone, no LSP plugin (**unverified**: never run by this repository) | `--additional-mcp-config` with `editors/copilot-cli/mcp-config.json`'s server, no `.github/lsp.json` (**unverified** likewise) |
 
 After the agent exits, `run` runs the task's `check` commands in the (agent-modified) project copy and
 records one entry per run in `--out`:

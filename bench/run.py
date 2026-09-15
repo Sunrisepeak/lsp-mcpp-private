@@ -401,6 +401,12 @@ def _build_claude_code_command(task: Task, project_copy: Path, arm: str) -> list
     elif arm == "mcppls-lsp":
         plugin_dir = (BENCH_DIR.parent / "editors" / "claude-code" / "mcppls-lsp").resolve()
         cmd += ["--bare", "--plugin-dir", str(plugin_dir)]
+    elif arm == "mcppls-mcp":
+        # The MCP tools alone (`mcppls mcp`, S5 section 6), without the LSP plugin. UNVERIFIED:
+        # never run here, since a run spends credits — see bench/README.md.
+        config = project_copy.parent / "mcp-config.json"
+        config.write_text(json.dumps({"mcpServers": {"mcppls": {"command": "mcppls", "args": ["mcp"]}}}, indent=2))
+        cmd += ["--bare", "--mcp-config", str(config), "--strict-mcp-config", "--allowedTools", "mcp__mcppls"]
     elif arm == "clangd-lsp":
         # No local copy of the official clangd-lsp plugin to point --bare
         # --plugin-dir at, so this arm runs a normal (non-bare) session and
@@ -431,6 +437,11 @@ _COPILOT_CLI_SERVER_CONFIGS = {
 
 
 def _build_copilot_cli_command(task: Task, project_copy: Path, arm: str) -> list:
+    if arm == "mcppls-mcp":
+        # UNVERIFIED like the Claude Code arm: the MCP server for one session, and no LSP registration.
+        config = project_copy.parent / "mcp-config.json"
+        config.write_text(json.dumps({"mcpServers": {"mcppls": {"type": "local", "command": "mcppls", "args": ["mcp"], "tools": ["*"]}}}, indent=2))
+        return ["copilot", "-p", task.prompt, "--allow-all-tools", "--additional-mcp-config", f"@{config}"]
     if arm == "grep":
         pass  # no .github/lsp.json written for this arm: no LSP tooling at all
     elif arm in _COPILOT_CLI_SERVER_CONFIGS:
@@ -507,13 +518,6 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
         return 2
     # --agent/--arm are already restricted to VALID_AGENTS/VALID_ARMS by argparse `choices`.
-    if args.arm == "mcppls-mcp":
-        print("mcppls mcp: not available yet (design item A6) — skipping this arm")
-        Path(args.out).write_text(json.dumps({
-            "agent": args.agent, "arm": args.arm, "skipped": "mcppls mcp is not available yet", "runs": [],
-        }, indent=2))
-        return 0
-
     tasks_dir = Path(args.tasks) if args.tasks else DEFAULT_TASKS_DIR
     try:
         tasks = discover_tasks(tasks_dir, args.only)
