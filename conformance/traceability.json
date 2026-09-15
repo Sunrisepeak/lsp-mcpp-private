@@ -1294,5 +1294,24 @@
    "script": "src/cli/query.cpp",
    "contains": "return result.error().code == \"not-found\" || result.error().code == \"ambiguous\" ? EXIT_NOTHING : EXIT_FAILED;"
   }
+ ],
+ "S5-4.2-1": [
+  {
+   "check": "engine-none/Q4-interface"
+  },
+  {
+   "check": "mcpp-all-cppm/Q4-module-reexports"
+  }
+ ],
+ "S5-4.2-2": [
+  {
+   "script": "src/ai/context/interface.cpp",
+   "contains": "for (auto& declaration : all) declaration.documentation.clear();"
+  }
+ ],
+ "S5-4.2-3": [
+  {
+   "check": "engine-none/Q1-exported-symbol"
+  }
  ]
 }

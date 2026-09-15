@@ -13,6 +13,8 @@ import mcppls.ai.query.view;
 import mcppls.ai.query.symbols;
 import mcppls.ai.query.files;
 import mcppls.ai.query.modules;
+import mcppls.ai.context.build;
+import mcppls.ai.context.interface;
 import mcppls.cli.options;
 
 namespace mcppls::cli {
@@ -252,7 +254,7 @@ cmdline::App query_command(bool& handled, int& status) {
         handled = true;
         const auto target = symbol_target(args);
         status = run_in_session(args, target.file, [&](query::View& view, Clock::time_point deadline) -> query::Outcome<Json> {
-            auto found = query::find_symbols(view, target, query::Limit { max_results(args, 20) }, true, deadline);
+            auto found = ai::context::locate_symbols(view, target, query::Limit { max_results(args, 20) }, true, deadline);
             if (!found) return std::unexpected { found.error() };
             if (found->symbols.empty()) return std::unexpected { query::not_found(std::format("no symbol named {}", target.name)) };
             return query::to_json(*found);
@@ -313,6 +315,8 @@ cmdline::App query_command(bool& handled, int& status) {
     (void)module.arg("name").help("The module (a partition is described as part of its module)");
     (void)module.option("file").takes_value().help("The module of this file instead of a name");
     (void)module.option("graph").help("The module graph, of modules whose names contain the name when one is given");
+    (void)module.option("interface").help("Include the exported declarations of the module and the partitions it re-exports");
+    (void)module.option("max-tokens").takes_value().help("Budget of the interface (default 2000)");
     add_session_options(module);
     on(module, "module", [&](const cmdline::ParsedArgs& args) {
         handled = true;
@@ -322,10 +326,40 @@ cmdline::App query_command(bool& handled, int& status) {
             if (args.is_flag_set("graph")) return query::to_json(query::module_graph(view, args.value("name").value_or(""), query::Limit { max_results(args, 500) }));
             auto found = query::describe_module(view, args.value("name").value_or(""), file);
             if (!found) return std::unexpected { found.error() };
-            return query::to_json(*found);
+            Json value = query::to_json(*found);
+            if (args.is_flag_set("interface") && !found->external) {
+                std::size_t tokens { 2000 };
+                if (auto text = args.value("max-tokens")) {
+                    try {
+                        tokens = static_cast<std::size_t>(std::max(100, std::stoi(*text)));
+                    } catch (...) {
+                    }
+                }
+                if (auto interface = ai::context::module_interface(view, found->name, tokens * 4)) {
+                    Json summary = ai::context::to_json(*interface);
+                    summary.erase("snapshot");
+                    value["interface"] = std::move(summary);
+                }
+            }
+            return value;
         }, print_text_module);
     });
     (void)command.subcommand(std::move(module));
+
+    cmdline::App context { "context" };
+    (void)context.description("How a file is built and read: sets and role, compiler, standard library, language standard, macros");
+    (void)context.arg("file").required();
+    add_session_options(context);
+    on(context, "context", [&](const cmdline::ParsedArgs& args) {
+        handled = true;
+        const std::string file { absolute(args.value("file").value_or("")) };
+        status = run_in_session(args, file, [&](query::View& view, Clock::time_point deadline) -> query::Outcome<Json> {
+            auto found = ai::context::build_context(view, file, deadline);
+            if (!found) return std::unexpected { found.error() };
+            return ai::context::to_json(*found);
+        }, [](const Json& result) { std::println("{}", result.dump(2)); });
+    });
+    (void)command.subcommand(std::move(context));
     return command;
 }
 

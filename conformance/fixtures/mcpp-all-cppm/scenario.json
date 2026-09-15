@@ -258,6 +258,22 @@
         {
           "path": "/imports",
           "contains": "calc.text"
+        },
+        {
+          "path": "/interface/declarations/*/qualifiedName",
+          "equals": "calc::length"
+        },
+        {
+          "path": "/interface/declarations",
+          "contains": {
+            "qualifiedName": "calc::vec2",
+            "kind": "struct",
+            "unit": "calc:types"
+          }
+        },
+        {
+          "path": "/interface/reexports",
+          "contains": "calc.text"
         }
       ]
     },

@@ -8,6 +8,7 @@ import mcppls.ai.query.symbols;
 import mcppls.ai.query.files;
 import mcppls.ai.query.modules;
 import mcppls.ai.context.build;
+import mcppls.ai.context.interface;
 
 namespace mcppls::ai::mcp {
 
@@ -122,10 +123,12 @@ Json tool_list() {
     tools.push_back(tool("cxx_outline", "C++ outline", "A compact outline of a file: its module declaration and declarations with kinds and lines.",
                          Json { { "file", property("string", "File relative to the workspace root") } }, { "file" }));
     tools.push_back(tool("cxx_module", "C++ module",
-                         "A C++ module's units, partitions, imports and importers; with graph, the module graph of modules whose names contain the name.",
+                         "A C++ module's units, partitions, imports, importers and interface (what import brings in); with graph, the module graph.",
                          Json { { "name", property("string", "Module name; a partition names its module") },
                                 { "file", property("string", "A file of the module, instead of its name") },
-                                { "graph", property("boolean", "The module graph instead") },
+                                { "interface", property("boolean", "Include the exported declarations (default true)") },
+                                { "maxTokens", Json { { "type", "integer" }, { "minimum", 100 }, { "description", "Budget of the interface (default 2000)" } } },
+                                { "graph", property("boolean", "The module graph instead; name filters it") },
                                 { "maxResults", Json { { "type", "integer" }, { "minimum", 1 } } } }));
     tools.push_back(tool("cxx_build_context", "C++ build context",
                          "How a file is built and read: sets and role, compiler, standard library, language standard, macros, and issues.",
@@ -150,12 +153,13 @@ ToolResult call_tool(query::View& view, std::string_view name, const Json& value
              { "name", Json::value_t::string }, { "id", Json::value_t::string }, { "file", Json::value_t::string }, { "kind", Json::value_t::string },
              { "module", Json::value_t::string }, { "direction", Json::value_t::string }, { "line", Json::value_t::number_integer },
              { "column", Json::value_t::number_integer }, { "maxResults", Json::value_t::number_integer }, { "includeDeclaration", Json::value_t::boolean },
-             { "graph", Json::value_t::boolean }, { "fresh", Json::value_t::boolean } }) {
+             { "graph", Json::value_t::boolean }, { "fresh", Json::value_t::boolean }, { "interface", Json::value_t::boolean },
+             { "maxTokens", Json::value_t::number_integer } }) {
         if (auto wrong = arguments.check(key, type)) return failure(*wrong);
     }
 
     if (name == "cxx_symbol") {
-        auto found = query::find_symbols(view, target_of(arguments), query::Limit { limit_of(arguments, 20) }, true, deadline);
+        auto found = context::locate_symbols(view, target_of(arguments), query::Limit { limit_of(arguments, 20) }, true, deadline);
         if (found && found->symbols.empty()) return failure(query::not_found(std::format("no symbol named {}", arguments.string("name"))));
         return result_of(found);
     }
@@ -178,7 +182,19 @@ ToolResult call_tool(query::View& view, std::string_view name, const Json& value
         if (arguments.boolean("graph", false)) {
             return ToolResult { query::to_json(query::module_graph(view, arguments.string("name"), query::Limit { limit_of(arguments, 500) })), false };
         }
-        return result_of(query::describe_module(view, arguments.string("name"), arguments.string("file")));
+        auto described = query::describe_module(view, arguments.string("name"), arguments.string("file"));
+        if (!described) return failure(described.error());
+        Json value = query::to_json(*described);
+        if (arguments.boolean("interface", true) && !described->external) {
+            // Four characters make a token, near enough for a budget.
+            const auto budget = static_cast<std::size_t>(std::max(100, arguments.integer("maxTokens", 2000))) * 4;
+            if (auto interface = context::module_interface(view, described->name, budget)) {
+                Json summary = context::to_json(*interface);
+                summary.erase("snapshot");
+                value["interface"] = std::move(summary);
+            }
+        }
+        return ToolResult { std::move(value), false };
     }
     if (name == "cxx_build_context") {
         if (arguments.string("file").empty()) return failure(query::invalid_arguments("file is required"));

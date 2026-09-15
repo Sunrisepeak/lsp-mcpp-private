@@ -208,6 +208,38 @@ interface BuildContext {
 - A build context **MUST** give the file's role in each set that builds it. <a id="S5-4.1-1"></a><sup>S5-4.1-1</sup>
 - A file no set builds **MUST** have `inModel: false` and an issue `not-in-model`. <a id="S5-4.1-2"></a><sup>S5-4.1-2</sup>
 
+### 4.2 Module interface
+
+What `import m;` brings in, without implementations.
+
+```ts
+interface InterfaceDeclaration {
+  kind: "function" | "class" | "struct" | "union" | "enum" | "concept" | "alias" | "variable" | "other";
+  name: string;
+  qualifiedName: string;
+  declaration: string;       // without body or initializer, whitespace collapsed
+  documentation?: string;    // the comment right above it
+  unit: string;              // the unit that exports it: m, or m:p
+  location: Location;
+  conditional?: boolean;     // inside #if, #ifdef or #ifndef: the summary does not preprocess
+}
+interface ModuleInterface {
+  module: string;
+  files: string[];           // interface units read, the primary interface first
+  reexports: string[];       // other modules `export import` brings in; not expanded
+  declarations: InterfaceDeclaration[];
+  total: number;
+  truncated: boolean;
+  documentationOmitted: boolean;
+}
+```
+
+Input: a budget in tokens, four characters counting as one.
+
+- A summary **MUST** include the declarations of every partition the primary interface re-exports, transitively, each with the unit that exports it. <a id="S5-4.2-1"></a><sup>S5-4.2-1</sup>
+- When the budget does not hold every declaration with its documentation, documentation **MUST** be left out before any declaration is. <a id="S5-4.2-2"></a><sup>S5-4.2-2</sup>
+- Without a core engine, or for a name the core engine does not know, a symbol lookup by name (3.1) **MUST** find the declarations module interfaces export under that name. <a id="S5-4.2-3"></a><sup>S5-4.2-3</sup>
+
 ## 5. Findings
 
 The review of changes (a later version) reports findings. Their data is defined here so that every producer of findings, rules and models alike, agrees on it.
@@ -240,7 +272,7 @@ A server runs as an MCP server over standard input and output (`mcppls mcp`): on
 | `cxx_symbol` | 3.1 |
 | `cxx_references` | 3.2, and 3.3 with `direction` |
 | `cxx_outline` | 3.4 |
-| `cxx_module` | 3.5; `graph: true` for the graph |
+| `cxx_module` | 3.5 with 4.2 as `interface` (unless `interface: false`); `graph: true` for the graph |
 | `cxx_build_context` | 4.1 |
 | `cxx_diagnostics` | 3.6 |
 
