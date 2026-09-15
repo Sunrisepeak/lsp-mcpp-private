@@ -2,6 +2,7 @@
 import std;
 import nlohmann.json;
 import mcppls.testing;
+import mcppls.os;
 import mcppls.base.path;
 import mcppls.platform.dirs;
 import mcppls.platform.fs;
@@ -85,11 +86,12 @@ int main() {
 
     "a payload that declares no clangd still finds one in the conventional place"_test = [] {
         const std::string payload { scratch("payload-conventional") };
+        const std::string clangd { mcppls::base::join_path(payload, std::string { "clangd/bin/clangd" } + std::string { mcppls::os::EXECUTABLE_SUFFIX }) };
         (void)fs::create_directories(mcppls::base::join_path(payload, "clangd/bin"));
-        (void)fs::write_file(mcppls::base::join_path(payload, "clangd/bin/clangd"), "not really clangd");
+        (void)fs::write_file(clangd, "not really clangd");
         (void)fs::write_file(mcppls::base::join_path(payload, "payload.json"), Json { { "payload-version", 3 }, { "platform", "linux-x64" } }.dump());
         const auto resolved = eng::resolve_payload(eng::PayloadRequest { payload, "", "", "none" });
-        expect(resolved.clangd == mcppls::base::join_path(payload, "clangd/bin/clangd")) << resolved.clangd;
+        expect(resolved.clangd == clangd) << resolved.clangd;
         fs::remove_all(payload);
     };
 
