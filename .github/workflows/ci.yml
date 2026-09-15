@@ -80,6 +80,47 @@ jobs:
           git diff --exit-code src/lsp
 
   # ---------------------------------------------------------------------------
+  # The reference model gateway mcppls-model (design 7.5, work item M2): a
+  # separate, self-contained mcpp package under model-gateway/, unrelated to the
+  # server build above. Built with the toolchain's normal C library rather than
+  # openkal-llvm-runtime (model-gateway/README.md "Build form", experiment X3):
+  # it builds natively on each host here rather than being cross-built from
+  # Linux, so it does not need openkal's cross-compile benefit, and normal C
+  # library builds stay off openkal's documented release-profile defects on
+  # Windows and macOS. No --target flag here for the same reason: that flag
+  # (used above) reaches openkal's Windows/macOS implementations specifically,
+  # which this package does not use — a Windows host takes the default MSVC
+  # target, a macOS host the Apple-native triple.
+  model-gateway:
+    name: model gateway (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-mcpp
+      - name: Build
+        working-directory: model-gateway
+        run: mcpp build
+      - name: Tests (no real provider, no API key — tests/mock_openai.py stands in)
+        working-directory: model-gateway
+        run: |
+          set -euo pipefail
+          exe=''; [ "$RUNNER_OS" = Windows ] && exe='.exe'
+          gateway=$(find target -type f -name "mcppls-model$exe" -path '*/bin/*' | head -1)
+          echo "mcppls-model -> $gateway"
+          # Windows runners have no `python3` on PATH (established already by the
+          # conformance job above); every other host does.
+          python=python3; [ "$RUNNER_OS" = Windows ] && python=python
+          "$python" tests/run.py --gateway "$gateway"
+
+  # ---------------------------------------------------------------------------
   # One Linux host builds the server for every platform (design 12.4, usable plan W11):
   # the release executables built here are the ones the Windows and macOS payloads
   # carry, so conformance, clean-machine and end-to-end jobs test what was cross-built.
