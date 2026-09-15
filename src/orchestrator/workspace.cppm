@@ -40,6 +40,8 @@ struct SessionOptions {
     bool discoverCompilers { true };
     bool verboseEngineLog { false };
     std::chrono::milliseconds requestTimeout { std::chrono::seconds { 60 } };
+    // This program, to run `mcppls review` for an editor's review command (overall design 7.7).
+    std::string serverExecutable;
     // Given by the composition root; a test can substitute engines that start no process.
     std::function<EngineFactories(const SessionOptions&, const engine::PayloadPaths&, bool payloadCorrupt)> engineFactories;
 };
@@ -47,7 +49,8 @@ struct SessionOptions {
 // A background thread (model loading, an engine's I/O threads, watch polling) reports back through
 // this queue; the session's one event loop is the only thing that ever changes state.
 // `external` carries a message of an entry other than LSP (an MCP request, say) through the same loop.
-enum class EventKind { client_message, client_closed, engine_event, model_loaded, external };
+// `review_finished` carries the output of a review an editor asked for.
+enum class EventKind { client_message, client_closed, engine_event, model_loaded, external, review_finished };
 
 struct Event {
     EventKind kind { EventKind::client_message };
@@ -111,6 +114,13 @@ public:
     Json contexts() const;
     // Replies to `id` itself, then replans if it changed anything.
     void set_context(const Json& id, std::string_view context);
+
+    // ---- the review an editor asks for (overall design 7.7) ----------------------------
+    // Runs `mcppls review` on this root in the background; its findings are published as
+    // diagnostics with source "mcppls review" until cleared or replaced. False when one is running.
+    bool start_review(const Json& arguments);
+    void handle_review_finished(const Json& outcome);
+    void clear_review();
 
     // ---- background events ------------------------------------------------------------
     void handle_engine_event(std::string_view engineId, const Json& event);

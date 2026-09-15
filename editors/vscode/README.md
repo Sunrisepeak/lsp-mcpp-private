@@ -27,6 +27,13 @@ When a C++ file is open, the language status area shows one item, for example `C
 | C++ Modules: Show Logs | Open the log |
 | C++ Modules: Install Command Line Tools | Run `xcode-select --install` (macOS only) |
 
+With `mcppls.ai.enabled`:
+
+| Command | Use |
+|---|---|
+| C++ Modules: Review Changes | Review the workspace's changes against `HEAD`: findings of mcppls's rules — removed or changed exports still in use, partition misuse, unresolved imports, new compiler errors — shown as problems with their evidence as related locations. Runs git and the compiler, so only in a trusted workspace; nothing is sent to a model |
+| C++ Modules: Clear Review | Remove the review's problems |
+
 ## Settings
 
 All settings are optional.
@@ -35,6 +42,8 @@ All settings are optional.
 |---|---|---|
 | `mcppls.compiler` | automatic | Follow this compiler instead of the discovered one |
 | `mcppls.semanticKit` | `auto` | `off` never uses the built-in standard library kit |
+| `mcppls.engine` | `clangd` | `none` runs without clangd: module-level features only |
+| `mcppls.ai.enabled` | `false` | Show the review commands |
 | `mcppls.detectConflicts` | `true` | Offer once to turn off other C++ extensions' language features in the workspace |
 | `mcppls.trace.server` | `off` | Trace the language server protocol in the log |
 

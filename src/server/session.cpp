@@ -164,6 +164,9 @@ private:
             if (auto* root = root_by_key_(event.rootKey)) root->handle_model_loaded(event.generation, std::move(event.model));
             break;
         case EventKind::external: break;   // no other entry shares an LSP session's loop
+        case EventKind::review_finished:
+            if (auto* root = root_by_key_(event.rootKey)) root->handle_review_finished(event.message);
+            break;
         }
     }
 
@@ -200,6 +203,17 @@ private:
         }
         if (method.starts_with("cxxModules/")) {
             handle_modules_request_(id, method, params);
+            return;
+        }
+        // overall design 7.7: the review of the workspace's changes, run in the background, its findings published as diagnostics.
+        if (method == lsp::method::WORKSPACE_EXECUTE_COMMAND && params.value("command", std::string {}).starts_with("mcppls.review.")) {
+            const std::string command { params.value("command", std::string {}) };
+            const Json arguments = params.value("arguments", Json::array());
+            for (auto& root : roots_) {
+                if (command == "mcppls.review.run") (void)root->start_review(arguments);
+                else if (command == "mcppls.review.clear") root->clear_review();
+            }
+            reply_(id, nullptr);
             return;
         }
         if (auto* root = root_for_message_(params)) root->route_client_request(message);

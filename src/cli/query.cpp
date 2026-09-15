@@ -6,6 +6,7 @@ import mcpplibs.cmdline;
 import mcppls.base.log;
 import mcppls.base.path;
 import mcppls.base.text;
+import mcppls.base.uri;
 import mcppls.platform.fs;
 import mcppls.spec.query;
 import mcppls.orchestrator.kernel;
@@ -181,8 +182,8 @@ int run_in_session(const cmdline::ParsedArgs& args, std::string_view file, const
     apply_log_level(args);
     const std::string format { args.value("format").value_or("json") };
     // sarif and markdown are what review renders its result as: JSON, and a document of text.
-    if (format != "json" && format != "text" && format != "sarif" && format != "markdown") {
-        std::println(std::cerr, "unknown format {}; use json or text (review: also sarif or markdown)", format);
+    if (format != "json" && format != "text" && format != "sarif" && format != "markdown" && format != "lsp") {
+        std::println(std::cerr, "unknown format {}; use json or text (review: also sarif, markdown or lsp)", format);
         return EXIT_FAILED;
     }
     const orchestrator::KernelOptions options { session_options(args), root_of(args, file) };
@@ -588,8 +589,21 @@ cmdline::App review_command(bool& handled, int& status) {
                 }
                 value["model"] = ai::review::to_json(judgement);
             }
-            if (format == "sarif") value = ai::review::to_sarif(reviewed->findings, view.root(), request.changes.base);
-            else if (format == "markdown") value = Json { { "markdown", ai::review::to_markdown(reviewed->findings, request.changes.base, value) } };
+            if (format == "sarif") {
+                value = ai::review::to_sarif(reviewed->findings, view.root(), request.changes.base);
+            } else if (format == "markdown") {
+                value = Json { { "markdown", ai::review::to_markdown(reviewed->findings, request.changes.base, value) } };
+            } else if (format == "lsp") {
+                // What a language server publishes for an editor's review command: LSP diagnostics by document URI.
+                Json byUri = Json::object();
+                const auto uri_of = [&](std::string_view file) { return base::path_to_uri(base::is_absolute_path(file) ? std::string { file } : base::join_path(view.root(), file)); };
+                for (const auto& finding : reviewed->findings) {
+                    const std::string uri { uri_of(finding.location.file) };
+                    if (!byUri.contains(uri)) byUri[uri] = Json::array();
+                    byUri[uri].push_back(ai::review::to_lsp_diagnostic(finding, uri_of));
+                }
+                value = Json { { "base", request.changes.base }, { "diagnostics", std::move(byUri) }, { "counts", value["counts"] }, { "complete", value["complete"] } };
+            }
             kept = std::move(*reviewed);
             return value;
         }, [](const Json& result) {

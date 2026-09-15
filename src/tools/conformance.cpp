@@ -925,6 +925,13 @@ public:
             }
             return { published && errors.empty(), published ? lsp::dump(errors) : std::string { "no diagnostics were published" } };
         }
+        if (kind == "execute-command") {
+            // overall design 7.7: a command the server declared, answered without an error.
+            const auto answer = client_.request("workspace/executeCommand",
+                                                Json { { "command", check.value("command", std::string {}) }, { "arguments", check.value("arguments", Json::array()) } },
+                                                timeout_);
+            return { answer.has_value(), answer ? lsp::dump(*answer) : std::string { "no answer, or an error" } };
+        }
         if (kind == "diagnostic-code") {
             open(file);
             const std::string documentUri { uri(file) };

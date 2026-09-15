@@ -4,6 +4,7 @@ import std;
 import mcpplibs.cmdline;
 import mcppls.base.log;
 import mcppls.base.path;
+import mcppls.platform.env;
 import mcppls.platform.fs;
 import mcppls.engine;
 import mcppls.engine.payload;
@@ -49,6 +50,12 @@ orchestrator::SessionOptions session_options(const cmdline::ParsedArgs& args) {
         options.engineFromCommandLine = true;
     }
     options.engineFactories = engine_factories;
+    // This very program, for the reviews an editor asks for: named as the process started it, else found on PATH.
+    if (const auto arguments = platform::env::arguments(); !arguments.empty()) {
+        const std::string started { arguments.front() };
+        const bool hasDirectory { started.find('/') != std::string::npos || started.find('\\') != std::string::npos };
+        options.serverExecutable = hasDirectory ? absolute(started) : platform::env::find_executable(started).value_or("");
+    }
     options.requestTimeout = seconds_option(args, "request-timeout", options.requestTimeout.count() > 0
                                                                           ? std::chrono::duration_cast<std::chrono::seconds>(options.requestTimeout)
                                                                           : std::chrono::seconds { 60 });

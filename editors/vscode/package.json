@@ -88,6 +88,18 @@
         "command": "mcppls.installCommandLineTools",
         "title": "Install Command Line Tools",
         "category": "C++ Modules"
+      },
+      {
+        "command": "mcppls.review.run",
+        "title": "Review Changes",
+        "category": "C++ Modules",
+        "enablement": "config.mcppls.ai.enabled"
+      },
+      {
+        "command": "mcppls.review.clear",
+        "title": "Clear Review",
+        "category": "C++ Modules",
+        "enablement": "config.mcppls.ai.enabled"
       }
     ],
     "configuration": {
@@ -125,6 +137,11 @@
           "default": "clangd",
           "description": "The core semantic engine. mcppls's own module engine always runs beside it."
         },
+        "mcppls.ai.enabled": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Show the AI-era features: **Review Changes** reviews the workspace's changes against `HEAD` with mcppls's rules and shows the findings, with their evidence, as problems. Nothing is sent to a model."
+        },
         "mcppls.detectConflicts": {
           "type": "boolean",
           "default": true,
@@ -141,6 +158,18 @@
           "description": "Traces the communication between VS Code and the language server in the C++ Modules output."
         }
       }
+    },
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "mcppls.review.run",
+          "when": "config.mcppls.ai.enabled"
+        },
+        {
+          "command": "mcppls.review.clear",
+          "when": "config.mcppls.ai.enabled"
+        }
+      ]
     }
   },
   "scripts": {

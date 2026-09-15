@@ -12,6 +12,7 @@ import mcppls.base.uri;
 import mcppls.base.version;
 import mcppls.platform.dirs;
 import mcppls.platform.fs;
+import mcppls.platform.process;
 import mcppls.platform.task;
 import mcppls.lsp.jsonrpc;
 import mcppls.lsp.protocol;
@@ -163,6 +164,9 @@ struct Workspace::Impl final : engine::Host {
     std::map<std::string, std::string, std::less<>> publishedDiagnostics;
     // The document version the core engine's latest diagnostics were computed for, by client URI (-1: not said).
     std::map<std::string, std::int64_t, std::less<>> coreDiagnosticsVersions;
+    // The review an editor asked for (overall design 7.7): its findings as LSP diagnostics, by client URI.
+    std::map<std::string, Json, std::less<>> reviewDiagnostics;
+    std::shared_ptr<platform::Process> reviewProcess;
 
     // Requests in flight across engines.
     struct Job {
@@ -775,7 +779,14 @@ struct Workspace::Impl final : engine::Host {
 
     void publish_diagnostics(std::string_view uri, bool force = false) {
         const Document* document { documents_.find(uri) };
-        if (document == nullptr) return;
+        if (document == nullptr) {
+            // A review's findings reach files nobody opened.
+            const auto review = reviewDiagnostics.find(uri);
+            if (!force && review == reviewDiagnostics.end()) return;
+            client.notify("textDocument/publishDiagnostics",
+                          Json { { "uri", std::string { uri } }, { "diagnostics", review == reviewDiagnostics.end() ? Json::array() : review->second } });
+            return;
+        }
         const Json moduleDiagnostics = document->path.empty() ? Json::array() : index.diagnostics(document->path);
         Json fromEngines = Json::array();
         for (const auto& [engineId, byUri] : engineDiagnostics) {
@@ -786,6 +797,9 @@ struct Workspace::Impl final : engine::Host {
         std::string label;
         if (model) label = model->profile.kind == "semantic-kit" ? model->profile.stdlib + " kit" : model->profile.compiler;
         Json merged = merge_diagnostics(fromEngines, moduleDiagnostics, label);
+        if (const auto review = reviewDiagnostics.find(uri); review != reviewDiagnostics.end()) {
+            for (const auto& diagnostic : review->second) merged.push_back(diagnostic);
+        }
         std::string serialized { lsp::dump(merged) };
         auto& previous = publishedDiagnostics[std::string { uri }];
         if (!force && previous == serialized) return;
@@ -996,6 +1010,7 @@ void Workspace::allow_status_notifications() {
 }
 
 void Workspace::shut_down() {
+    if (impl_->reviewProcess) impl_->reviewProcess->kill();
     for (const auto& engine : impl_->engines) engine->shut_down();
     if (impl_->lease) impl_->lease->release();
 }
@@ -1047,6 +1062,7 @@ void Workspace::did_close(const Json& message, const Json& params) {
     impl_->coreDiagnosticsVersions.erase(uri);
     for (auto& [engineId, byUri] : impl_->engineDiagnostics) byUri.erase(uri);
     impl_->client.notify("textDocument/publishDiagnostics", Json { { "uri", uri }, { "diagnostics", Json::array() } });
+    if (impl_->reviewDiagnostics.contains(uri)) impl_->publish_diagnostics(uri);
     impl_->update_status();
 }
 
@@ -1149,6 +1165,84 @@ void Workspace::set_context(const Json& id, std::string_view context) {
     impl_->contextSet = context == "default" ? std::string {} : std::string { context };
     impl_->client.reply(id, nullptr);
     if (impl_->model) impl_->replan();
+}
+
+bool Workspace::start_review(const Json& arguments) {
+    if (impl_->reviewProcess) return false;
+    const auto& options = impl_->options;
+    if (options.serverExecutable.empty()) {
+        log::warning("cannot review {}: the server does not know its own executable", root_);
+        return false;
+    }
+    platform::SpawnOptions spawn;
+    spawn.program = options.serverExecutable;
+    spawn.arguments = { "review", "--format", "lsp", "--root", root_ };
+    const Json settings = arguments.is_array() && !arguments.empty() && arguments[0].is_object() ? arguments[0] : Json::object();
+    if (auto base = lsp::string_at(settings, "base"); base && !base->empty()) spawn.arguments.insert(spawn.arguments.end(), { "--base", *base });
+    if (!options.payloadDirectory.empty()) spawn.arguments.insert(spawn.arguments.end(), { "--payload", options.payloadDirectory });
+    if (!options.clangd.empty()) spawn.arguments.insert(spawn.arguments.end(), { "--clangd", options.clangd });
+    if (!options.kit.empty()) spawn.arguments.insert(spawn.arguments.end(), { "--kit", options.kit });
+    if (!options.mcpp.empty()) spawn.arguments.insert(spawn.arguments.end(), { "--mcpp", options.mcpp });
+    if (!options.database.empty()) spawn.arguments.insert(spawn.arguments.end(), { "--database", options.database });
+    if (options.engine != "clangd") spawn.arguments.insert(spawn.arguments.end(), { "--engine", options.engine });
+    if (!options.discoverCompilers) spawn.arguments.push_back("--no-discover");
+    if (!options.trusted) spawn.arguments.push_back("--untrusted");
+    spawn.workDirectory = root_;
+    spawn.pipeInput = false;
+    spawn.pipeOutput = true;
+    auto started = platform::Process::spawn(spawn);
+    if (!started) {
+        log::warning("cannot review {}: {}", root_, started.error().message);
+        return false;
+    }
+    impl_->reviewProcess = std::make_shared<platform::Process>(std::move(*started));
+    log::info("review of {} started", root_);
+    // The review runs its own headless session; this one keeps serving the editor meanwhile.
+    std::thread { [process = impl_->reviewProcess, events = impl_->events, rootKey = key_] {
+        std::string output;
+        while (true) {
+            auto chunk = process->read_output();
+            if (!chunk || chunk->empty()) break;
+            output += *chunk;
+        }
+        const auto code = process->wait();
+        events->push(Event { EventKind::review_finished, Json { { "output", std::move(output) }, { "exitCode", code ? *code : -1 } }, 0, {}, rootKey, {} });
+    } }.detach();
+    return true;
+}
+
+void Workspace::handle_review_finished(const Json& outcome) {
+    impl_->reviewProcess.reset();
+    const Json result = Json::parse(outcome.value("output", std::string {}), nullptr, false);
+    if (result.is_discarded() || !result.is_object() || result.contains("error")) {
+        const std::string why { result.is_object() && result.contains("error") ? lsp::dump(result["error"]) : std::string { "no result" } };
+        log::warning("review of {} failed: {}", root_, why);
+        impl_->client.notify("window/logMessage", Json { { "type", 2 }, { "message", std::format("mcppls review failed: {}", why) } });
+        return;
+    }
+    std::set<std::string> touched;
+    for (const auto& [uri, diagnostics] : impl_->reviewDiagnostics) touched.insert(uri);
+    impl_->reviewDiagnostics.clear();
+    const Json byUri = result.value("diagnostics", Json::object());
+    for (auto entry = byUri.begin(); entry != byUri.end(); ++entry) {
+        // The editor's own spelling of a document it has open.
+        const std::string uri { impl_->client_uri(entry.key()) };
+        impl_->reviewDiagnostics[uri] = entry.value();
+        touched.insert(uri);
+    }
+    for (const auto& uri : touched) impl_->publish_diagnostics(uri, true);
+    const Json counts = result.value("counts", Json::object());
+    impl_->client.notify("window/logMessage", Json { { "type", 3 },
+                                                     { "message", std::format("mcppls review against {}: {} error(s), {} warning(s), {} note(s){}", result.value("base", std::string { "HEAD" }),
+                                                                              counts.value("error", 0), counts.value("warning", 0), counts.value("information", 0),
+                                                                              result.value("complete", true) ? "" : "; incomplete") } });
+}
+
+void Workspace::clear_review() {
+    std::set<std::string> touched;
+    for (const auto& [uri, diagnostics] : impl_->reviewDiagnostics) touched.insert(uri);
+    impl_->reviewDiagnostics.clear();
+    for (const auto& uri : touched) impl_->publish_diagnostics(uri, true);
 }
 
 void Workspace::handle_engine_event(std::string_view engineId, const Json& event) {
