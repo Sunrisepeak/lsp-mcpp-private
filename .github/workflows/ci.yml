@@ -143,7 +143,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p cross
-          for exe in mcppls mcppls-conformance mcppls-lspgen mcppls-mock-mcpp; do
+          for exe in mcppls mcppls-conformance mcppls-lspgen mcppls-mock-mcpp mcppls-mock-model; do
             path=$(find target -type f -name "$exe${{ matrix.exe }}" -path '*/bin/*' -newer mcpp.toml | head -1)
             file "$path"
             case "${{ matrix.target }}" in
@@ -200,7 +200,7 @@ jobs:
           set -euo pipefail
           mcpp build --profile release
           mkdir -p cross
-          for exe in mcppls mcppls-conformance mcppls-mock-mcpp; do
+          for exe in mcppls mcppls-conformance mcppls-mock-mcpp mcppls-mock-model; do
             cp "$(find target -type f -name "$exe" -path '*/bin/*' -newer mcpp.toml | head -1)" cross/
           done
       - name: The cross-built server
@@ -219,6 +219,7 @@ jobs:
           server="cross/mcppls${{ matrix.exe }}"
           runner="cross/mcppls-conformance${{ matrix.exe }}"
           mock="cross/mcppls-mock-mcpp${{ matrix.exe }}"
+          mockModel="cross/mcppls-mock-model${{ matrix.exe }}"
           chmod +x cross/*
           python3 packaging/scripts/assemble_payload.py --platform ${{ matrix.platform }} --server "$server" \
               --clangd work/clangd --kit work/kit --out payload
@@ -230,7 +231,7 @@ jobs:
             echo "cross-built $want, payload $got"
             [ "$want" = "$got" ]
           fi
-          mkdir -p tools && cp "$runner" "$mock" tools/
+          mkdir -p tools && cp "$runner" "$mock" "$mockModel" tools/
           # A tarball keeps executable bits and links, which an artifact zip does not.
           tar -czf payload-${{ matrix.platform }}.tar.gz payload tools
           du -sh payload payload-${{ matrix.platform }}.tar.gz
@@ -404,7 +405,8 @@ jobs:
           set -euo pipefail
           exe=''; python=python3
           if [ "$RUNNER_OS" = Windows ]; then exe='.exe'; python=python; fi
-          "$python" bench/review.py --server "payload/bin/mcppls$exe" --payload payload --report "$RUNNER_TEMP/review-${{ matrix.platform }}.json"
+          "$python" bench/review.py --server "payload/bin/mcppls$exe" --payload payload --mock-model "tools/mcppls-mock-model$exe" \
+              --report "$RUNNER_TEMP/review-${{ matrix.platform }}.json"
 
       # Startup timing (usable plan W7): the timing fixture cold, then warm with the same
       # workspace and cache. A warm start must reuse the std module the cold one built

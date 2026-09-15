@@ -1,0 +1,70 @@
+{
+  "id": "model-evidence-checked-split",
+  "title": "A scripted model answers with a finding that cites the review's evidence and one that cites evidence that does not exist",
+  "category": "model",
+  "project": "conformance/fixtures/mcpp-split",
+  "remove": [],
+  "model": {
+    "script": {
+      "model": "mock-reviewer",
+      "result": {
+        "content": "",
+        "finishReason": "stop",
+        "usage": {
+          "inputTokens": 100,
+          "outputTokens": 30
+        },
+        "json": {
+          "findings": [
+            {
+              "rule": "model/unused-definition",
+              "severity": "warning",
+              "message": "decorate is still defined in format.cpp but no longer exported or declared in the interface",
+              "location": {
+                "file": "src/greet/greet.cpp",
+                "line": 9,
+                "column": 12
+              },
+              "evidence": [
+                "E2"
+              ],
+              "confidence": 0.7
+            },
+            {
+              "rule": "model/invented",
+              "severity": "error",
+              "message": "a claim with no evidence behind it",
+              "location": {
+                "file": "src/main.cpp",
+                "line": 1,
+                "column": 1
+              },
+              "evidence": [
+                "E404"
+              ],
+              "confidence": 0.99
+            }
+          ]
+        }
+      }
+    }
+  },
+  "must": [
+    {
+      "rule": "module/export-removed-in-use",
+      "file": "src/greet/format.cppm",
+      "origin": "rule"
+    },
+    {
+      "rule": "model/unused-definition",
+      "file": "src/greet/greet.cpp",
+      "origin": "model",
+      "evidence-file": "src/greet/greet.cpp"
+    }
+  ],
+  "must-not": [
+    {
+      "rule": "model/invented"
+    }
+  ]
+}

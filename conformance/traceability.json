@@ -1460,5 +1460,44 @@
   {
    "test": "tests/test_review.cpp: findings become SARIF results and LSP diagnostics"
   }
+ ],
+ "S5-5.4-1": [
+  {
+   "script": "src/ai/mcp/tools.cpp",
+   "contains": "model source is enabled only by whoever starts the server (mcppls mcp --model-source {}), not by a tool call"
+  }
+ ],
+ "S5-5.4-2": [
+  {
+   "test": "tests/test_model.cpp: review: findings with empty or unknown evidence ids are dropped, a valid one is kept and backfilled"
+  },
+  {
+   "review": "model-evidence-checked-split"
+  }
+ ],
+ "S5-5.4-3": [
+  {
+   "test": "tests/test_model.cpp: review: schema-invalid output is dropped entirely and reported, not partially kept"
+  }
+ ],
+ "S5-5.4-4": [
+  {
+   "test": "tests/test_model.cpp: prompt: excluded paths become a marker, their evidence text is withheld, others are unaffected"
+  }
+ ],
+ "S5-5.4-5": [
+  {
+   "test": "tests/test_model.cpp: review: a proposed fix is dropped without a verifier, and kept only when one accepts it"
+  }
+ ],
+ "S5-5.4-6": [
+  {
+   "test": "tests/test_model.cpp: prompt: escapes delimiter-looking text so evidence cannot forge a data block boundary"
+  }
+ ],
+ "S5-5.4-7": [
+  {
+   "test": "tests/test_model.cpp: review: an over-budget prompt stops before any call, cache write, or output"
+  }
  ]
 }

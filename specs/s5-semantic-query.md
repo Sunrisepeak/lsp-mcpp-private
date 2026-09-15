@@ -375,6 +375,28 @@ interface Review {
 - A SARIF log **MUST** declare `columnKind: "unicodeCodePoints"`, since S5 columns count Unicode scalar values. <a id="S5-5.3-1"></a><sup>S5-5.3-1</sup>
 - An LSP diagnostic of a finding **MUST** give its range in UTF-16 code units, from the location's line text. <a id="S5-5.3-2"></a><sup>S5-5.3-2</sup>
 
+### 5.4 A model's judgement
+
+A review can add a model's findings to its rules' ones. The model reads the *change context* — the semantic diffs, the impact, the rules' findings, and evidence items numbered `E1` to `En` across the context (the findings' own evidence, and every line the change added or removed) — through a versioned template, and answers with JSON matching the template's output schema.
+
+| Source | What happens |
+|---|---|
+| `none` (default) | No model |
+| `agent` | Nothing is sent anywhere: the result carries `model.agentContext`, the rendered messages and the output schema, for the agent that asked to judge itself |
+| `gateway` | The model gateway process (`mcppls-model`, `model-gateway/PROTOCOL.md`) asks a local or remote model |
+| `mcp-sampling` | The MCP client's own model is asked through `sampling/createMessage`, with its user's consent |
+| `client` | An editor's model interface; not bound in this version |
+
+A result with a model carries `model`: `source`, `enabled`, `budgetExceeded`, `cacheHit`, `schemaErrors`, `droppedReasons`, `findings`, `usage`, and `explanation` when only what would be sent was asked for.
+
+- A model source other than `none` and `agent` **MUST** be enabled by whoever starts the server or runs the command, never by a request. <a id="S5-5.4-1"></a><sup>S5-5.4-1</sup>
+- A model finding whose evidence is empty, or cites an id the change context does not have, **MUST** be dropped. <a id="S5-5.4-2"></a><sup>S5-5.4-2</sup>
+- An answer that does not match the output schema **MUST** be dropped whole. <a id="S5-5.4-3"></a><sup>S5-5.4-3</sup>
+- The evidence of a file an excluded pattern matches **MUST NOT** reach a model. <a id="S5-5.4-4"></a><sup>S5-5.4-4</sup>
+- A fix a model proposes **MUST NOT** be reported unless it was verified. <a id="S5-5.4-5"></a><sup>S5-5.4-5</sup>
+- A prompt **MUST** keep code inside delimited data blocks, escaped so that nothing in the code can close one. <a id="S5-5.4-6"></a><sup>S5-5.4-6</sup>
+- A prompt over the token budget **MUST NOT** be sent. <a id="S5-5.4-7"></a><sup>S5-5.4-7</sup>
+
 ## 6. MCP binding
 
 A server runs as an MCP server over standard input and output (`mcppls mcp`): one JSON-RPC message per line.

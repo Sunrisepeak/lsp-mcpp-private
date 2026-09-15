@@ -25,6 +25,8 @@ FIXTURES = REPOSITORY / "bench" / "review"
 def matches(finding, entry):
     if finding.get("rule") != entry["rule"]:
         return False
+    if "origin" in entry and finding.get("origin") != entry["origin"]:
+        return False
     location = finding.get("location", {})
     if "file" in entry and location.get("file") != entry["file"]:
         return False
@@ -49,9 +51,12 @@ def git(workspace, *arguments):
                    cwd=workspace, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
 
-def run_fixture(fixture, server, payload, scratch, timeout):
+def run_fixture(fixture, server, payload, scratch, timeout, mock_model):
     meta = json.loads((fixture / "review.json").read_text(encoding="utf-8"))
     workspace = scratch / meta["id"]
+    model = meta.get("model")
+    if model and not mock_model:
+        return {"id": meta["id"], "ok": True, "skipped": "needs --mock-model", "seconds": 0.0, "problems": [], "findings": [], "meta": meta}
     shutil.copytree(REPOSITORY / meta["project"], workspace, ignore=shutil.ignore_patterns("scenario.json"))
     git(workspace, "init", "-q")
     git(workspace, "add", "-A")
@@ -69,6 +74,12 @@ def run_fixture(fixture, server, payload, scratch, timeout):
     command = [server, "review", "--format", "json", "--root", str(workspace), "--timeout", str(timeout)]
     if payload:
         command += ["--payload", payload]
+    if model:
+        # A scripted gateway answers in place of a model: the model step runs end to end, and nothing leaves the machine.
+        script = scratch / f"{meta['id']}-model.json"
+        script.write_text(json.dumps(model["script"]), encoding="utf-8")
+        environment["MCPPLS_MOCK_MODEL_SCRIPT"] = str(script)
+        command += ["--model", "gateway", "--model-gateway", mock_model, "--model-name", model["script"].get("model", "mock-model")]
     before = snapshot(workspace)
     started = time.monotonic()
     completed = subprocess.run(command, cwd=workspace, env=environment, capture_output=True, text=True, timeout=timeout + 60)
@@ -109,9 +120,11 @@ def main():
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--keep", action="store_true")
     parser.add_argument("--report", default="")
+    parser.add_argument("--mock-model", default="", help="mcppls-mock-model, for fixtures whose review.json scripts a model")
     arguments = parser.parse_args()
     server = str(pathlib.Path(arguments.server).resolve())
     payload = str(pathlib.Path(arguments.payload).resolve()) if arguments.payload else ""
+    mock_model = str(pathlib.Path(arguments.mock_model).resolve()) if arguments.mock_model else ""
     fixtures = sorted(p for p in FIXTURES.iterdir() if (p / "review.json").is_file())
     if arguments.fixture:
         fixtures = [p for p in fixtures if p.name in arguments.fixture]
@@ -119,8 +132,11 @@ def main():
     results = []
     try:
         for fixture in fixtures:
-            outcome = run_fixture(fixture, server, payload, scratch, arguments.timeout)
+            outcome = run_fixture(fixture, server, payload, scratch, arguments.timeout, mock_model)
             results.append(outcome)
+            if outcome.get("skipped"):
+                print(f"SKIP {outcome['id']} ({outcome['skipped']})", flush=True)
+                continue
             print(f"{'PASS' if outcome['ok'] else 'FAIL'} {outcome['id']} ({outcome['seconds']:.1f}s, {len(outcome['findings'])} finding(s))", flush=True)
             for problem in outcome["problems"]:
                 print(f"  {problem}", flush=True)
