@@ -1,12 +1,12 @@
 // The editor's open documents: text, version and language, with LSP content
 // changes applied the way the client describes them (UTF-16 ranges).
-export module mcppls.server.documents;
+export module mcppls.orchestrator.documents;
 
 import std;
 import nlohmann.json;
 import mcppls.base.text;
 
-export namespace mcppls::server {
+export namespace mcppls::orchestrator {
 
 struct Document {
     std::string uri;
@@ -33,4 +33,4 @@ public:
 // Applies one change: a range edit, or a full replacement when there is no range.
 void apply_change(std::string& text, const nlohmann::json& change);
 
-} // namespace mcppls::server
+} // namespace mcppls::orchestrator

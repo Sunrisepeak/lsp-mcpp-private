@@ -1,11 +1,11 @@
 // Where the engine and the semantic kit come from: the payload bundled with an
 // editor extension, an xlings installation, or explicit paths (design 15.3).
-export module mcppls.server.payload;
+export module mcppls.engine.payload;
 
 import std;
 import mcppls.base.error;
 
-export namespace mcppls::server {
+export namespace mcppls::engine {
 
 // The size and sha256 a payload.json "files" entry declares for one of its own files (usable
 // plan W9.4, design 18 "payload integrity"): assemble_payload.py writes these; the server checks
@@ -51,4 +51,4 @@ struct PayloadIntegrityIssue {
 // handful of stamp lookups. Empty when the payload is intact or declares no files to check.
 std::vector<PayloadIntegrityIssue> verify_payload_integrity(const PayloadPaths& payload, std::string_view cacheFile);
 
-} // namespace mcppls::server
+} // namespace mcppls::engine

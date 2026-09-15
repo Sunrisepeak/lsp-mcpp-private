@@ -1,7 +1,7 @@
 // The syntactic module index: module-level language features answered without
 // the engine (design section 8.5) — module-name navigation, import completion,
 // module hover, outline and workspace symbols, and module diagnostics.
-export module mcppls.index.modules;
+export module mcppls.engine.native.index;
 
 import std;
 import nlohmann.json;

@@ -1,8 +1,8 @@
-module mcppls.server.primer;
+module mcppls.engine.clangd.primer;
 
 import std;
 
-namespace mcppls::server {
+namespace mcppls::engine::clangd {
 
 void Primer::set_modules(std::vector<PrimeModule> modules) {
     std::map<std::string, State, std::less<>> states;
@@ -145,4 +145,4 @@ std::pair<std::size_t, std::size_t> Primer::progress() const {
     return { done, wanted };
 }
 
-} // namespace mcppls::server
+} // namespace mcppls::engine::clangd

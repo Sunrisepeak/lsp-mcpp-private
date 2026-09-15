@@ -1,4 +1,4 @@
-module mcppls.index.modules;
+module mcppls.engine.native.index;
 
 import std;
 import nlohmann.json;

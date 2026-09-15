@@ -1,4 +1,4 @@
-module mcppls.server.payload;
+module mcppls.engine.payload;
 
 import std;
 import nlohmann.json;
@@ -12,9 +12,9 @@ import mcppls.platform.env;
 import mcppls.platform.dirs;
 import mcppls.platform.process;
 import mcppls.base.sha256;
-import mcppls.engine.clangd;
+import mcppls.engine.clangd.process;
 
-namespace mcppls::server {
+namespace mcppls::engine {
 
 namespace {
 
@@ -116,7 +116,7 @@ PayloadPaths resolve_payload(const PayloadRequest& requested) {
         options.program = paths.clangd;
         options.arguments = { "--version" };
         if (auto result = platform::run(std::move(options), std::chrono::seconds { 20 }); result && !result->timedOut) {
-            paths.clangdVersion = engine::parse_clangd_version(result->output + result->error);
+            paths.clangdVersion = engine::clangd::parse_clangd_version(result->output + result->error);
         }
     }
     return paths;
@@ -229,4 +229,4 @@ std::vector<PayloadIntegrityIssue> verify_payload_integrity(const PayloadPaths& 
     return issues;
 }
 
-} // namespace mcppls::server
+} // namespace mcppls::engine

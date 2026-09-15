@@ -1,60 +1,63 @@
-module mcppls.server.router;
+module mcppls.orchestrator.routing;
 
 import std;
 import nlohmann.json;
-import mcppls.base.text;
-import mcppls.index.modules;
+import mcppls.engine;
 import mcppls.lsp.jsonrpc;
-import mcppls.lsp.protocol;
 
-namespace mcppls::server {
+namespace mcppls::orchestrator {
 
-using Json = nlohmann::json;
-
-namespace {
-
-std::optional<base::Position> position_of(const Json& params) {
-    const Json* position { lsp::find(params, "position") };
-    if (position == nullptr) return std::nullopt;
-    const auto line = lsp::int_at(*position, "line");
-    const auto character = lsp::int_at(*position, "character");
-    if (!line || !character) return std::nullopt;
-    return base::Position { static_cast<int>(*line), static_cast<int>(*character) };
+Selection select_engines(std::span<engine::Engine* const> engines, const engine::RequestView& request) {
+    struct Candidate {
+        engine::Engine* engine;
+        engine::Role role;
+        int priority;
+    };
+    std::vector<Candidate> candidates;
+    for (engine::Engine* candidate : engines) {
+        if (candidate == nullptr) continue;
+        std::optional<engine::MethodCapability> chosen;
+        for (const auto& capability : candidate->methods()) {
+            if (capability.method == request.method) {
+                chosen = capability;
+                break;
+            }
+            if (capability.method == engine::EVERY_METHOD && !chosen) chosen = capability;
+        }
+        if (!chosen || !candidate->claims(request)) continue;
+        candidates.push_back(Candidate { candidate, chosen->role, chosen->priority });
+    }
+    Selection selection;
+    const bool merging { std::ranges::any_of(candidates, [](const Candidate& c) { return c.role == engine::Role::merge; }) };
+    std::ranges::stable_sort(candidates, std::greater {}, [](const Candidate& c) { return c.priority; });
+    if (merging) {
+        for (const auto& candidate : candidates) selection.mergers.push_back(candidate.engine);
+        return selection;
+    }
+    for (const auto& candidate : candidates) {
+        if (candidate.role == engine::Role::answer) selection.answerers.push_back(candidate.engine);
+    }
+    for (const auto& candidate : candidates) {
+        if (candidate.role == engine::Role::fallback) selection.answerers.push_back(candidate.engine);
+    }
+    return selection;
 }
 
-} // namespace
-
-RouteDecision route_request(std::string_view method, const Json& params, const index::ModuleIndex& index,
-                            std::string_view path, std::string_view text) {
-    RouteDecision decision;
-    if (method == lsp::method::TEXT_DOCUMENT_DOCUMENT_SYMBOL) {
-        decision.merge = Merge::document_symbols;
-        return decision;
-    }
-    if (method == lsp::method::WORKSPACE_SYMBOL) {
-        decision.merge = Merge::workspace_symbols;
-        return decision;
-    }
-    if (path.empty()) return decision;
-    const auto position = position_of(params);
-    if (!position) return decision;
-    if (method == lsp::method::TEXT_DOCUMENT_DEFINITION || method == lsp::method::TEXT_DOCUMENT_DECLARATION) {
-        if (Json result = index.definition(path, *position); !result.is_null()) {
-            decision.route = Route::local;
-            decision.localResult = std::move(result);
-        }
-    } else if (method == lsp::method::TEXT_DOCUMENT_HOVER) {
-        if (Json result = index.hover(path, *position); !result.is_null()) {
-            decision.route = Route::local;
-            decision.localResult = std::move(result);
-        }
-    } else if (method == lsp::method::TEXT_DOCUMENT_COMPLETION) {
-        if (Json result = index.completion(path, text, *position); !result.is_null()) {
-            decision.route = Route::local;
-            decision.localResult = std::move(result);
+Json merge_results(std::string_view method, std::span<const std::pair<std::string, Json>> results) {
+    Json moduleResult;
+    Json engineResult;
+    for (const auto& [engineId, result] : results) {
+        if (engineId == MODULE_ENGINE_ID) {
+            moduleResult = result;
+        } else if (engineResult.is_null()) {
+            engineResult = result;
+        } else if (engineResult.is_array() && result.is_array()) {
+            for (const auto& item : result) engineResult.push_back(item);
         }
     }
-    return decision;
+    if (method == "textDocument/documentSymbol") return merge_document_symbols(engineResult, moduleResult.is_null() ? Json::array() : moduleResult);
+    if (method == "workspace/symbol") return merge_workspace_symbols(engineResult, moduleResult.is_null() ? Json::array() : moduleResult);
+    return engineResult.is_null() ? moduleResult : engineResult;
 }
 
 Json merge_document_symbols(const Json& engineResult, const Json& moduleSymbols) {
@@ -124,4 +127,4 @@ bool client_supports(const Json& clientCapabilities, std::string_view feature) {
     return value != modules->end() && value->is_boolean() && value->get<bool>();
 }
 
-} // namespace mcppls::server
+} // namespace mcppls::orchestrator

@@ -3,11 +3,11 @@
 // work across workers instead: for each module whose own imports are ready it
 // opens a one-line unit, `import M;`, so independent modules of the graph build at
 // the same time and the file the person opened finds them in clangd's cache.
-export module mcppls.server.primer;
+export module mcppls.engine.clangd.primer;
 
 import std;
 
-export namespace mcppls::server {
+export namespace mcppls::engine::clangd {
 
 struct PrimeModule {
     std::string name;
@@ -56,4 +56,4 @@ public:
     std::size_t running() const { return running_; }
 };
 
-} // namespace mcppls::server
+} // namespace mcppls::engine::clangd

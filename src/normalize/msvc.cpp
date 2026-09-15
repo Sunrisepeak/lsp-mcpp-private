@@ -140,7 +140,7 @@ std::vector<std::string> translate_msvc(const MsvcInput& input) {
     if (!standardGiven) out.emplace_back("-std=c++14");
     out.push_back("-fms-runtime-lib=" + runtime);
     if (input.facts != nullptr) {
-        for (auto& argument : windows_msvc_arguments(*input.facts, out)) out.push_back(std::move(argument));
+        for (auto& argument : windows_msvc_arguments(*input.facts, out, input.noAlignedAllocationWithMsvcStl)) out.push_back(std::move(argument));
     }
     if (input.importable) {
         out.emplace_back("-x");

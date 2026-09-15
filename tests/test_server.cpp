@@ -9,56 +9,59 @@ import mcppls.base.text;
 import mcppls.base.uri;
 import mcppls.platform.fs;
 import mcppls.platform.dirs;
-import mcppls.index.modules;
-import mcppls.server.documents;
-import mcppls.server.router;
-import mcppls.server.payload;
-import mcppls.server.workspace;
+import mcppls.normalize.plan;
 import mcppls.engine;
+import mcppls.engine.payload;
+import mcppls.engine.native;
+import mcppls.engine.native.index;
 import mcppls.engine.clangd;
-import mcppls.server.primer;
+import mcppls.engine.clangd.process;
+import mcppls.engine.clangd.primer;
+import mcppls.orchestrator.client;
+import mcppls.orchestrator.documents;
+import mcppls.orchestrator.routing;
+import mcppls.orchestrator.workspace;
 
 using Json = nlohmann::json;
 using mcppls::base::Position;
 namespace idx = mcppls::index;
-namespace srv = mcppls::server;
+namespace orch = mcppls::orchestrator;
 namespace eng = mcppls::engine;
+namespace cld = mcppls::engine::clangd;
 
 namespace {
 
-// usable plan W9.5: a fake that satisfies the mcppls.engine interface without a clangd process,
-// recording what the session (or anything else coded only against the interface) does to it.
-class FakeEngine : public eng::Engine {
+// overall design 5.2: a core engine that starts no process, answering every method it is asked with
+// a canned result and recording what it was asked.
+class FakeCoreEngine : public eng::Engine {
 public:
-    int starts { 0 };
-    bool running_ { false };
-    eng::EngineConfig lastConfig;
-    std::vector<std::string> pushedDatabases;
-    std::vector<Json> sent;
-    eng::EngineCapabilities capabilitiesToReport;
-    MessageHandler onMessage;
-    ClosedHandler onClosed;
+    std::vector<eng::MethodCapability> declared { { std::string { eng::EVERY_METHOD }, eng::Role::answer, 0 },
+                                                  { "textDocument/documentSymbol", eng::Role::merge, 0 } };
+    std::vector<std::string> asked;
+    bool claimsEverything { true };
+    Json cannedResult = Json::parse(R"([{"uri": "file:///p/src/core.cpp"}])");
 
-    mcppls::base::Result<void> start(const eng::EngineConfig& config, MessageHandler message, ClosedHandler closed, LogHandler) override {
-        ++starts;
-        running_ = true;
-        lastConfig = config;
-        onMessage = std::move(message);
-        onClosed = std::move(closed);
-        return {};
+    std::string_view id() const override { return "fake-core"; }
+    std::span<const eng::MethodCapability> methods() const override { return declared; }
+    eng::EngineTraits traits() const override { return {}; }
+    eng::EngineStatus status() const override { return eng::EngineStatus { .name = "fake-core", .role = "core", .state = "ready", .accepting = true }; }
+    void start(eng::Host& host) override { host.engine_settled(id(), Json::object()); }
+    void shut_down() override {}
+    void configure_plan(mcppls::normalize::PlanInput&) const override {}
+    void apply(const mcppls::normalize::EnginePlan*) override {}
+    void document(const eng::DocumentEvent&) override {}
+    void notify(const Json&) override {}
+    void sources_changed() override {}
+    bool claims(const eng::RequestView&) const override { return claimsEverything; }
+    void request(const eng::RequestView& request, const Json&, eng::Reply reply) override {
+        asked.emplace_back(request.method);
+        reply(eng::Answer { eng::Answer::Kind::result, cannedResult });
     }
-    mcppls::base::Result<void> push_database(std::string_view compileCommandsJson) override {
-        pushedDatabases.emplace_back(compileCommandsJson);
-        return {};
-    }
-    mcppls::base::Result<void> send(const Json& message) override {
-        sent.push_back(message);
-        return {};
-    }
-    void stop(std::chrono::milliseconds) override { running_ = false; }
-    bool running() const override { return running_; }
-    const eng::EngineConfig& config() const override { return lastConfig; }
-    eng::EngineCapabilities capabilities() const override { return capabilitiesToReport; }
+    void cancel(const Json&) override {}
+    void client_response(int, const Json&, const Json&) override {}
+    void handle_event(const Json&) override {}
+    std::optional<eng::Clock::time_point> next_deadline() const override { return std::nullopt; }
+    void handle_timers() override {}
 };
 
 idx::ModuleIndex fixture_index() {
@@ -79,7 +82,7 @@ int main() {
     using namespace mcppls::testing;
 
     "incremental changes use UTF-16 positions"_test = [] {
-        srv::DocumentStore store;
+        orch::DocumentStore store;
         store.open("file:///p/a.cpp", "/p/a.cpp", "cpp", 1, "int a\xF0\x9F\x98\x80 = 1;\nint b = 2;\n");
         const Json changes = Json::parse(R"([
             {"range": {"start": {"line": 0, "character": 7}, "end": {"line": 0, "character": 8}}, "text": "3"},
@@ -172,59 +175,87 @@ int main() {
         expect(!index.module_info("nothing").contains("resolvedFrom"));
     };
 
-    "routing sends module positions to the index"_test = [] {
+    "engines declare methods, claim requests, and are selected in order"_test = [] {
         const auto index = fixture_index();
+        const auto native = eng::native::make_engine(index);
+        FakeCoreEngine core;
+        const std::vector<eng::Engine*> engines { native.get(), &core };
         const std::string text { "import std;\nimport hello.greet;\n" };
         const Json onModule = Json::parse(R"({"textDocument": {"uri": "file:///p/src/main.cpp"}, "position": {"line": 1, "character": 10}})");
         const Json elsewhere = Json::parse(R"({"textDocument": {"uri": "file:///p/src/main.cpp"}, "position": {"line": 3, "character": 1}})");
-        expect(srv::route_request("textDocument/definition", onModule, index, "/p/src/main.cpp", text).route == srv::Route::local);
-        expect(srv::route_request("textDocument/hover", onModule, index, "/p/src/main.cpp", text).route == srv::Route::local);
-        expect(srv::route_request("textDocument/definition", elsewhere, index, "/p/src/main.cpp", text).route == srv::Route::engine);
-        expect(srv::route_request("textDocument/references", onModule, index, "/p/src/main.cpp", text).route == srv::Route::engine);
-        expect(srv::route_request("textDocument/documentSymbol", onModule, index, "/p/src/main.cpp", text).merge == srv::Merge::document_symbols);
-        expect(srv::route_request("workspace/symbol", Json::object(), index, "", "").merge == srv::Merge::workspace_symbols);
+        auto view = [&](std::string_view method, const Json& params) { return eng::RequestView { method, &params, "/p/src/main.cpp", text }; };
+
+        // A module name: mcppls's own engine claims it and answers first; the core engine is the next answerer.
+        auto onName = orch::select_engines(engines, view("textDocument/definition", onModule));
+        expect(fatal(onName.answerers.size() == 2u));
+        expect(onName.mergers.empty());
+        expect(onName.answerers[0] == native.get() && onName.answerers[1] == &core);
+        expect(orch::select_engines(engines, view("textDocument/hover", onModule)).answerers.front() == native.get());
+        // Anywhere else, and methods mcppls's engine does not declare, go to the core engine alone.
+        auto other = orch::select_engines(engines, view("textDocument/definition", elsewhere));
+        expect(other.answerers.size() == 1u && other.answerers[0] == &core);
+        expect(orch::select_engines(engines, view("textDocument/references", onModule)).answerers == std::vector<eng::Engine*> { &core });
+        // Outlines merge both. Once one engine merges a method, an engine that answers every method joins the merge.
+        expect(orch::select_engines(engines, view("textDocument/documentSymbol", onModule)).mergers.size() == 2u);
+        const Json query = Json::parse(R"({"query": "greet"})");
+        const eng::RequestView symbols { "workspace/symbol", &query, "", "" };
+        expect(orch::select_engines(engines, symbols).mergers == std::vector<eng::Engine*> { native.get(), &core });
+        // An engine that does not claim a request (clangd for a unit left out of its database) is not asked.
+        core.claimsEverything = false;
+        expect(orch::select_engines(engines, view("textDocument/references", onModule)).answerers.empty());
+        expect(orch::select_engines(engines, view("textDocument/documentSymbol", onModule)).mergers == std::vector<eng::Engine*> { native.get() });
+
+        // mcppls's engine answers at once, from the index.
+        std::optional<eng::Answer> answer;
+        native->request(view("textDocument/definition", onModule), Json::object(), [&](eng::Answer a) { answer = std::move(a); });
+        expect(fatal(answer.has_value()));
+        expect(answer->kind == eng::Answer::Kind::result && answer->value.is_array());
+        const std::vector<std::pair<std::string, Json>> merged { { "fake-core", Json::parse(R"([{"name": "main", "kind": 12, "range": {}, "selectionRange": {}}])") },
+                                                                 { "mcppls", index.document_symbols("/p/src/greet/detail.cppm") } };
+        const Json outline = orch::merge_results("textDocument/documentSymbol", merged);
+        expect(outline.size() == 2u && outline[0]["name"] == "hello.greet:detail") << outline.dump();
     };
 
     "clangd's module build failures are recognized"_test = [] {
-        const auto failure = mcppls::engine::parse_module_failure(
+        const auto failure = cld::parse_module_failure(
             R"(E[03:15:19.435] Failed to build module greet; due to Failed to compile C:\Program Files\VS\modules\std.ixx. Use '--log=verbose' to view detailed failure reasons.)");
         expect(fatal(failure.has_value()));
         expect(failure->module == "greet") << failure->module;
         expect(failure->reason == R"(Failed to compile C:\Program Files\VS\modules\std.ixx)") << failure->reason;
         expect(failure->failedSource == R"(C:\Program Files\VS\modules\std.ixx)") << failure->failedSource;
-        const auto other = mcppls::engine::parse_module_failure("E[04:05:38.910] Failed to build module std; due to Don't get the module unit for module std");
+        const auto other = cld::parse_module_failure("E[04:05:38.910] Failed to build module std; due to Don't get the module unit for module std");
         expect(fatal(other.has_value()));
         expect(other->module == "std" && other->failedSource.empty());
-        expect(!mcppls::engine::parse_module_failure("I[04:34:47.305] Built module std to /cache/std.pcm").has_value());
+        expect(!cld::parse_module_failure("I[04:34:47.305] Built module std to /cache/std.pcm").has_value());
     };
 
     "merging"_test = [] {
         const Json engineSymbols = Json::parse(R"([{"name": "hello", "kind": 3, "range": {}, "selectionRange": {}}])");
         const Json moduleSymbols = Json::parse(R"([{"name": "hello.greet", "kind": 2, "range": {}, "selectionRange": {}}])");
-        const Json merged = srv::merge_document_symbols(engineSymbols, moduleSymbols);
+        const Json merged = orch::merge_document_symbols(engineSymbols, moduleSymbols);
         expect(merged.size() == 2u && merged[0]["name"] == "hello.greet");
         const Json flat = Json::parse(R"([{"name": "hello", "kind": 3, "location": {}}])");
-        expect(srv::merge_document_symbols(flat, moduleSymbols).size() == 1u);
-        expect(srv::merge_workspace_symbols(nullptr, moduleSymbols).size() == 1u);
+        expect(orch::merge_document_symbols(flat, moduleSymbols).size() == 1u);
+        expect(orch::merge_workspace_symbols(nullptr, moduleSymbols).size() == 1u);
 
         const Json range = Json::parse(R"({"start": {"line": 1, "character": 7}, "end": {"line": 1, "character": 18}})");
         const Json moduleDiagnostics = Json::array({ Json { { "range", range }, { "message", "module 'x' not found" }, { "source", "mcppls" } } });
         const Json engineDiagnostics = Json::array({ Json { { "range", range }, { "message", "module 'x' not found" }, { "source", "clang" } },
                                                      Json { { "range", Json::parse(R"({"start": {"line": 4, "character": 0}, "end": {"line": 4, "character": 1}})") }, { "message", "other" }, { "source", "clang" } } });
-        const Json diagnostics = srv::merge_diagnostics(engineDiagnostics, moduleDiagnostics, "gcc 16.1.0");
+        const Json diagnostics = orch::merge_diagnostics(engineDiagnostics, moduleDiagnostics, "gcc 16.1.0");
         expect(diagnostics.size() == 2u) << diagnostics.dump();
         expect(diagnostics[1]["source"] == "clang \xC2\xB7 gcc 16.1.0") << diagnostics.dump();
 
-        const Json capabilities = srv::merge_capabilities(Json::parse(R"({"hoverProvider": true, "textDocumentSync": {"change": 2}})"));
+        const Json capabilities = orch::merge_capabilities(Json::parse(R"({"hoverProvider": true, "textDocumentSync": {"change": 2}})"));
         expect(capabilities["experimental"]["cxxModules"]["version"] == 1);
         expect(capabilities["definitionProvider"] == true && capabilities["textDocumentSync"]["change"] == 2);
         const Json client = Json::parse(R"({"experimental": {"cxxModules": {"version": 1, "status": true}}})");
-        expect(srv::client_supports(client, "status") && !srv::client_supports(client, "graph"));
+        expect(orch::client_supports(client, "status") && !orch::client_supports(client, "graph"));
     };
 
     "modules are prepared as soon as their imports are, within the limit"_test = [] {
-        using State = srv::Primer::State;
-        srv::Primer primer;
+        using State = cld::Primer::State;
+        cld::Primer primer;
         primer.set_limit(2);
         primer.set_modules({
             { "std", {}, "/prime/std.cpp" },
@@ -238,7 +269,7 @@ int main() {
         expect(primer.want(wanted) == 5u) << "everything app reaches, and nothing else";
         expect(primer.state("tool") == State::unwanted);
         expect(primer.busy());
-        auto names = [](const std::vector<const srv::PrimeModule*>& modules) {
+        auto names = [](const std::vector<const cld::PrimeModule*>& modules) {
             std::vector<std::string> result;
             for (const auto* module : modules) result.push_back(module->name);
             return result;
@@ -260,14 +291,14 @@ int main() {
         primer.finish("app");
         expect(primer.running() == 0u) << "a module finished twice is counted once";
 
-        const std::vector<srv::PrimeModule> smaller { { "std", {}, "/prime/std.cpp" }, { "base", { "std" }, "/prime/base.cpp" } };
+        const std::vector<cld::PrimeModule> smaller { { "std", {}, "/prime/std.cpp" }, { "base", { "std" }, "/prime/base.cpp" } };
         expect(!primer.same_modules(smaller));
-        const std::vector<srv::PrimeModule> otherImports {
+        const std::vector<cld::PrimeModule> otherImports {
             { "std", {}, "/prime/std.cpp" },       { "base", { "std" }, "/prime/base.cpp" },          { "util", { "std", "base" }, "/prime/util.cpp" },
             { "app:part", { "base" }, "" },         { "app", { "app:part", "util" }, "/prime/app.cpp" }, { "tool", { "std" }, "/prime/tool.cpp" },
         };
         expect(!primer.same_modules(otherImports)) << "util imports base now";
-        const std::vector<srv::PrimeModule> reordered {
+        const std::vector<cld::PrimeModule> reordered {
             { "tool", { "std" }, "/prime/tool.cpp" }, { "app", { "app:part", "util" }, "/prime/app.cpp" }, { "app:part", { "base" }, "" },
             { "util", { "std" }, "/prime/util.cpp" }, { "base", { "std" }, "/prime/base.cpp" },          { "std", {}, "/prime/std.cpp" },
         };
@@ -283,25 +314,25 @@ int main() {
 
     "a request about a file still being prepared waits while preparation progresses"_test = [] {
         using namespace std::chrono_literals;
-        const auto now = srv::Clock::now();
-        srv::PendingRequest request;
-        request.purpose = srv::Purpose::client;
+        const auto now = eng::Clock::now();
+        cld::PendingRequest request;
+        request.purpose = cld::Purpose::client;
         request.deadline = now;
         request.limit = now + 50s;
-        expect(srv::keep_waiting(request, true, now - 2s, now)) << "a module finished two seconds ago";
-        expect(!srv::keep_waiting(request, false, now - 2s, now)) << "the file's modules are ready: answer";
-        expect(!srv::keep_waiting(request, true, std::nullopt, now)) << "nothing has finished yet: no sign of progress";
-        expect(!srv::keep_waiting(request, true, now - 11s, now)) << "no module finished for longer than a request's own wait";
+        expect(cld::keep_waiting(request, true, now - 2s, now)) << "a module finished two seconds ago";
+        expect(!cld::keep_waiting(request, false, now - 2s, now)) << "the file's modules are ready: answer";
+        expect(!cld::keep_waiting(request, true, std::nullopt, now)) << "nothing has finished yet: no sign of progress";
+        expect(!cld::keep_waiting(request, true, now - 11s, now)) << "no module finished for longer than a request's own wait";
         request.limit = now;
-        expect(!srv::keep_waiting(request, true, now - 2s, now)) << "the request's limit is reached";
+        expect(!cld::keep_waiting(request, true, now - 2s, now)) << "the request's limit is reached";
         request.limit = now + 50s;
-        request.purpose = srv::Purpose::engine_initialize;
-        expect(!srv::keep_waiting(request, true, now - 2s, now)) << "only a client's request waits";
+        request.purpose = cld::Purpose::engine_initialize;
+        expect(!cld::keep_waiting(request, true, now - 2s, now)) << "only a client's request waits";
     };
 
     "a module the engine has already built completes without a unit"_test = [] {
-        using State = srv::Primer::State;
-        srv::Primer primer;
+        using State = cld::Primer::State;
+        cld::Primer primer;
         primer.set_limit(4);
         primer.set_modules({
             { "std", {}, "/prime/std.cpp" },
@@ -312,7 +343,7 @@ int main() {
         const std::vector<std::string> wanted { "app" };
         expect(primer.want(wanted) == 4u);
         // A warm start: std and base are cached, app changed since.
-        const auto cached = [](const srv::PrimeModule& module) { return module.name == "std" || module.name == "base"; };
+        const auto cached = [](const cld::PrimeModule& module) { return module.name == "std" || module.name == "base"; };
         const auto started = primer.start_ready(cached);
         expect(fatal(started.size() == 1u));
         expect(started.front()->name == "app") << "completions cascade to importers in the same call";
@@ -321,7 +352,7 @@ int main() {
     };
 
     "the module more work waits on starts first"_test = [] {
-        srv::Primer primer;
+        cld::Primer primer;
         primer.set_limit(1);
         primer.set_modules({
             { "std", {}, "/prime/std.cpp" },
@@ -341,46 +372,16 @@ int main() {
         expect(next.front()->name == "z-root") << next.front()->name;
     };
 
-    "the clangd capability table is keyed by version"_test = [] {
-        const auto pinned = mcppls::engine::capabilities_for_clangd_version("23.1.0");
-        expect(pinned.experimentalModulesSupport && pinned.useDirtyHeaders && pinned.persistentModuleCache && pinned.msvcStlNeedsNoAlignedAllocation);
-        const auto other = mcppls::engine::capabilities_for_clangd_version("22.1.8");
-        expect(!other.experimentalModulesSupport && !other.useDirtyHeaders && !other.persistentModuleCache && !other.msvcStlNeedsNoAlignedAllocation)
-            << "an unrecognized version assumes none of the optional behaviour, not the pinned one's";
-    };
-
-    "a fake engine satisfies the mcppls.engine interface with no clangd process"_test = [] {
-        // usable plan W9.5: anything coded only against eng::Engine (the session, and this test)
-        // works the same with this fake as with mcppls.engine.clangd::Clangd.
-        FakeEngine fake;
-        expect(!fake.running());
-        eng::EngineConfig config;
-        config.executable = "/payload/clangd/bin/clangd";
-        config.version = "23.1.0";
-        config.databaseDirectory = "/cache/contexts/default/cdb";
-        bool closed { false };
-        std::vector<Json> received;
-        const auto started = fake.start(
-            config, [&](Json message) { received.push_back(std::move(message)); }, [&] { closed = true; }, [](std::string_view) {});
-        expect(started.has_value() && fake.running() && fake.starts == 1);
-        expect(fake.config().version == "23.1.0" && fake.config().databaseDirectory == "/cache/contexts/default/cdb");
-        expect(fake.capabilities().experimentalModulesSupport == false) << "a fresh fake reports no capability until the test sets one";
-        fake.capabilitiesToReport = eng::capabilities_for_clangd_version("23.1.0");
-        expect(fake.capabilities().useDirtyHeaders);
-
-        expect(fake.push_database("[]").has_value());
-        expect(fake.pushedDatabases == std::vector<std::string> { "[]" });
-        expect(fake.send(Json { { "method", "initialized" } }).has_value());
-        expect(fake.sent.size() == 1u && fake.sent.front()["method"] == "initialized");
-
-        // The handlers given to start() work like a real connection's: the "engine" can call back in.
-        fake.onMessage(Json { { "method", "textDocument/publishDiagnostics" } });
-        expect(received.size() == 1u && received.front()["method"] == "textDocument/publishDiagnostics");
-        fake.onClosed();
-        expect(closed);
-
-        fake.stop(std::chrono::milliseconds { 0 });
-        expect(!fake.running());
+    "the clangd traits table is keyed by version"_test = [] {
+        const auto pinned = cld::traits_for_version("23.1.0");
+        expect(pinned.tested && pinned.hangsOnUnresolvedImports && pinned.needsModulePreparation && pinned.needsModuleHints);
+        expect(pinned.msvcStlNeedsNoAlignedAllocation && pinned.kitStdlibVersion == "23.1.0" && !pinned.importNavigation);
+        const auto fixed = cld::traits_for_version("23.1.1");
+        expect(!fixed.msvcStlNeedsNoAlignedAllocation) << "llvm-project#218152 is fixed in 23.1.1";
+        expect(!fixed.tested && fixed.kitStdlibVersion == "23.1.1");
+        const auto other = cld::traits_for_version("22.1.8");
+        expect(other.hangsOnUnresolvedImports && other.needsModulePreparation && other.needsModuleHints && other.msvcStlNeedsNoAlignedAllocation && !other.tested)
+            << "an unrecognized version gets every compensation";
     };
 
     "payload integrity checks size and sha256, and caches the hash"_test = [] {
@@ -397,42 +398,42 @@ int main() {
         (void)fs::write_file(kitJsonPath, kitContent);
         const std::string cacheFile { mcppls::base::join_path(root, "cache.json") };
 
-        srv::PayloadPaths payload;
+        eng::PayloadPaths payload;
         payload.directory = root;
-        payload.files.emplace("clangd", srv::PayloadFileIntegrity { content.size(), mcppls::base::sha256_hex(content) });
-        payload.files.emplace("kit.json", srv::PayloadFileIntegrity { kitContent.size(), mcppls::base::sha256_hex(kitContent) });
+        payload.files.emplace("clangd", eng::PayloadFileIntegrity { content.size(), mcppls::base::sha256_hex(content) });
+        payload.files.emplace("kit.json", eng::PayloadFileIntegrity { kitContent.size(), mcppls::base::sha256_hex(kitContent) });
 
-        expect(srv::verify_payload_integrity(payload, cacheFile).empty()) << "both files match their manifest entry";
+        expect(eng::verify_payload_integrity(payload, cacheFile).empty()) << "both files match their manifest entry";
         expect(fs::is_regular_file(cacheFile)) << "a hash was computed and cached";
 
         // A no-op payload.files: nothing to check, regardless of what is on disk.
-        srv::PayloadPaths empty;
+        eng::PayloadPaths empty;
         empty.directory = root;
-        expect(srv::verify_payload_integrity(empty, cacheFile).empty());
+        expect(eng::verify_payload_integrity(empty, cacheFile).empty());
 
         // Truncated: the size check alone catches it, no need to hash.
-        srv::PayloadPaths truncated { payload };
+        eng::PayloadPaths truncated { payload };
         truncated.files.at("clangd").size = content.size() + 1;
         {
-            const auto issues = srv::verify_payload_integrity(truncated, cacheFile);
+            const auto issues = eng::verify_payload_integrity(truncated, cacheFile);
             expect(fatal(issues.size() == 1u));
             expect(issues.front().path == "clangd" && issues.front().reason.find("expected") != std::string::npos) << issues.front().reason;
         }
 
         // Same size, wrong sha256 (a manifest that does not describe this file).
-        srv::PayloadPaths wrongHash { payload };
+        eng::PayloadPaths wrongHash { payload };
         wrongHash.files.at("clangd").sha256 = std::string(64, '0');
         {
-            const auto issues = srv::verify_payload_integrity(wrongHash, cacheFile);
+            const auto issues = eng::verify_payload_integrity(wrongHash, cacheFile);
             expect(fatal(issues.size() == 1u));
             expect(issues.front().path == "clangd");
         }
 
         // Missing entirely.
-        srv::PayloadPaths missing { payload };
-        missing.files.emplace("nonexistent", srv::PayloadFileIntegrity { 1, "x" });
+        eng::PayloadPaths missing { payload };
+        missing.files.emplace("nonexistent", eng::PayloadFileIntegrity { 1, "x" });
         {
-            const auto issues = srv::verify_payload_integrity(missing, cacheFile);
+            const auto issues = eng::verify_payload_integrity(missing, cacheFile);
             expect(fatal(issues.size() == 1u));
             expect(issues.front().path == "nonexistent" && issues.front().reason == "is missing");
         }
@@ -440,14 +441,14 @@ int main() {
         // The cache is trusted while size and modification time have not changed: tampering the
         // cached hash for an unmodified file (same stamp) changes the verdict, proving the second
         // call reused it instead of re-hashing the untouched file.
-        expect(srv::verify_payload_integrity(payload, cacheFile).empty());
+        expect(eng::verify_payload_integrity(payload, cacheFile).empty());
         auto tampered = fs::read_file(cacheFile);
         expect(fatal(tampered.has_value()));
         Json cacheJson = Json::parse(*tampered);
         cacheJson[clangdPath]["sha256"] = std::string(64, 'f');
         (void)fs::write_file(cacheFile, cacheJson.dump());
         {
-            const auto issues = srv::verify_payload_integrity(payload, cacheFile);
+            const auto issues = eng::verify_payload_integrity(payload, cacheFile);
             expect(fatal(issues.size() == 1u)) << "the tampered cache entry was trusted, not recomputed";
             expect(issues.front().path == "clangd");
         }
@@ -455,46 +456,38 @@ int main() {
         fs::remove_all(root);
     };
 
-    "engine request keys round-trip and tell roots apart"_test = [] {
-        // usable plan W9.1: the session parses this back out of a client response's id to find
-        // which root's engine to forward it to, and to discard a stale generation.
-        // `Json id { 42 }` would wrap the plain integer in a one-element array; `=` keeps it a
-        // scalar, matching the plain integer ids clangd itself sends.
+    "engine request keys round-trip and tell roots and engines apart"_test = [] {
+        // usable plan W9.1, overall design 5.1: the session parses this back out of a client response's
+        // id to find which root's engine to forward it to, and to discard a stale generation.
+        // `Json id { 42 }` would wrap the plain integer in a one-element array; `=` keeps it a scalar.
         const Json id = 42;
-        const std::string key { srv::make_engine_request_key("/work/root-a", 3, id) };
-        std::string rootKey;
-        int generation { 0 };
-        Json parsedId;
-        expect(srv::parse_engine_request_key(key, rootKey, generation, parsedId));
-        expect(rootKey == "/work/root-a" && generation == 3 && parsedId == id);
+        const std::string key { orch::make_engine_request_key("/work/root-a", "clangd", 3, id) };
+        const auto parsed = orch::parse_engine_request_key(key);
+        expect(fatal(parsed.has_value()));
+        expect(parsed->rootKey == "/work/root-a" && parsed->engineId == "clangd" && parsed->generation == 3 && parsed->engineRequestId == id);
 
-        // A different root or generation makes a different key, so the session's lookup cannot
-        // confuse one root's in-flight request with another's, or an old engine with the current one.
-        expect(srv::make_engine_request_key("/work/root-b", 3, id) != key);
-        expect(srv::make_engine_request_key("/work/root-a", 4, id) != key);
+        expect(orch::make_engine_request_key("/work/root-b", "clangd", 3, id) != key);
+        expect(orch::make_engine_request_key("/work/root-a", "clice", 3, id) != key);
+        expect(orch::make_engine_request_key("/work/root-a", "clangd", 4, id) != key);
 
-        // Not a value this function ever produced: parsed as not-a-key rather than misread.
-        expect(!srv::parse_engine_request_key("not-a-key", rootKey, generation, parsedId));
-        expect(!srv::parse_engine_request_key("e:onlyonecolon", rootKey, generation, parsedId));
+        expect(!orch::parse_engine_request_key("not-a-key").has_value());
+        expect(!orch::parse_engine_request_key("e:onlyonecolon").has_value());
 
-        // A string id, and a root key that itself contains ':' (every Windows path does, right
-        // after its drive letter): the root key is length-prefixed rather than split on ':', so it
-        // round-trips exactly regardless of what it contains.
-        // `Json("s:5")` (parentheses): `Json { "s:5" }` would, like the integer above, wrap the
-        // string in a one-element array instead of holding it as the one string value.
+        // A string id, and a root key that itself contains ':' (every Windows path does): fields are
+        // length-prefixed rather than split on ':'. `Json { "s:5" }` would make an array.
         const Json stringId("s:5");
-        const std::string key2 { srv::make_engine_request_key("/work/a:b", 1, stringId) };
-        expect(srv::parse_engine_request_key(key2, rootKey, generation, parsedId));
-        expect(rootKey == "/work/a:b" && generation == 1 && parsedId == stringId);
+        const auto second = orch::parse_engine_request_key(orch::make_engine_request_key("C:/work/a:b", "c:d", 1, stringId));
+        expect(fatal(second.has_value()));
+        expect(second->rootKey == "C:/work/a:b" && second->engineId == "c:d" && second->generation == 1 && second->engineRequestId == stringId);
     };
 
     "build files, interactive methods and state names"_test = [] {
-        expect(srv::is_build_file("mcpp.toml") && srv::is_build_file("CMakeLists.txt") && srv::is_build_file("x.cmake"));
-        expect(!srv::is_build_file("main.cpp") && !srv::is_build_file("greet.cppm"));
-        expect(srv::is_interactive("textDocument/hover") && srv::is_interactive("textDocument/definition"));
-        expect(!srv::is_interactive("textDocument/didOpen") && !srv::is_interactive("workspace/symbol"));
-        expect(srv::to_string(srv::State::ready) == "ready" && srv::to_string(srv::State::error) == "error");
-        expect(srv::to_string(srv::State::degraded) == "degraded" && srv::to_string(srv::State::preparing) == "preparing");
+        expect(orch::is_build_file("mcpp.toml") && orch::is_build_file("CMakeLists.txt") && orch::is_build_file("x.cmake"));
+        expect(!orch::is_build_file("main.cpp") && !orch::is_build_file("greet.cppm"));
+        expect(cld::is_interactive("textDocument/hover") && cld::is_interactive("textDocument/definition"));
+        expect(!cld::is_interactive("textDocument/didOpen") && !cld::is_interactive("workspace/symbol"));
+        expect(orch::to_string(orch::State::ready) == "ready" && orch::to_string(orch::State::error) == "error");
+        expect(orch::to_string(orch::State::degraded) == "degraded" && orch::to_string(orch::State::preparing) == "preparing");
     };
 
     return report();

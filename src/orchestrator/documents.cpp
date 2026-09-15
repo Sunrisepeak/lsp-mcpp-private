@@ -1,11 +1,11 @@
-module mcppls.server.documents;
+module mcppls.orchestrator.documents;
 
 import std;
 import nlohmann.json;
 import mcppls.base.text;
 import mcppls.base.path;
 
-namespace mcppls::server {
+namespace mcppls::orchestrator {
 
 namespace {
 
@@ -78,4 +78,4 @@ std::vector<const Document*> DocumentStore::all() const {
     return result;
 }
 
-} // namespace mcppls::server
+} // namespace mcppls::orchestrator

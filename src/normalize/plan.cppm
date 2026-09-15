@@ -67,6 +67,12 @@ struct PlanInput {
     std::string primeDirectory;
     // The directory module hints name; nothing is created there. Empty: no hints.
     std::string moduleHintDirectory;
+    // Engine decisions (overall design 5.4), set by the core engine's configure_plan. Units whose
+    // imports cannot resolve, and their importers, stay out of the database: clangd 23.1 can stop
+    // answering for them (v1 experiment E13).
+    bool excludeUnresolvedImports { true };
+    // MSVC STL contexts turn aligned allocation off (clangd 23.1.0, usable plan E8/E9).
+    bool noAlignedAllocationWithMsvcStl { true };
 };
 
 EnginePlan plan_engine(const PlanInput& input);

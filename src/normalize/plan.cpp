@@ -136,10 +136,10 @@ EnginePlan plan_engine(const PlanInput& input) {
                 : project::expand_response_files(unit.arguments, unit.workDirectory, syntax);
             candidate.facts = facts;
             if (usable(facts) && (facts->toolchain.family == spec::Family::gcc || facts->toolchain.family == spec::Family::clang)) {
-                candidate.arguments = translate_gnu(GnuInput { arguments, candidate.source, unit.workDirectory, facts, importable });
+                candidate.arguments = translate_gnu(GnuInput { arguments, candidate.source, unit.workDirectory, facts, importable, input.noAlignedAllocationWithMsvcStl });
                 candidate.driver = facts->toolchain.family == spec::Family::gcc ? clangDriver : facts->toolchain.driver;
             } else if (usable(facts)) {
-                candidate.arguments = translate_msvc(MsvcInput { arguments, candidate.source, unit.workDirectory, facts, importable });
+                candidate.arguments = translate_msvc(MsvcInput { arguments, candidate.source, unit.workDirectory, facts, importable, input.noAlignedAllocationWithMsvcStl });
                 candidate.driver = clangDriver;
             } else if (input.kit != nullptr) {
                 candidate.usesKit = true;
@@ -233,7 +233,7 @@ EnginePlan plan_engine(const PlanInput& input) {
             if (resolved) continue;
             // Any unit with an import that cannot resolve stays out of the engine database:
             // clangd 23.1 can stop answering for it (experiment E13), module unit or not.
-            excluded[i] = true;
+            if (input.excludeUnresolvedImports) excluded[i] = true;
             if (reported.insert(candidates[i].source + "\n" + name).second) {
                 plan.issues.push_back(PlanIssue { "unresolved-module", std::format("module {} cannot be resolved", name), candidates[i].source, name });
             }

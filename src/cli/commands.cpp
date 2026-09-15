@@ -1,4 +1,4 @@
-module mcppls.server.cli;
+module mcppls.cli.commands;
 
 import std;
 import nlohmann.json;
@@ -20,11 +20,14 @@ import mcppls.project.detect;
 import mcppls.project.infer;
 import mcppls.project.model;
 import mcppls.normalize.plan;
-import mcppls.index.modules;
-import mcppls.server.payload;
+import mcppls.engine;
+import mcppls.engine.payload;
+import mcppls.engine.native;
+import mcppls.engine.native.index;
+import mcppls.engine.clangd;
 import mcppls.server.session;
 
-namespace mcppls::server {
+namespace mcppls::cli {
 
 namespace {
 
@@ -37,7 +40,7 @@ std::string absolute(std::string_view path) {
 }
 
 struct Loaded {
-    PayloadPaths payload;
+    engine::PayloadPaths payload;
     std::optional<spec::Kit> kit;
     project::ProjectModel model;
     normalize::EnginePlan plan;
@@ -58,7 +61,7 @@ std::string root_for(std::string_view file) {
 
 Loaded load(std::string_view root, const cmdline::ParsedArgs& args, bool trusted) {
     Loaded loaded;
-    loaded.payload = resolve_payload(PayloadRequest { args.value("payload").value_or(""), args.value("clangd").value_or(""), args.value("kit").value_or("") });
+    loaded.payload = engine::resolve_payload(engine::PayloadRequest { args.value("payload").value_or(""), args.value("clangd").value_or(""), args.value("kit").value_or("") });
     if (!loaded.payload.kit.empty()) {
         if (auto kit = spec::load_kit(loaded.payload.kit)) loaded.kit = std::move(*kit);
         else base::log::warning("semantic kit unusable: {}", kit.error().message);
@@ -80,7 +83,7 @@ Loaded load(std::string_view root, const cmdline::ParsedArgs& args, bool trusted
     input.facts = &loaded.model.facts;
     input.kit = options.kit;
     input.engineDriverDirectory = loaded.payload.clangd.empty() ? std::string {} : base::parent_path(loaded.payload.clangd);
-    input.macosSdk = options.kit && spec::requires_macos_sdk(*options.kit) ? macos_sdk_path() : std::string {};
+    input.macosSdk = options.kit && spec::requires_macos_sdk(*options.kit) ? engine::macos_sdk_path() : std::string {};
     input.scanner = project::file_scanner();
     input.metadataReader = spec::caching_metadata_reader();
     loaded.plan = normalize::plan_engine(input);
@@ -160,9 +163,27 @@ int command_check(const cmdline::ParsedArgs& args) {
     return result->exitCode == 0 && !result->timedOut ? 0 : 1;
 }
 
+// The composition root (overall design 4.1): the engines every workspace root gets.
+orchestrator::EngineFactories engine_factories(const orchestrator::SessionOptions& options, const engine::PayloadPaths& payload, bool payloadCorrupt) {
+    orchestrator::EngineFactories factories;
+    factories.modules = [](const index::ModuleIndex& index) { return engine::native::make_engine(index); };
+    if (options.engine == "none") return factories;
+    if (options.engine != "clangd") base::log::warning("unknown engine {}; using clangd", options.engine);
+    factories.core = [options, payload, payloadCorrupt]() -> std::unique_ptr<engine::Engine> {
+        engine::clangd::Options clangd;
+        clangd.executable = payload.clangd;
+        clangd.version = payload.clangdVersion;
+        clangd.payloadCorrupt = payloadCorrupt;
+        clangd.verboseLog = options.verboseEngineLog;
+        clangd.requestTimeout = options.requestTimeout;
+        return engine::clangd::make_engine(std::move(clangd));
+    };
+    return factories;
+}
+
 } // namespace
 
-int run_cli(int argc, char* argv[]) {
+int run(int argc, char* argv[]) {
     int status { 0 };
     bool handled { false };
     auto serve = [&](const cmdline::ParsedArgs& args) {
@@ -170,7 +191,7 @@ int run_cli(int argc, char* argv[]) {
         if (auto level = args.value("log-level")) {
             if (auto parsed = base::log::parse_level(*level)) base::log::set_level(*parsed);
         }
-        SessionOptions options;
+        orchestrator::SessionOptions options;
         options.payloadDirectory = args.value("payload").value_or("");
         options.clangd = args.value("clangd").value_or("");
         options.kit = args.value("kit").value_or("");
@@ -179,13 +200,18 @@ int run_cli(int argc, char* argv[]) {
         options.trusted = !args.is_flag_set("untrusted");
         options.discoverCompilers = !args.is_flag_set("no-discover");
         options.verboseEngineLog = args.value("log-level").value_or("") == "debug";
+        if (auto chosen = args.value("engine")) {
+            options.engine = *chosen;
+            options.engineFromCommandLine = true;
+        }
+        options.engineFactories = engine_factories;
         if (auto timeout = args.value("request-timeout")) {
             try {
                 options.requestTimeout = std::chrono::seconds { std::stoi(*timeout) };
             } catch (...) {
             }
         }
-        status = run_session(options);
+        status = server::run_session(options);
     };
 
     // Built statement by statement: a fluent chain nests a subcommand under the
@@ -202,6 +228,7 @@ int run_cli(int argc, char* argv[]) {
     (void)app.option("no-discover").global(true).help("Do not look for compilers; loose sources use the semantic kit");
     (void)app.option("log-level").takes_value().global(true).help("debug | info | warning | error");
     (void)app.option("request-timeout").takes_value().global(true).help("Seconds before an engine request is answered without it");
+    (void)app.option("engine").takes_value().global(true).help("The core semantic engine: clangd (default) or none, mcppls's own module features only");
     // Language clients pass these by convention; this server always speaks over its standard streams.
     (void)app.option("stdio").global(true).help("Accepted for language clients; standard input and output are always used");
     (void)app.option("clientProcessId").takes_value().global(true).help("Accepted for language clients; not used");
@@ -238,4 +265,4 @@ int run_cli(int argc, char* argv[]) {
     return handled ? status : 0;
 }
 
-} // namespace mcppls::server
+} // namespace mcppls::cli

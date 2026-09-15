@@ -15,6 +15,7 @@ struct MsvcInput {
     std::string workDirectory;
     const toolchain::ToolchainFacts* facts { nullptr };
     bool importable { false };
+    bool noAlignedAllocationWithMsvcStl { true };   // the core engine's trait (overall design 5.4)
 };
 
 std::vector<std::string> translate_msvc(const MsvcInput& input);
