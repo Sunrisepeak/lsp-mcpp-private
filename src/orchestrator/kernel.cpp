@@ -447,6 +447,20 @@ std::optional<Json> Kernel::next_external(std::chrono::milliseconds timeout) {
     return message;
 }
 
+std::optional<Json> Kernel::take_external(const std::function<bool(const Json&)>& wanted, std::chrono::milliseconds timeout) {
+    const auto until = Clock::now() + timeout;
+    while (true) {
+        const auto found = std::ranges::find_if(impl_->external, wanted);
+        if (found != impl_->external.end()) {
+            Json message = std::move(*found);
+            impl_->external.erase(found);
+            return message;
+        }
+        if (impl_->externalClosed || Clock::now() >= until) return std::nullopt;
+        impl_->pump(until);
+    }
+}
+
 bool Kernel::input_closed() const { return impl_->externalClosed && impl_->external.empty(); }
 
 void Kernel::shut_down() {

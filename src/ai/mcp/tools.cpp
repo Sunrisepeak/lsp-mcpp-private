@@ -12,6 +12,8 @@ import mcppls.ai.context.interface;
 import mcppls.ai.verify.changes;
 import mcppls.ai.review.pipeline;
 import mcppls.ai.review.report;
+import mcppls.ai.review.judgement;
+import mcppls.ai.model.source;
 
 namespace mcppls::ai::mcp {
 
@@ -159,6 +161,9 @@ Json tool_list() {
                          changeProperties));
     Json reviewProperties = changeProperties;
     reviewProperties["format"] = Json { { "type", "string" }, { "enum", Json::array({ "json", "sarif", "markdown" }) }, { "description", "Default json" } };
+    reviewProperties["model"] = Json { { "type", "string" }, { "enum", Json::array({ "none", "agent", "gateway", "mcp-sampling" }) },
+                                       { "description", "agent: also return the context and instructions for you to judge; gateway, mcp-sampling: if the server enables them" } };
+    reviewProperties["explainContext"] = property("boolean", "With a model: list what would be sent to it, and send nothing");
     tools.push_back(tool("cxx_review", "C++ review",
                          "Review a change: findings of deterministic rules, each with the evidence it rests on (references, diff lines, diagnostics).",
                          std::move(reviewProperties)));
@@ -175,7 +180,7 @@ bool has_tool(std::string_view name) {
     return std::ranges::any_of(tools, [&](const Json& tool) { return tool.value("name", std::string {}) == name; });
 }
 
-ToolResult call_tool(query::View& view, std::string_view name, const Json& value, Clock::time_point deadline) {
+ToolResult call_tool(query::View& view, std::string_view name, const Json& value, Clock::time_point deadline, const ToolContext& context) {
     const Json empty = Json::object();
     const Arguments arguments { value.is_object() ? value : empty };
     for (const auto& [key, type] : std::initializer_list<std::pair<std::string_view, Json::value_t>> {
@@ -268,9 +273,33 @@ ToolResult call_tool(query::View& view, std::string_view name, const Json& value
             if (!analyzed) return failure(analyzed.error());
             return ToolResult { review::impact_json(*analyzed), false };
         }
+        // A model on top of the rules: the agent itself, or the source the server was started with.
+        const std::string requested { arguments.string("model").empty() ? std::string { "none" } : arguments.string("model") };
+        const auto source = model::parse_source(requested);
+        if (!source) return failure(query::invalid_arguments("model is none, agent, gateway or mcp-sampling"));
+        const bool external { *source != model::SourceKind::none && *source != model::SourceKind::agent };
+        if (external && (context.model.source != *source || !context.model.explicitlyEnabled)) {
+            return failure(query::Failure { "unavailable",
+                                            std::format("the {} model source is enabled only by whoever starts the server (mcppls mcp --model-source {}), not by a tool call",
+                                                        requested, requested),
+                                            nullptr });
+        }
         auto reviewed = review::review_change(view, request, deadline);
         if (!reviewed) return failure(reviewed.error());
         Json value = review::review_json(*reviewed);
+        if (*source != model::SourceKind::none) {
+            review::JudgementOptions judgementOptions { context.model, context.modelCache, arguments.boolean("explainContext", false) };
+            judgementOptions.settings.source = *source;
+            if (*source == model::SourceKind::agent) judgementOptions.settings.explicitlyEnabled = true;
+            auto client = external && context.makeClient ? context.makeClient(*source) : nullptr;
+            const review::Judgement judgement { review::judge(*reviewed, judgementOptions, client.get()) };
+            for (const auto& finding : judgement.findings) {
+                value["findings"].push_back(spec::to_json(finding));
+                value["counts"][std::string { spec::to_string(finding.severity) }] = value["counts"].value(std::string { spec::to_string(finding.severity) }, 0) + 1;
+                reviewed->findings.push_back(finding);
+            }
+            value["model"] = review::to_json(judgement);
+        }
         const std::string format { arguments.string("format") };
         if (format == "sarif") value = review::to_sarif(reviewed->findings, view.root(), request.changes.base);
         else if (format == "markdown") value = Json { { "markdown", review::to_markdown(reviewed->findings, request.changes.base, value) } };

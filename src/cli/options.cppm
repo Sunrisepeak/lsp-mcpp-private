@@ -6,6 +6,7 @@ import std;
 import mcpplibs.cmdline;
 import mcppls.engine.payload;
 import mcppls.orchestrator.workspace;
+import mcppls.ai.model.source;
 
 export namespace mcppls::cli {
 
@@ -22,5 +23,10 @@ std::string absolute(std::string_view path);
 
 // A seconds argument, or the fallback.
 std::chrono::seconds seconds_option(const mcpplibs::cmdline::ParsedArgs& args, std::string_view name, std::chrono::seconds fallback);
+
+// The model settings of --model-gateway, --model-name, --model-budget and --model-exclude, with the
+// source of the option `sourceOption`; naming a source on the command line is the user's opt-in.
+std::optional<ai::model::ModelSettings> model_settings(const mcpplibs::cmdline::ParsedArgs& args, std::string_view sourceOption);
+void add_model_options(mcpplibs::cmdline::App& command, std::string_view sourceOption, std::string_view sourceHelp);
 
 } // namespace mcppls::cli

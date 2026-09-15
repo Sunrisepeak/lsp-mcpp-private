@@ -18,6 +18,11 @@ import mcppls.ai.context.interface;
 import mcppls.ai.verify.changes;
 import mcppls.ai.review.pipeline;
 import mcppls.ai.review.report;
+import mcppls.ai.review.judgement;
+import mcppls.ai.model.source;
+import mcppls.ai.model.gateway;
+import mcppls.platform.env;
+import mcppls.orchestrator.workspace;
 import mcppls.cli.options;
 
 namespace mcppls::cli {
@@ -517,16 +522,42 @@ cmdline::App review_command(bool& handled, int& status) {
     add_change_options(command);
     add_session_options(command);
     (void)command.option("output").takes_value().help("Write the report to this file instead of standard output");
+    add_model_options(command, "model", "A model's judgement on top of the rules: agent (the context and instructions, for you) or gateway (default none)");
+    (void)command.option("explain-context").help("With --model, list what would be sent to the model, and send nothing");
     (void)command.action([&](const cmdline::ParsedArgs& args) {
         handled = true;
         const auto request = review_request_of(args);
         const std::string format { args.value("format").value_or("json") };
+        const auto modelSettings = model_settings(args, "model");
+        if (!modelSettings || modelSettings->source == ai::model::SourceKind::mcp_sampling || modelSettings->source == ai::model::SourceKind::client) {
+            std::println(std::cerr, "review: --model is none, agent or gateway");
+            status = EXIT_FAILED;
+            return;
+        }
         std::optional<ai::review::ReviewResult> kept;
         const int code = run_in_session(args, request.changes.files.empty() ? std::string {} : request.changes.files.front(),
                                         [&](query::View& view, Clock::time_point deadline) -> query::Outcome<Json> {
             auto reviewed = ai::review::review_change(view, request, deadline);
             if (!reviewed) return std::unexpected { reviewed.error() };
             Json value = ai::review::review_json(*reviewed);
+            if (modelSettings->source != ai::model::SourceKind::none) {
+                std::unique_ptr<ai::model::ModelClient> client;
+                if (modelSettings->source == ai::model::SourceKind::gateway) {
+                    ai::model::GatewayOptions gateway;
+                    gateway.executable = modelSettings->gatewayExecutable.empty() ? platform::env::find_executable("mcppls-model").value_or("") : modelSettings->gatewayExecutable;
+                    if (!modelSettings->model.empty()) gateway.arguments = { "--model", modelSettings->model };
+                    gateway.workDirectory = view.root();
+                    if (!gateway.executable.empty()) client = std::make_unique<ai::model::GatewayClient>(std::move(gateway));
+                }
+                const ai::review::JudgementOptions options { *modelSettings, base::join_path(view.kernel().workspace().cache_directory(), "model"),
+                                                              args.is_flag_set("explain-context") };
+                const auto judgement = ai::review::judge(*reviewed, options, client.get());
+                for (const auto& finding : judgement.findings) {
+                    value["findings"].push_back(spec::to_json(finding));
+                    reviewed->findings.push_back(finding);
+                }
+                value["model"] = ai::review::to_json(judgement);
+            }
             if (format == "sarif") value = ai::review::to_sarif(reviewed->findings, view.root(), request.changes.base);
             else if (format == "markdown") value = Json { { "markdown", ai::review::to_markdown(reviewed->findings, request.changes.base, value) } };
             kept = std::move(*reviewed);

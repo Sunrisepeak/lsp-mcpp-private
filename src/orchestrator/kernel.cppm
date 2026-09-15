@@ -71,6 +71,9 @@ public:
     void post_external(Json message);
     void close_external();   // no more messages will be posted
     std::optional<Json> next_external(std::chrono::milliseconds timeout);
+    // The first message `wanted` accepts, leaving the others queued in order: the response to a
+    // request this process sent the other entry's client while one of its requests is being answered.
+    std::optional<Json> take_external(const std::function<bool(const Json&)>& wanted, std::chrono::milliseconds timeout);
     bool input_closed() const;
 
     void shut_down();

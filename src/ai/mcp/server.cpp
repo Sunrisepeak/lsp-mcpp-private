@@ -2,10 +2,16 @@ module mcppls.ai.mcp.server;
 
 import std;
 import nlohmann.json;
+import mcppls.base.error;
 import mcppls.base.log;
+import mcppls.base.path;
 import mcppls.base.text;
 import mcppls.base.version;
+import mcppls.platform.env;
 import mcppls.platform.stdio;
+import mcppls.orchestrator.workspace;
+import mcppls.ai.model.source;
+import mcppls.ai.model.gateway;
 import mcppls.lsp.jsonrpc;
 import mcppls.orchestrator.kernel;
 import mcppls.ai.query.view;
@@ -51,8 +57,50 @@ std::vector<std::string> take_lines(std::string& buffer) {
     return lines;
 }
 
-Session::Session(orchestrator::Kernel& kernel, std::chrono::seconds toolTimeout, std::function<void(const Json&)> send)
-    : kernel_ { kernel }, toolTimeout_ { toolTimeout }, send_ { std::move(send) } {}
+Session::Session(orchestrator::Kernel& kernel, std::chrono::seconds toolTimeout, std::function<void(const Json&)> send, model::ModelSettings modelSettings)
+    : kernel_ { kernel }, toolTimeout_ { toolTimeout }, send_ { std::move(send) }, model_ { std::move(modelSettings) } {}
+
+std::unique_ptr<model::ModelClient> Session::make_client(model::SourceKind source) {
+    if (source == model::SourceKind::gateway) {
+        model::GatewayOptions options;
+        options.executable = model_.gatewayExecutable.empty() ? platform::env::find_executable("mcppls-model").value_or("") : model_.gatewayExecutable;
+        options.arguments = model_.gatewayArguments;
+        if (!model_.model.empty()) options.arguments.insert(options.arguments.end(), { "--model", model_.model });
+        options.workDirectory = kernel_.root();
+        options.requestTimeout = toolTimeout_;
+        if (options.executable.empty()) return nullptr;
+        return std::make_unique<model::GatewayClient>(std::move(options));
+    }
+    if (source != model::SourceKind::mcp_sampling || !clientCapabilities_.contains("sampling")) return nullptr;
+    // MCP sampling: the agent's own client asks its model, with its user's consent, on this server's behalf.
+    return std::make_unique<model::TransportClient>(model::SourceKind::mcp_sampling, [this](const model::CompletionRequest& request) -> base::Result<model::CompletionResult> {
+        Json messages = Json::array();
+        std::string system;
+        for (const auto& message : request.messages) {
+            if (message.role == "system") {
+                system += message.content + "\n";
+                continue;
+            }
+            messages.push_back(Json { { "role", message.role == "assistant" ? "assistant" : "user" }, { "content", Json { { "type", "text" }, { "text", message.content } } } });
+        }
+        const std::string id { std::format("mcppls-sampling-{}", nextRequest_++) };
+        send_(Json { { "jsonrpc", "2.0" }, { "id", id }, { "method", "sampling/createMessage" },
+                     { "params", Json { { "messages", std::move(messages) }, { "systemPrompt", system }, { "includeContext", "none" }, { "temperature", 0 },
+                                        { "maxTokens", request.maxTokens > 0 ? request.maxTokens : 4096 } } } });
+        auto response = kernel_.take_external([&](const Json& message) { return message.is_object() && !message.contains("method") && message.value("id", Json {}) == Json(id); },
+                                              toolTimeout_);
+        if (!response) return base::fail("sampling-timeout", "the client did not answer sampling/createMessage in time");
+        if (response->contains("error")) return base::fail("sampling-refused", response->value("error", Json::object()).value("message", std::string { "refused" }));
+        const Json result = response->value("result", Json::object());
+        std::string text { result.value("content", Json::object()).value("text", std::string {}) };
+        // A model can wrap its JSON in prose or a code fence; the object is what counts.
+        const std::size_t open { text.find('{') };
+        const std::size_t close { text.rfind('}') };
+        Json output = open != std::string::npos && close != std::string::npos && close > open ? Json::parse(text.substr(open, close - open + 1), nullptr, false) : Json {};
+        if (output.is_discarded()) output = nullptr;
+        return model::CompletionResult { std::move(output), result.value("model", std::string {}), {} };
+    });
+}
 
 void Session::handle(const Json& message) {
     if (!message.is_object() || message.value("jsonrpc", std::string {}) != "2.0") {
@@ -70,6 +118,7 @@ void Session::handle(const Json& message) {
         const std::string requested { params.value("protocolVersion", std::string {}) };
         const bool known { std::ranges::find(PROTOCOL_VERSIONS, requested) != PROTOCOL_VERSIONS.end() };
         protocolVersion_ = known ? requested : std::string { PROTOCOL_VERSIONS.front() };
+        if (const auto capabilities = params.find("capabilities"); capabilities != params.end() && capabilities->is_object()) clientCapabilities_ = *capabilities;
         send_(response(id, Json { { "protocolVersion", protocolVersion_ },
                                   { "capabilities", Json { { "tools", Json { { "listChanged", false } } } } },
                                   { "serverInfo", Json { { "name", "mcppls" }, { "title", "mcpp-language-server" }, { "version", std::string { base::VERSION } } } },
@@ -93,7 +142,9 @@ void Session::handle(const Json& message) {
         const Json arguments = params.contains("arguments") ? params["arguments"] : Json::object();
         query::View view { kernel_ };
         const auto started = query::Clock::now();
-        ToolResult result { call_tool(view, name, arguments, started + toolTimeout_) };
+        ToolContext context { model_, base::join_path(kernel_.workspace().cache_directory(), "model"),
+                              [this](model::SourceKind source) { return make_client(source); } };
+        ToolResult result { call_tool(view, name, arguments, started + toolTimeout_, context) };
         log::info("mcp: {} in {} ms{}", name, std::chrono::duration_cast<std::chrono::milliseconds>(query::Clock::now() - started).count(),
                   result.isError ? " (error)" : "");
         Json answer { { "content", Json::array({ Json { { "type", "text" }, { "text", result.value.dump() } } }) }, { "isError", result.isError } };
@@ -128,7 +179,7 @@ int run_server(const ServerOptions& options) {
         // One message per line: dump() escapes every newline inside strings.
         if (auto written = platform::stdio::write_output(message.dump() + "\n"); !written) log::error("cannot write to the MCP client: {}", written.error().message);
     };
-    Session session { *kernel, options.toolTimeout, send };
+    Session session { *kernel, options.toolTimeout, send, options.model };
     while (true) {
         auto message = kernel->next_external(std::chrono::hours { 1 });
         if (!message) {

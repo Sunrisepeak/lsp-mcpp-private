@@ -216,14 +216,21 @@ int run(int argc, char* argv[]) {
     (void)mcpCommand.description("Serve the Model Context Protocol on standard input and output, for coding agents");
     (void)mcpCommand.option("root").takes_value().help("Workspace root (default: the current directory)");
     (void)mcpCommand.option("tool-timeout").takes_value().help("Seconds a tool call waits for the engines (default 120)");
+    add_model_options(mcpCommand, "model-source", "The model cxx_review may use besides the agent: gateway or mcp-sampling (default none)");
     (void)mcpCommand.action([&](const cmdline::ParsedArgs& args) {
         handled = true;
         // Standard output carries the protocol; the log goes to standard error, warnings only unless asked.
         if (!args.value("log-level")) base::log::set_level(base::log::Level::warning);
         apply_log_level(args);
+        const auto model = model_settings(args, "model-source");
+        if (!model) {
+            std::println(std::cerr, "mcp: --model-source is none, gateway or mcp-sampling");
+            status = 2;
+            return;
+        }
         const std::string root { args.value("root") ? absolute(*args.value("root")) : platform::fs::current_directory() };
         status = ai::mcp::run_server(ai::mcp::ServerOptions { orchestrator::KernelOptions { session_options(args), root },
-                                                              seconds_option(args, "tool-timeout", std::chrono::seconds { 120 }) });
+                                                              seconds_option(args, "tool-timeout", std::chrono::seconds { 120 }), *model });
     });
     (void)app.subcommand(std::move(mcpCommand));
 

@@ -6,6 +6,7 @@ export module mcppls.ai.mcp.server;
 import std;
 import nlohmann.json;
 import mcppls.orchestrator.kernel;
+import mcppls.ai.model.source;
 
 export namespace mcppls::ai::mcp {
 
@@ -15,12 +16,14 @@ inline constexpr std::array<std::string_view, 3> PROTOCOL_VERSIONS { "2025-06-18
 struct ServerOptions {
     orchestrator::KernelOptions kernel;
     std::chrono::seconds toolTimeout { 120 };
+    // The model source whoever starts the server enables for cxx_review (none by default, design 11).
+    model::ModelSettings model;
 };
 
 // Handles the messages of one MCP connection against a kernel; a transport feeds it.
 class Session {
 public:
-    Session(orchestrator::Kernel& kernel, std::chrono::seconds toolTimeout, std::function<void(const nlohmann::json&)> send);
+    Session(orchestrator::Kernel& kernel, std::chrono::seconds toolTimeout, std::function<void(const nlohmann::json&)> send, model::ModelSettings model = {});
     void handle(const nlohmann::json& message);
     const std::string& protocol_version() const { return protocolVersion_; }
 
@@ -28,7 +31,12 @@ private:
     orchestrator::Kernel& kernel_;
     std::chrono::seconds toolTimeout_;
     std::function<void(const nlohmann::json&)> send_;
+    model::ModelSettings model_;
     std::string protocolVersion_;
+    nlohmann::json clientCapabilities_ = nlohmann::json::object();
+    std::int64_t nextRequest_ { 1 };
+
+    std::unique_ptr<model::ModelClient> make_client(model::SourceKind source);
 };
 
 // Serves MCP on standard input and output until the input ends.
