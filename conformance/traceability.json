@@ -1,5 +1,5 @@
 {
- "$comment": "Rule identifiers of specifications S1 to S4 mapped to evidence (usable plan W10.2), checked by specs/tools/validate.py. Evidence: validate (a passing check of validate.py, by label prefix), test (tests/<file>.cpp: <name>), check (<fixture>/<check id>), script (a file and a line that enforces the rule), manual (why no automated evidence can exist).",
+ "$comment": "Rule identifiers of specifications S1 to S5 mapped to evidence (usable plan W10.2), checked by specs/tools/validate.py. Evidence: validate (a passing check of validate.py, by label prefix), test (tests/<file>.cpp: <name>), check (<fixture>/<check id>), script (a file and a line that enforces the rule), manual (why no automated evidence can exist).",
  "$pending": {},
  "S1-3-1": [
   {
@@ -1071,6 +1071,228 @@
  "S3-4-7": [
   {
    "manual": "The VS Code extension shows whatever engine names the status carries (editors/vscode/src/status.ts); it matches no name."
+  }
+ ],
+ "S5-2.1-1": [
+  {
+   "test": "tests/test_query.cpp: columns count Unicode scalar values, LSP characters UTF-16 code units"
+  }
+ ],
+ "S5-2.1-2": [
+  {
+   "script": "src/spec/query.cpp",
+   "contains": "location.text = line_of(text, start.line);"
+  },
+  {
+   "check": "mcpp-split/Q2-references-importers"
+  }
+ ],
+ "S5-2.1-3": [
+  {
+   "script": "src/ai/query/view.cpp",
+   "contains": "std::ranges::replace(name, '\\\\', '/');"
+  },
+  {
+   "check": "mcpp-split/Q1-symbol"
+  }
+ ],
+ "S5-2.2-1": [
+  {
+   "check": "mcpp-split/Q1-symbol"
+  },
+  {
+   "script": "src/ai/query/symbols.cpp",
+   "contains": "found.snapshot = view.snapshot();"
+  }
+ ],
+ "S5-2.2-2": [
+  {
+   "check": "engine-none/Q9-disk-read"
+  },
+  {
+   "script": "src/orchestrator/kernel.cpp",
+   "contains": "if (document.overlay) {"
+  }
+ ],
+ "S5-2.3-1": [
+  {
+   "script": "src/ai/query/symbols.cpp",
+   "contains": "if (auto known = recall(view, target.id)) {"
+  }
+ ],
+ "S5-2.3-2": [
+  {
+   "check": "mcpp-split/Q1-id"
+  }
+ ],
+ "S5-2.4-1": [
+  {
+   "script": "src/ai/query/symbols.cpp",
+   "contains": "std::ranges::sort(found.symbols, before);"
+  },
+  {
+   "script": "src/ai/query/modules.cpp",
+   "contains": "sort_unique(description.importedBy);"
+  }
+ ],
+ "S5-2.5-1": [
+  {
+   "script": "src/ai/query/symbols.cpp",
+   "contains": "return std::unexpected { Failure { \"ambiguous\","
+  }
+ ],
+ "S5-2.5-2": [
+  {
+   "check": "engine-none/Q2-unavailable"
+  }
+ ],
+ "S5-3.1-1": [
+  {
+   "check": "mcpp-split/Q1-symbol"
+  },
+  {
+   "check": "mcpp-split/Q1-not-found"
+  }
+ ],
+ "S5-3.1-2": [
+  {
+   "check": "mcpp-all-cppm/Q1-kind"
+  }
+ ],
+ "S5-3.1-3": [
+  {
+   "check": "mcpp-all-cppm/Q1-symbol-partition"
+  }
+ ],
+ "S5-3.1-4": [
+  {
+   "check": "mcpp-split/Q1-position"
+  }
+ ],
+ "S5-3.1-5": [
+  {
+   "check": "mcpp-split/Q2-callers-partition"
+  }
+ ],
+ "S5-3.2-1": [
+  {
+   "check": "mcpp-split/Q2-references-importers"
+  },
+  {
+   "check": "mcpp-all-cppm/Q2-references-reexported"
+  }
+ ],
+ "S5-3.2-2": [
+  {
+   "script": "src/ai/query/symbols.cpp",
+   "contains": "for (const auto& left : neighbourhood.left) scope.unsearched.push_back(view.display(left));"
+  }
+ ],
+ "S5-3.3-1": [
+  {
+   "check": "mcpp-all-cppm/Q2-callers"
+  }
+ ],
+ "S5-3.3-2": [
+  {
+   "check": "mcpp-split/Q2-callees"
+  }
+ ],
+ "S5-3.4-1": [
+  {
+   "check": "mcpp-split/Q3-outline"
+  }
+ ],
+ "S5-3.5-1": [
+  {
+   "check": "mcpp-split/Q4-module"
+  }
+ ],
+ "S5-3.5-2": [
+  {
+   "check": "engine-none/Q4-module"
+  }
+ ],
+ "S5-3.6-1": [
+  {
+   "check": "mcpp-split/Q6-diagnostics"
+  },
+  {
+   "script": "src/ai/query/files.cpp",
+   "contains": "return std::ranges::all_of(paths, [&](const std::string& path) { return diagnostics_fresh(view, path).first; });"
+  }
+ ],
+ "S5-3.6-2": [
+  {
+   "script": "src/ai/query/files.cpp",
+   "contains": "if (*published >= 0 && *published < *version) return { false, \"the core engine's diagnostics are for an earlier version of the file\" };"
+  }
+ ],
+ "S5-4.1-1": [
+  {
+   "check": "mcpp-split/Q5-build-context"
+  },
+  {
+   "check": "mcpp-all-cppm/Q5-build-context"
+  }
+ ],
+ "S5-4.1-2": [
+  {
+   "script": "src/ai/context/build.cpp",
+   "contains": "context.issues.push_back(BuildIssue { \"not-in-model\","
+  }
+ ],
+ "S5-5-1": [
+  {
+   "test": "tests/test_query.cpp: a finding's fingerprint survives lines moving and reindenting"
+  }
+ ],
+ "S5-6-1": [
+  {
+   "check": "mcpp-split/Q7-tools"
+  },
+  {
+   "check": "mcpp-split/W1"
+  }
+ ],
+ "S5-6-2": [
+  {
+   "check": "mcpp-split/Q1-symbol"
+  },
+  {
+   "script": "src/ai/mcp/server.cpp",
+   "contains": "answer[\"structuredContent\"] = result.value;"
+  }
+ ],
+ "S5-6-3": [
+  {
+   "check": "mcpp-split/Q1-not-found"
+  }
+ ],
+ "S5-6-4": [
+  {
+   "script": "src/ai/mcp/server.cpp",
+   "contains": "protocolVersion_ = known ? requested : std::string { PROTOCOL_VERSIONS.front() };"
+  }
+ ],
+ "S5-6-5": [
+  {
+   "script": "src/ai/mcp/server.cpp",
+   "contains": "platform::stdio::write_output(message.dump() + \"\\n\")"
+  }
+ ],
+ "S5-7-1": [
+  {
+   "check": "mcpp-split/Q8-cli-symbol"
+  }
+ ],
+ "S5-7-2": [
+  {
+   "check": "mcpp-split/Q8-cli-diagnostics"
+  },
+  {
+   "script": "src/cli/query.cpp",
+   "contains": "return result.error().code == \"not-found\" || result.error().code == \"ambiguous\" ? EXIT_NOTHING : EXIT_FAILED;"
   }
  ]
 }

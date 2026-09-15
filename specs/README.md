@@ -8,6 +8,7 @@ This directory holds the normative specifications that let C++ named modules be 
 | [S2](s2-discovery.md) | Build Database Discovery Protocol | 0.2.0 | Draft | [s2-discovery.schema.json](schema/s2-discovery.schema.json) |
 | [S3](s3-lsp-extensions.md) | Language Server Protocol Extensions for C++ Modules | protocol version 1 | Draft | TypeScript interfaces in the text |
 | [S4](s4-semantic-kit.md) | Semantic Kit | kit-version 1 | Draft | [s4-kit.schema.json](schema/s4-kit.schema.json) |
+| [S5](s5-semantic-query.md) | Semantic Queries for C++ Code | 0.1.0 | Draft | TypeScript interfaces in the text |
 
 ## How the specifications fit together
 
@@ -25,6 +26,7 @@ editor (VS Code extension, other LSP clients)
 - **S2** is how a consumer finds an S1 database: explicit configuration, a discovery command speaking JSON over standard input and output, or a known build directory.
 - **S3** is what a module-aware language server adds to LSP 3.18, negotiated through `experimental.cxxModules`.
 - **S4** is the manifest of a data-only semantic kit that stands in for a compiler installation. The kits mcppls distributes are published as `mcppls-kit`.
+- **S5** is what a coding agent or a script asks a language server about the code — symbols, references, calls, modules, build contexts, fresh diagnostics — and the shape of the answers, bound to the Model Context Protocol and a command line.
 
 ## Relationship to standardization work
 

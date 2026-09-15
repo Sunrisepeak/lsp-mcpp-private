@@ -131,6 +131,14 @@ always has been.
 | `module-graph-contains` | `cxxModules/graph` lists module `expect`; retries within the check's own timeout, so it doubles as "a change reaches the graph within N seconds" (usable plan W9.3's `watch-polling`) |
 | `set-context` | sends `cxxModules/setContext` with `"context"` (usable plan W9.2), then a hover at `"at"` contains `expect`, retried the same way as `hover-contains` |
 | `write-file` | writes `"content"` (default: a fresh `export module <module>;`; `"content-from"` copies another workspace file) to `"file"` directly, the way a file system watcher — or, without one, the server's own polling fallback — would notice it, without the runner opening it as a document (usable plan W9.3); with `"expect-reload": true`, also waits for the status to pass through `loading` again (S2-5-1) |
+| `second-instance` | a second server on the same workspace and cache reports the notice `notice-code` (default `shared-workspace`) in its status (overall design 6.3) |
+| `mcp` | S5 section 6: `mcppls mcp`, started once per fixture with the fixture's server arguments beside the language server, answers the tool call `"tool"` with `"arguments"` (or, with `"method"` and `"params"`, another request) with a result meeting `"expect"`; `"is-error": true` expects a tool error instead; the call is repeated until the expectations hold or the check's time is up, unless `"retry": false` |
+| `cli` | S5 section 7: `mcppls <args>` with the runner's payload and the fixture's server arguments, run to completion in the workspace, exits with `"exit"` (default 0) and prints one JSON document meeting `"expect"` |
+
+An expectation of `mcp` and `cli` names a JSON pointer in `"path"`, where a `*` segment stands for every
+element of an array, and one of `"equals"` (a value the pointer names equals it), `"contains"` (a string
+contains it, or an array has an element that includes all its members), `"min-items"`, `"exists"` or
+`"absent"`; it holds when any value the pointer names satisfies it.
 
 The check identifiers C1–C9 follow experiment E6 in
 `.agents/docs/2026-09-13-cxx-modules-lsp-experiments.md`; M-checks cover the

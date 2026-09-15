@@ -457,15 +457,19 @@ Outcome<Symbol> resolve_symbol(View& view, const SymbolTarget& target, Clock::ti
     return std::move(found->symbols.front());
 }
 
-Outcome<References> find_references(View& view, const SymbolTarget& target, bool includeDeclaration, Limit limit, Clock::time_point deadline) {
-    if (!view.has_core_engine()) {
-        view.refresh();
-        return std::unexpected { no_core_engine() };
-    }
-    auto symbol = resolve_symbol(view, target, deadline);
-    if (!symbol) return std::unexpected { symbol.error() };
-    const auto& at = symbol->declaration ? symbol->declaration : symbol->definition;
-    if (!at) return std::unexpected { not_found(std::format("{} has no location to look from", symbol->qualifiedName)) };
+namespace {
+
+struct Reference {
+    std::string path;
+    Json range;              // LSP
+    spec::Location location;
+    std::string module;
+};
+
+// The references to a symbol in its search scope, in S5 order.
+Outcome<std::pair<std::vector<Reference>, SearchScope>> references_of(View& view, const Symbol& symbol, bool includeDeclaration, Clock::time_point deadline) {
+    const auto& at = symbol.declaration ? symbol.declaration : symbol.definition;
+    if (!at) return std::unexpected { not_found(std::format("{} has no location to look from", symbol.qualifiedName)) };
     view.settle_index(deadline);
     const std::string path { view.path_of(at->file) };
     SearchScope scope { open_search_scope(view, path, deadline) };
@@ -474,27 +478,74 @@ Outcome<References> find_references(View& view, const SymbolTarget& target, bool
                                       { "context", Json { { "includeDeclaration", includeDeclaration } } } },
                                deadline);
     if (!result) return std::unexpected { timed_out("textDocument/references") };
-    std::vector<std::pair<std::string, spec::Location>> all;   // (module, location)
+    std::vector<Reference> references;
     if (result->is_array()) {
         for (const auto& entry : *result) {
-            auto location = view.location(entry);
-            if (!location) continue;
-            all.emplace_back(view.module_of(view.path_of(location->file)), std::move(*location));
+            const auto referencePath = view.path_of_uri(entry.value("uri", std::string {}));
+            if (!referencePath) continue;
+            const Json range = entry.value("range", Json::object());
+            Reference reference { *referencePath, range, view.location(*referencePath, range), view.module_of(*referencePath) };
+            references.push_back(std::move(reference));
         }
     }
-    std::ranges::sort(all, {}, [](const auto& item) { return std::tuple { item.first, item.second.file, item.second.line, item.second.column }; });
-    all.erase(std::unique(all.begin(), all.end(), [](const auto& a, const auto& b) { return a.second == b.second; }), all.end());
+    std::ranges::sort(references, {}, [](const Reference& r) { return std::tuple { r.module, r.location.file, r.location.line, r.location.column }; });
+    references.erase(std::unique(references.begin(), references.end(), [](const Reference& a, const Reference& b) { return a.location == b.location; }),
+                     references.end());
+    return std::pair { std::move(references), std::move(scope) };
+}
+
+bool contains(const Json& range, const Json& position) {
+    const auto key = [](const Json& value) { return std::pair { value.value("line", 0), value.value("character", 0) }; };
+    const Json start = range.value("start", Json::object());
+    const Json end = range.value("end", Json::object());
+    return key(start) <= key(position) && key(position) <= key(end);
+}
+
+struct Enclosing {
+    std::string name;
+    std::string qualifiedName;
+    int kind { 0 };
+    Json selectionRange;
+};
+
+// The innermost function, method or constructor of an outline whose range contains `position`.
+void find_enclosing(const Json& symbols, const Json& position, const std::string& scope, std::optional<Enclosing>& found) {
+    if (!symbols.is_array()) return;
+    for (const auto& symbol : symbols) {
+        if (!symbol.is_object() || !contains(symbol.value("range", Json::object()), position)) continue;
+        const int kind { symbol.value("kind", 0) };
+        const std::string name { symbol.value("name", std::string {}) };
+        const bool callable { kind == 6 || kind == 9 || kind == 12 || kind == 25 };
+        const bool scoping { kind == 3 || kind == 5 || kind == 23 || kind == 10 };
+        const std::string qualified { scope.empty() ? name : scope + "::" + name };
+        if (callable) found = Enclosing { name, qualified, kind, symbol.value("selectionRange", Json::object()) };
+        find_enclosing(symbol.value("children", Json::array()), position, scoping ? qualified : scope, found);
+    }
+}
+
+} // namespace
+
+Outcome<References> find_references(View& view, const SymbolTarget& target, bool includeDeclaration, Limit limit, Clock::time_point deadline) {
+    if (!view.has_core_engine()) {
+        view.refresh();
+        return std::unexpected { no_core_engine() };
+    }
+    auto symbol = resolve_symbol(view, target, deadline);
+    if (!symbol) return std::unexpected { symbol.error() };
+    auto found = references_of(view, *symbol, includeDeclaration, deadline);
+    if (!found) return std::unexpected { found.error() };
+    auto& [all, scope] = *found;
     References references;
     references.scope = std::move(scope);
     references.symbol = std::move(*symbol);
     references.total = all.size();
     references.truncated = all.size() > limit.maxResults;
     if (all.size() > limit.maxResults) all.resize(limit.maxResults);
-    for (auto& [module, location] : all) {
-        if (references.groups.empty() || references.groups.back().file != location.file) {
-            references.groups.push_back(ReferenceGroup { module, location.file, {} });
+    for (auto& reference : all) {
+        if (references.groups.empty() || references.groups.back().file != reference.location.file) {
+            references.groups.push_back(ReferenceGroup { reference.module, reference.location.file, {} });
         }
-        references.groups.back().references.push_back(std::move(location));
+        references.groups.back().references.push_back(std::move(reference.location));
     }
     references.snapshot = view.snapshot();
     return references;
@@ -507,50 +558,75 @@ Outcome<Calls> find_calls(View& view, const SymbolTarget& target, CallDirection 
     }
     auto symbol = resolve_symbol(view, target, deadline);
     if (!symbol) return std::unexpected { symbol.error() };
-    // Calls are found from the definition, where the function body is.
-    const auto& at = symbol->definition ? symbol->definition : symbol->declaration;
-    if (!at) return std::unexpected { not_found(std::format("{} has no location to look from", symbol->qualifiedName)) };
-    view.settle_index(deadline);
-    const std::string path { view.path_of(at->file) };
-    // Callers are found through references, in the units that can use the function; callees in its own body.
-    SearchScope scope;
-    if (direction == CallDirection::incoming) {
-        const auto& declared = symbol->declaration ? symbol->declaration : symbol->definition;
-        scope = open_search_scope(view, view.path_of(declared->file), deadline);
-    }
-    view.open(path);
-    auto items = view.request("textDocument/prepareCallHierarchy",
-                              Json { { "textDocument", view.text_document(path) }, { "position", view.lsp_position(path, at->line, at->column) } }, deadline);
-    if (!items) return std::unexpected { timed_out("textDocument/prepareCallHierarchy") };
-    if (!items->is_array() || items->empty()) return std::unexpected { not_found(std::format("{} is not something that calls or is called", symbol->qualifiedName)) };
-    const Json item = (*items)[0];
-    auto result = view.request(direction == CallDirection::incoming ? "callHierarchy/incomingCalls" : "callHierarchy/outgoingCalls",
-                               Json { { "item", item } }, deadline);
-    if (!result) return std::unexpected { timed_out("the call hierarchy") };
     Calls calls;
-    calls.scope = std::move(scope);
-    calls.symbol = std::move(*symbol);
     calls.direction = direction;
-    const std::string itemPath { view.path_of_uri(item.value("uri", std::string {})).value_or(path) };
-    if (result->is_array()) {
-        for (const auto& entry : *result) {
-            const Json other = entry.value(direction == CallDirection::incoming ? "from" : "to", Json::object());
-            const auto otherPath = view.path_of_uri(other.value("uri", std::string {}));
-            if (!otherPath) continue;
-            Call call;
-            call.symbol.name = other.value("name", std::string {});
-            call.symbol.kind = std::string { symbol_kind_name(other.value("kind", 0)) };
-            // clangd's detail is the scope the function is in.
-            const std::string scope { strip_scope_separator(other.value("detail", std::string {})) };
-            call.symbol.qualifiedName = scope.empty() ? call.symbol.name : scope + "::" + call.symbol.name;
-            call.symbol.definition = view.location(*otherPath, other.value("selectionRange", Json::object()));
-            call.symbol.module = view.module_of(*otherPath);
-            // The call sites are in the caller: `from` for incoming calls, the symbol itself for outgoing ones.
-            const std::string sitePath { direction == CallDirection::incoming ? *otherPath : itemPath };
-            for (const auto& range : entry.value("fromRanges", Json::array())) call.sites.push_back(view.location(sitePath, range));
-            calls.calls.push_back(std::move(call));
+    if (direction == CallDirection::incoming) {
+        // Callers are the functions enclosing the references. The engine's own call hierarchy groups
+        // callers by identifier, and two executables' `main` share one: a test's call went missing.
+        auto found = references_of(view, *symbol, false, deadline);
+        if (!found) return std::unexpected { found.error() };
+        auto& [references, scope] = *found;
+        calls.scope = std::move(scope);
+        std::map<std::string, Json> outlines;
+        std::map<std::string, std::size_t> byCaller;   // path and the caller's position -> index in calls.calls
+        for (const auto& reference : references) {
+            auto outline = outlines.find(reference.path);
+            if (outline == outlines.end()) {
+                auto symbols = view.request("textDocument/documentSymbol", Json { { "textDocument", view.text_document(reference.path) } }, deadline);
+                outline = outlines.emplace(reference.path, symbols ? *symbols : Json::array()).first;
+            }
+            std::optional<Enclosing> enclosing;
+            find_enclosing(outline->second, reference.range.value("start", Json::object()), {}, enclosing);
+            if (!enclosing) continue;   // a reference outside any function: an initializer, a using-declaration
+            const std::string key { reference.path + "\n" + lsp::dump(enclosing->selectionRange) };
+            auto entry = byCaller.find(key);
+            if (entry == byCaller.end()) {
+                Call call;
+                call.symbol.name = enclosing->name;
+                call.symbol.qualifiedName = enclosing->qualifiedName;
+                call.symbol.kind = std::string { symbol_kind_name(enclosing->kind) };
+                call.symbol.definition = view.location(reference.path, enclosing->selectionRange);
+                call.symbol.module = reference.module;
+                entry = byCaller.emplace(key, calls.calls.size()).first;
+                calls.calls.push_back(std::move(call));
+            }
+            calls.calls[entry->second].sites.push_back(reference.location);
+        }
+    } else {
+        // Callees are in the function's own body.
+        const auto& at = symbol->definition ? symbol->definition : symbol->declaration;
+        if (!at) return std::unexpected { not_found(std::format("{} has no location to look from", symbol->qualifiedName)) };
+        const std::string path { view.path_of(at->file) };
+        view.open(path);
+        auto items = view.request("textDocument/prepareCallHierarchy",
+                                  Json { { "textDocument", view.text_document(path) }, { "position", view.lsp_position(path, at->line, at->column) } }, deadline);
+        if (!items) return std::unexpected { timed_out("textDocument/prepareCallHierarchy") };
+        if (!items->is_array() || items->empty()) return std::unexpected { not_found(std::format("{} is not something that calls", symbol->qualifiedName)) };
+        const Json item = (*items)[0];
+        auto result = view.request("callHierarchy/outgoingCalls", Json { { "item", item } }, deadline);
+        if (!result) return std::unexpected { timed_out("the call hierarchy") };
+        const std::string itemPath { view.path_of_uri(item.value("uri", std::string {})).value_or(path) };
+        calls.scope.searched = 1;
+        if (result->is_array()) {
+            for (const auto& entry : *result) {
+                const Json other = entry.value("to", Json::object());
+                const auto otherPath = view.path_of_uri(other.value("uri", std::string {}));
+                if (!otherPath) continue;
+                Call call;
+                call.symbol.name = other.value("name", std::string {});
+                call.symbol.kind = std::string { symbol_kind_name(other.value("kind", 0)) };
+                // clangd's detail is the scope the function is in.
+                const std::string scope { strip_scope_separator(other.value("detail", std::string {})) };
+                call.symbol.qualifiedName = scope.empty() ? call.symbol.name : scope + "::" + call.symbol.name;
+                call.symbol.definition = view.location(*otherPath, other.value("selectionRange", Json::object()));
+                call.symbol.module = view.module_of(*otherPath);
+                // The call sites are in the function itself.
+                for (const auto& range : entry.value("fromRanges", Json::array())) call.sites.push_back(view.location(itemPath, range));
+                calls.calls.push_back(std::move(call));
+            }
         }
     }
+    calls.symbol = std::move(*symbol);
     std::ranges::sort(calls.calls, [](const Call& a, const Call& b) { return before(a.symbol, b.symbol); });
     calls.total = calls.calls.size();
     calls.truncated = calls.calls.size() > limit.maxResults;

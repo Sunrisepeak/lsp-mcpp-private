@@ -233,6 +233,10 @@
         {
           "path": "/symbols/0/id",
           "exists": true
+        },
+        {
+          "path": "/snapshot/generation",
+          "exists": true
         }
       ]
     },
@@ -253,6 +257,24 @@
         {
           "path": "/symbols/0/definition/line",
           "equals": 7
+        }
+      ]
+    },
+    {
+      "id": "Q1-id",
+      "kind": "mcp",
+      "tool": "cxx_symbol",
+      "arguments": {
+        "id": "c:@N@hello@F@count#"
+      },
+      "expect": [
+        {
+          "path": "/symbols/0/qualifiedName",
+          "equals": "hello::count"
+        },
+        {
+          "path": "/symbols/0/definition/file",
+          "equals": "src/greet/greet.cpp"
         }
       ]
     },

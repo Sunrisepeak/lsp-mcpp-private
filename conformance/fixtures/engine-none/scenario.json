@@ -18,6 +18,8 @@
       "expect": [{ "path": "/error/code", "equals": "unavailable" }] },
     { "id": "Q6-diagnostics", "kind": "mcp", "tool": "cxx_diagnostics", "arguments": { "files": ["src/main.cpp"] }, "expect": [{ "path": "/files/0/complete", "equals": true }] },
     { "id": "Q8-cli-module", "kind": "cli", "args": ["query", "module", "--file", "src/greet/detail.cppm"], "expect": [{ "path": "/name", "equals": "hello.greet" }] },
+    { "id": "Q9-written-partition", "kind": "write-file", "file": "src/greet/extra.cppm", "content": "export module hello.greet:extra;\n" },
+    { "id": "Q9-disk-read", "kind": "mcp", "tool": "cxx_module", "arguments": { "name": "hello.greet" }, "expect": [{ "path": "/partitions", "contains": "hello.greet:extra" }] },
     { "id": "R1-elsewhere", "kind": "responds", "file": "src/main.cpp", "at": [4, 10], "timeout": 5 }
   ]
 }

@@ -12,6 +12,17 @@ All changes to the specifications in this directory. Each specification is versi
 
 - Rule identifiers `S<n>-<section>-<ordinal>` on every requirement of S1 to S4 (S3 added the same day), and `conformance/traceability.json` mapping each to its evidence (README, "Rule identifiers and traceability"). No normative change.
 
+## S5 — Semantic Queries for C++ Code
+
+### 0.1.0 — 2026-09-15 (Draft)
+
+First draft (overall design 7.1, 7.2, 7.6, 8.1):
+
+- Result conventions: locations counted from 1 in Unicode scalar values with their line's text, the snapshot a result describes, USR symbol identifiers, deterministic order, limits and failures.
+- Queries: symbols by name, identifier or position; references and callers searched in a symbol's module and everything importing it, re-exports included; callees; file outlines; modules and the module graph; fresh diagnostics.
+- The build context of a file, and the data of findings (rule, evidence, origin, fix, fingerprint) for the review of changes of a later version.
+- Bindings: MCP tools over standard input and output, and `mcppls query` and `mcppls diagnostics` with exit statuses.
+
 ## S1 — C++ Build Database: IDE Profile
 
 ### 0.2.0 — 2026-09-14 (Draft), revised 2026-09-14
