@@ -4,7 +4,7 @@
 |---|---|
 | 起因 | 2026-09-16 在 VS Code 中打开 openxlings/xlings，mcppls 连跳转都失效。mcpp 在 `emit build-database` 的规划阶段同步调用 `xlings update`，后者挂在一条不经代理的 GitHub 连接上；mcppls 被拖住约 12 分钟，期间没有引擎数据库，最后退回推断模型并覆盖了缓存 |
 | 目标 | 获取构建描述永远不影响可用性；运行用户的构建工具时尽量与用户终端一致；默认不联网；三平台行为一致；用户无感；启动快 |
-| 状态 | 方案。第 9 节决策 1–5 已确认（2026-09-16）；决策 6：向 mcpp 提适配 issue（M1–M6），xlings 的 X1、X2 待定；决策 7 待定 |
+| 状态 | 方案。第 9 节决策 1–5 已确认（2026-09-16）；决策 6：mcpp 适配已提 [mcpp-community/mcpp#648](https://github.com/mcpp-community/mcpp/issues/648)（M1–M6），xlings 的 X1、X2 待定；决策 7 待定 |
 | 日期 | 2026-09-16 |
 | 核对对象 | mcppls feat/mcppls @ 3ebe9a5；mcpp 2026.9.15.1（源码 mcpp-community/mcpp @ 2fc7b5b0）；VS Code 1.125.1 |
 
@@ -244,9 +244,9 @@ Windows：图形程序的环境来自注册表，用编辑器进程环境，不�
 | 登录 shell 解析 | — | 后台一次；本机 fish 实测 14 ms，期限 10 s |
 | 保存 `mcpp.toml` 后重新读取 | 在线运行 mcpp | 离线运行（xlings 2.6 s），期间功能不变 |
 
-## 7. 需要 mcpp 与 xlings 适配的点（issue 草稿，review 后再提）
+## 7. 需要 mcpp 与 xlings 适配的点
 
-mcppls 按第 4 节实施后，不依赖下列任何一项也能正常工作；它们让 mcpp 自身、以及其他使用 `emit build-database` 的工具更可靠。
+mcppls 按第 4 节实施后，不依赖下列任何一项也能正常工作；它们让 mcpp 自身、以及其他使用 `emit build-database` 的工具更可靠。M1–M6 已合为 [mcpp-community/mcpp#648](https://github.com/mcpp-community/mcpp/issues/648)（issue 中编号为 A1–A6，顺序为 M1、M2、M3、M4、M5、M6）；X1、X2 待定。
 
 **mcpp**
 
@@ -290,5 +290,5 @@ mcppls 按第 4 节实施后，不依赖下列任何一项也能正常工作；�
 | 3 | clangd 继续用编辑器进程环境（它只读归一化后的命令） | 已确认 |
 | 4 | 有缓存时立即使用、后台确认。代价：编辑器关闭期间工程改动过时，启动后最初几秒用旧描述，确认后可能重启一次 clangd | 已确认 |
 | 5 | 期限：生产方软 5 s、硬 60 s，工具链探测 20 s，登录 shell 10 s，无缓存时等生产方 10 s | 已确认 |
-| 6 | 第 7 节的外部 issue：mcpp 的 M1–M6 合为一个适配 issue；xlings 的 X1、X2 | mcpp：提交中；xlings：待定 |
+| 6 | 第 7 节的外部 issue：mcpp 的 M1–M6 合为一个适配 issue；xlings 的 X1、X2 | mcpp：已提 #648；xlings：待定 |
 | 7 | CMake 私有构建目录的第一次配置允许下载（否则使用 FetchContent 的工程在离线默认下没有构建描述）；或同样离线、失败时给动作 | 待定 |
