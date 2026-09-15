@@ -346,6 +346,7 @@ interface Review {
 | `module/partition-misuse` | error | the change exports an implementation partition, or imports a partition as `import m:p;` |
 | `module/import-unresolved` | error | the change imports a module no unit and no standard library provides, or several units do |
 | `build/diagnostic-introduced` | the diagnostic's | the core engine reports an error or a warning on a line the change added or altered |
+| `build/toolchain-divergence` | error | with `toolchains` (an mcpp project, two or more toolchains): one toolchain rejects a changed line, or a unit of the search scope, while another builds the project |
 | `test/exported-change-untested` | information | a module's exports changed and no unit of a test set changed |
 
 - A review **MUST** be refused with `untrusted` in a workspace that is not trusted. <a id="S5-5.2-1"></a><sup>S5-5.2-1</sup>
@@ -360,6 +361,8 @@ interface Review {
 - A compiler diagnostic on the line of another rule's finding **MUST** be that finding's `diagnostic` evidence rather than a finding of its own. <a id="S5-5.2-10"></a><sup>S5-5.2-10</sup>
 - `test/exported-change-untested` **MUST NOT** be reported when a unit of a test set that uses the module is part of the change. <a id="S5-5.2-11"></a><sup>S5-5.2-11</sup>
 - `complete` **MUST** be false when units of the search scope were not searched or not built. <a id="S5-5.2-12"></a><sup>S5-5.2-12</sup>
+- Builds with other toolchains **MUST** happen outside the workspace, in a copy under the user cache. <a id="S5-5.2-13"></a><sup>S5-5.2-13</sup>
+- `build/toolchain-divergence` **MUST** be reported only where another toolchain built the whole project, so that an error is not taken for a divergence because the other build stopped before reaching it. <a id="S5-5.2-14"></a><sup>S5-5.2-14</sup>
 
 ### 5.3 Forms
 

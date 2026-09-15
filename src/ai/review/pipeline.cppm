@@ -8,6 +8,7 @@ import nlohmann.json;
 import mcppls.spec.query;
 import mcppls.ai.query.view;
 import mcppls.ai.query.files;
+import mcppls.ai.verify.toolchains;
 import mcppls.ai.review.changes;
 import mcppls.ai.review.semantic;
 import mcppls.ai.review.impact;
@@ -18,6 +19,7 @@ struct ReviewRequest {
     ChangeRequest changes;
     std::size_t budget { 32 };           // units the core engine builds at most
     bool build { true };                 // false: impact only, nothing built
+    std::vector<std::string> toolchains; // two or more: the project built with each, for build/toolchain-divergence
 };
 
 struct ReviewResult {
@@ -27,6 +29,8 @@ struct ReviewResult {
     Impact impact;
     std::map<std::string, std::vector<query::Diagnostic>> diagnostics;   // of the units built
     std::vector<std::string> unbuilt;    // beyond the budget, or not complete in time
+    std::optional<verify::ToolchainComparison> toolchains;
+    std::optional<query::Failure> toolchainFailure;
     std::vector<spec::Finding> findings;
     std::map<std::string, int> counts;   // findings by severity
 };

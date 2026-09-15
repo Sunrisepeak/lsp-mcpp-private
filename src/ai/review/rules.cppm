@@ -8,6 +8,7 @@ import nlohmann.json;
 import mcppls.spec.query;
 import mcppls.ai.query.view;
 import mcppls.ai.query.files;
+import mcppls.ai.verify.toolchains;
 import mcppls.ai.review.changes;
 import mcppls.ai.review.semantic;
 import mcppls.ai.review.impact;
@@ -30,6 +31,8 @@ struct RuleInput {
     const Impact& impact;
     // The diagnostics of the units checked (changed and importing), by S5 file name, as they are now.
     const std::map<std::string, std::vector<query::Diagnostic>>& diagnostics;
+    // The builds with several toolchains, when the review asked for them.
+    const verify::ToolchainComparison* toolchains { nullptr };
 };
 
 // Findings of every rule, numbered F1, F2, ... in S5 order, each with its fingerprint.

@@ -132,6 +132,7 @@ public:
     std::optional<engine::EngineStatus> core_engine_status() const;
     const std::string& cache_directory() const;
     bool trusted() const;
+    const std::string& mcpp_executable() const;   // as configured; empty: found on PATH
     // The document version of the core engine's latest diagnostics for a client URI: -1 when the
     // engine did not say, nullopt when it published none since the document opened.
     std::optional<std::int64_t> core_diagnostics_version(std::string_view uri) const;

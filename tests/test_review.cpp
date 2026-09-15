@@ -8,10 +8,12 @@ import mcppls.ai.review.changes;
 import mcppls.ai.review.semantic;
 import mcppls.ai.review.impact;
 import mcppls.ai.review.report;
+import mcppls.ai.verify.toolchains;
 
 using Json = nlohmann::json;
 namespace spec = mcppls::spec;
 namespace review = mcppls::ai::review;
+namespace verify = mcppls::ai::verify;
 
 int main() {
     using namespace mcppls::testing;
@@ -68,6 +70,29 @@ int main() {
         expect(unqualified[0].line == 4);
         const std::string raw { "auto text = R\"x(decorate)x\"; int n = decorate(1);\n" };
         expect(review::identifier_uses(raw, "a.cpp", "decorate", "").size() == 1u) << "a raw string is not code";
+    };
+
+    "compiler output of every family becomes diagnostics in the workspace"_test = [] {
+        const std::string output {
+            "[1/3] building\n"
+            "/build/copy/src/main.cpp:5:45: error: designator order for field 'x' does not match declaration order\n"
+            "/usr/include/c++/16/bits/format.h:12:1: note: in a header of the toolchain\n"
+            "/toolchain/include/vector:99:3: error: not the project's\n"
+            "src/calc/geometry.cppm:7:8: warning: unused parameter 'v'\n"
+            "src/text/text.cppm(4,10): error C2065: 'x': undeclared identifier\n"
+            "/build/copy/src/main.cpp:5:45: error: designator order for field 'x' does not match declaration order\n"
+        };
+        const auto texts = [](std::string_view path) -> std::string {
+            if (path.ends_with("main.cpp")) return "import std;\nimport calc;\n\nint main() {\n    const calc::vec2 v { .y = 4.0, .x = 3.0 };\n}\n";
+            return {};
+        };
+        const auto diagnostics = verify::parse_compiler_output(output, "/build/copy", "/work/project", texts);
+        expect(fatal(diagnostics.size() == 3u)) << diagnostics.size() << " (the toolchain's own headers and a repeated line are left out)";
+        expect(diagnostics[0].severity == "error" && diagnostics[0].location.file == "src/main.cpp" && diagnostics[0].location.line == 5 && diagnostics[0].location.column == 45);
+        expect(diagnostics[0].location.text == "    const calc::vec2 v { .y = 4.0, .x = 3.0 };");
+        expect(diagnostics[1].severity == "warning" && diagnostics[1].location.file == "src/calc/geometry.cppm" && diagnostics[1].message == "unused parameter 'v'");
+        expect(diagnostics[2].severity == "error" && diagnostics[2].location.file == "src/text/text.cppm" && diagnostics[2].location.line == 4 && diagnostics[2].location.column == 10);
+        expect(diagnostics[2].message == "'x': undeclared identifier") << diagnostics[2].message;
     };
 
     "findings become SARIF results and LSP diagnostics"_test = [] {

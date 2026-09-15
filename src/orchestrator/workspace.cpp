@@ -1193,6 +1193,8 @@ const std::string& Workspace::cache_directory() const { return impl_->cacheDirec
 
 bool Workspace::trusted() const { return impl_->options.trusted; }
 
+const std::string& Workspace::mcpp_executable() const { return impl_->options.mcpp; }
+
 std::optional<std::int64_t> Workspace::core_diagnostics_version(std::string_view uri) const {
     const auto found = impl_->coreDiagnosticsVersions.find(uri);
     if (found == impl_->coreDiagnosticsVersions.end()) return std::nullopt;

@@ -13,6 +13,7 @@ import mcppls.orchestrator.kernel;
 import mcppls.orchestrator.workspace;
 import mcppls.ai.query.view;
 import mcppls.ai.query.files;
+import mcppls.ai.verify.toolchains;
 import mcppls.ai.review.changes;
 import mcppls.ai.review.semantic;
 import mcppls.ai.review.impact;
@@ -108,7 +109,13 @@ query::Outcome<ReviewResult> review_change(query::View& view, const ReviewReques
         }
         base::log::info("review: {} unit(s) built, {} not", units.size(), result.unbuilt.size());
     }
-    result.findings = run_rules(view, RuleInput { result.changes, result.diffs, result.impact, result.diagnostics });
+    if (request.toolchains.size() >= 2) {
+        auto compared = verify::compare_toolchains(view, request.toolchains, deadline);
+        if (compared) result.toolchains = std::move(*compared);
+        else result.toolchainFailure = compared.error();
+        base::log::info("review: {} toolchain(s) compared", request.toolchains.size());
+    }
+    result.findings = run_rules(view, RuleInput { result.changes, result.diffs, result.impact, result.diagnostics, result.toolchains ? &*result.toolchains : nullptr });
     base::log::info("review: {} finding(s)", result.findings.size());
     for (const std::string_view severity : { "error", "warning", "information", "hint" }) result.counts[std::string { severity }] = 0;
     for (const auto& finding : result.findings) ++result.counts[std::string { spec::to_string(finding.severity) }];
@@ -138,7 +145,9 @@ Json review_json(const ReviewResult& result) {
     value["findings"] = std::move(findings);
     value["counts"] = result.counts;
     value["unbuilt"] = result.unbuilt;
-    value["complete"] = result.unbuilt.empty() && result.impact.unsearched.empty();
+    value["complete"] = result.unbuilt.empty() && result.impact.unsearched.empty() && !result.toolchainFailure;
+    if (result.toolchains) value["toolchains"] = verify::to_json(*result.toolchains);
+    if (result.toolchainFailure) value["toolchainFailure"] = query::to_json(*result.toolchainFailure);
     return value;
 }
 

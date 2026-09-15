@@ -16,6 +16,7 @@ import mcppls.ai.query.modules;
 import mcppls.ai.context.build;
 import mcppls.ai.context.interface;
 import mcppls.ai.verify.changes;
+import mcppls.ai.verify.toolchains;
 import mcppls.ai.review.pipeline;
 import mcppls.ai.review.report;
 import mcppls.ai.review.judgement;
@@ -394,6 +395,7 @@ cmdline::App verify_command(bool& handled, int& status) {
     (void)command.option("code").takes_value().help("The snippet's code");
     (void)command.option("code-file").takes_value().help("A file holding the snippet's code");
     (void)command.option("replace-lines").takes_value().help("Lines of the file the snippet replaces (default 0)");
+    (void)command.option("toolchains").takes_value().help("Build the project with these mcpp toolchains, comma-separated, and compare their errors");
     add_session_options(command);
     (void)command.action([&](const cmdline::ParsedArgs& args) {
         handled = true;
@@ -436,6 +438,28 @@ cmdline::App verify_command(bool& handled, int& status) {
             }, print, verdict_status);
             return;
         }
+        if (auto list = args.value("toolchains")) {
+            std::vector<std::string> toolchains;
+            for (auto toolchain : base::split(*list, ',')) {
+                if (!base::trim(toolchain).empty()) toolchains.emplace_back(base::trim(toolchain));
+            }
+            status = run_in_session(args, {}, [&](query::View& view, Clock::time_point deadline) -> query::Outcome<Json> {
+                auto compared = ai::verify::compare_toolchains(view, toolchains, deadline);
+                if (!compared) return std::unexpected { compared.error() };
+                Json value = ai::verify::to_json(*compared);
+                const bool allBuilt { std::ranges::all_of(compared->builds, [](const auto& build) { return build.built; }) };
+                const bool allRan { std::ranges::all_of(compared->builds, [](const auto& build) { return build.ran; }) };
+                value["verdict"] = allBuilt ? "pass" : allRan ? "errors" : "incomplete";
+                return value;
+            }, [](const Json& result) {
+                for (const auto& divergence : result.value("divergences", Json::array())) {
+                    std::println("{}: {} only: {}", location_text(divergence["diagnostic"]["location"]), divergence.value("toolchain", std::string {}),
+                                 divergence["diagnostic"].value("message", std::string {}));
+                }
+                std::println("{}", result.value("verdict", std::string {}));
+            }, verdict_status);
+            return;
+        }
         ai::verify::ChangeOptions options;
         for (const auto& file : args.positionals) options.files.push_back(absolute(file));
         options.workingTree = args.is_flag_set("changed");
@@ -468,6 +492,11 @@ ai::review::ReviewRequest review_request_of(const cmdline::ParsedArgs& args) {
         } catch (...) {
         }
     }
+    if (auto toolchains = args.value("toolchains")) {
+        for (auto toolchain : base::split(*toolchains, ',')) {
+            if (!base::trim(toolchain).empty()) request.toolchains.emplace_back(base::trim(toolchain));
+        }
+    }
     return request;
 }
 
@@ -475,6 +504,7 @@ void add_change_options(cmdline::App& command) {
     (void)command.arg("file").help("Only these files, against the base");
     (void)command.option("base").takes_value().help("The git revision the change is against (default HEAD)");
     (void)command.option("budget").takes_value().help("Units searched and built at most (default 32)");
+    (void)command.option("toolchains").takes_value().help("mcpp toolchains to build the project with, comma-separated, e.g. gcc@16.1.0,llvm@22.1.8");
 }
 
 void print_text_impact(const Json& result) {

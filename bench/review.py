@@ -57,6 +57,9 @@ def run_fixture(fixture, server, payload, scratch, timeout, mock_model):
     model = meta.get("model")
     if model and not mock_model:
         return {"id": meta["id"], "ok": True, "skipped": "needs --mock-model", "seconds": 0.0, "problems": [], "findings": [], "meta": meta}
+    host = {"linux": "linux", "darwin": "macos", "win32": "windows"}.get(sys.platform, sys.platform)
+    if "hosts" in meta and host not in meta["hosts"]:
+        return {"id": meta["id"], "ok": True, "skipped": f"runs on {', '.join(meta['hosts'])}", "seconds": 0.0, "problems": [], "findings": [], "meta": meta}
     shutil.copytree(REPOSITORY / meta["project"], workspace, ignore=shutil.ignore_patterns("scenario.json"))
     git(workspace, "init", "-q")
     git(workspace, "add", "-A")
@@ -74,6 +77,8 @@ def run_fixture(fixture, server, payload, scratch, timeout, mock_model):
     command = [server, "review", "--format", "json", "--root", str(workspace), "--timeout", str(timeout)]
     if payload:
         command += ["--payload", payload]
+    if meta.get("toolchains"):
+        command += ["--toolchains", ",".join(meta["toolchains"])]
     if model:
         # A scripted gateway answers in place of a model: the model step runs end to end, and nothing leaves the machine.
         script = scratch / f"{meta['id']}-model.json"

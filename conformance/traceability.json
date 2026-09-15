@@ -1499,5 +1499,23 @@
   {
    "test": "tests/test_model.cpp: review: an over-budget prompt stops before any call, cache write, or output"
   }
+ ],
+ "S5-5.2-13": [
+  {
+   "review": "toolchain-divergence-all-cppm"
+  },
+  {
+   "script": "src/ai/verify/toolchains.cpp",
+   "contains": "const std::string copy { base::join_path(workspace.cache_directory(), base::join_path(\"toolchains\", sanitized(toolchain))) };"
+  }
+ ],
+ "S5-5.2-14": [
+  {
+   "script": "src/ai/verify/toolchains.cpp",
+   "contains": "if (other.built) others.push_back(other.toolchain);"
+  },
+  {
+   "test": "tests/test_review.cpp: compiler output of every family becomes diagnostics in the workspace"
+  }
  ]
 }

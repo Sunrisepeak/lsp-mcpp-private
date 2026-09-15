@@ -164,6 +164,8 @@ Json tool_list() {
     reviewProperties["model"] = Json { { "type", "string" }, { "enum", Json::array({ "none", "agent", "gateway", "mcp-sampling" }) },
                                        { "description", "agent: also return the context and instructions for you to judge; gateway, mcp-sampling: if the server enables them" } };
     reviewProperties["explainContext"] = property("boolean", "With a model: list what would be sent to it, and send nothing");
+    reviewProperties["toolchains"] = Json { { "type", "array" }, { "items", Json { { "type", "string" } } },
+                                            { "description", "mcpp projects: build with these toolchains (e.g. gcc@16.1.0, llvm@22.1.8) and report errors only some give" } };
     tools.push_back(tool("cxx_review", "C++ review",
                          "Review a change: findings of deterministic rules, each with the evidence it rests on (references, diff lines, diagnostics).",
                          std::move(reviewProperties)));
@@ -267,6 +269,7 @@ ToolResult call_tool(query::View& view, std::string_view name, const Json& value
         request.changes.base = arguments.string("base").empty() ? std::string { "HEAD" } : arguments.string("base");
         request.changes.files = arguments.strings("files");
         request.budget = static_cast<std::size_t>(std::max(1, arguments.integer("budget", 32)));
+        request.toolchains = arguments.strings("toolchains");
         if (name == "cxx_impact") {
             request.build = false;
             auto analyzed = review::analyze_change(view, request, deadline);

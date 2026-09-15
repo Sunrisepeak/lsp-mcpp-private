@@ -21,7 +21,7 @@ namespace mcppls::ai::review {
 
 namespace {
 
-constexpr std::array<Rule, 6> RULES {
+constexpr std::array<Rule, 7> RULES {
     Rule { "module/export-removed-in-use", "Removed export still in use", spec::Severity::error,
            "An exported declaration, or the module itself, went away while units that import it still use it." },
     Rule { "module/export-signature-changed", "Exported signature changed", spec::Severity::warning,
@@ -32,6 +32,8 @@ constexpr std::array<Rule, 6> RULES {
            "The change imports a module that no unit of the workspace and no standard library provides, or that several provide." },
     Rule { "build/diagnostic-introduced", "Diagnostic in changed code", spec::Severity::error,
            "The compiler reports an error or a warning on a line the change added or altered." },
+    Rule { "build/toolchain-divergence", "Fails with one toolchain only", spec::Severity::error,
+           "One toolchain the project builds with rejects code the change touches, while another builds the project." },
     Rule { "test/exported-change-untested", "Interface change without a test change", spec::Severity::information,
            "A module's interface changed and no test that uses the module changed with it." },
 };
@@ -206,6 +208,28 @@ std::vector<spec::Finding> run_rules(query::View& view, const RuleInput& input) 
                 auto& finding = builder.add("build/diagnostic-introduced", diagnostic.severity, diagnostic.message, diagnostic.location);
                 Builder::evidence(finding, "diagnostic", diagnostic.location, diagnostic.source.empty() ? diagnostic.code : diagnostic.source);
             }
+        }
+    }
+
+    // build/toolchain-divergence: in the changed lines, or in a unit that can use a changed interface.
+    if (input.toolchains != nullptr) {
+        std::set<std::string> involved { input.impact.files.begin(), input.impact.files.end() };
+        for (const auto& divergence : input.toolchains->divergences) {
+            const auto& at = divergence.diagnostic.location;
+            const auto changed = std::ranges::find_if(input.diffs, [&](const UnitDiff& diff) { return diff.file == at.file; });
+            bool relevant { involved.contains(at.file) };
+            if (changed != input.diffs.end()) {
+                const auto index = static_cast<std::size_t>(changed - input.diffs.begin());
+                relevant = relevant || (index < input.changes.files.size() && input.changes.files[index].changed_head_line(at.line));
+            }
+            if (!relevant) continue;
+            std::string others;
+            for (const auto& other : divergence.others) others += (others.empty() ? "" : ", ") + other;
+            auto& finding = builder.add("build/toolchain-divergence", spec::Severity::error,
+                                        std::format("{} rejects this, while {} build{} the project: {}", divergence.toolchain, others,
+                                                    divergence.others.size() == 1 ? "s" : "", divergence.diagnostic.message),
+                                        at);
+            Builder::evidence(finding, "diagnostic", at, std::format("{}: {}", divergence.toolchain, divergence.diagnostic.message));
         }
     }
 
