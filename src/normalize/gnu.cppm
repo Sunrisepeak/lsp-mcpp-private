@@ -12,6 +12,9 @@ export namespace mcppls::normalize {
 // The driver name written into engine commands when the build's own driver is
 // not a Clang driver. The engine never executes it.
 inline constexpr std::string_view ENGINE_CLANG_DRIVER { "clang++" };
+// The same for a C source: the engine reads a source as C only when the driver is a C driver, since
+// the translated arguments carry no -x.
+inline constexpr std::string_view ENGINE_CLANG_C_DRIVER { "clang" };
 
 struct GnuInput {
     std::span<const std::string> arguments;   // full compile command, argv[0] first, response files expanded

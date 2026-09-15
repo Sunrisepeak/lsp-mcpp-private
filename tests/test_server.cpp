@@ -16,6 +16,7 @@ import mcppls.engine.native;
 import mcppls.engine.native.index;
 import mcppls.engine.clangd;
 import mcppls.engine.clangd.process;
+import mcppls.engine.clangd.guard;
 import mcppls.engine.clangd.primer;
 import mcppls.orchestrator.client;
 import mcppls.orchestrator.documents;
@@ -227,6 +228,77 @@ int main() {
         expect(fatal(other.has_value()));
         expect(other->module == "std" && other->failedSource.empty());
         expect(!cld::parse_module_failure("I[04:34:47.305] Built module std to /cache/std.pcm").has_value());
+    };
+
+    "a module clangd cannot find is told apart from one that does not compile"_test = [] {
+        const auto unresolved = cld::parse_module_failure("E[04:05:38.910] Failed to build module std; due to Don't get the module unit for module std");
+        const auto compile = cld::parse_module_failure("E[04:05:39.001] Failed to build module e; due to Failed to compile /p/e.cppm. Use '--log=verbose' to view detailed failure reasons.");
+        const auto other = cld::parse_module_failure("E[23:22:24.095] Failed to build module xlings.core.semver; due to Failed to create buffer");
+        expect(fatal(unresolved.has_value() && compile.has_value() && other.has_value()));
+        expect(cld::failure_kind(*unresolved) == cld::FailureKind::unresolved);
+        expect(cld::failure_kind(*compile) == cld::FailureKind::compile);
+        expect(cld::failure_kind(*other) == cld::FailureKind::other);
+    };
+
+    "restarts in a row are spaced out"_test = [] {
+        using namespace std::chrono_literals;
+        cld::RestartGate gate;
+        const auto t0 = cld::GuardClock::now();
+        expect(gate.earliest(t0) == t0) << "the first restart happens at once";
+        gate.record(t0);
+        expect(gate.earliest(t0 + 1s) == t0 + 10s) << "the next one waits ten seconds";
+        gate.record(t0 + 10s);
+        expect(gate.earliest(t0 + 11s) == t0 + 30s) << "then twenty";
+        for (int i { 0 }; i < 10; ++i) gate.record(t0 + 30s + std::chrono::seconds { i });
+        expect(gate.earliest(t0 + 40s) == t0 + 39s + 5min) << "never more than five minutes apart";
+        expect(gate.earliest(t0 + 30min) == t0 + 30min) << "a quiet ten minutes starts over";
+    };
+
+    "a file clangd stops answering is set aside; an engine answering nobody is stalled"_test = [] {
+        using namespace std::chrono_literals;
+        using Verdict = cld::Quarantine::Verdict;
+        const auto t0 = cld::GuardClock::now();
+        cld::Quarantine quarantine;
+        // clangd answered another file after each request was sent: this file is what is stuck.
+        expect(quarantine.timed_out("/p/a.cppm", t0, t0 + 10s, t0 + 5s) == Verdict::wait) << "one timeout is not yet a pattern";
+        expect(quarantine.timed_out("/p/a.cppm", t0 + 11s, t0 + 21s, t0 + 15s) == Verdict::quarantined);
+        expect(quarantine.contains("/p/a.cppm") && quarantine.size() == 1u);
+        expect(quarantine.due(t0 + 21s + 1min).empty() && !quarantine.due(t0 + 21s + 2min).empty()) << "the first term is two minutes";
+        expect(!quarantine.contains("/p/a.cppm"));
+        expect(quarantine.timed_out("/p/a.cppm", t0 + 3min, t0 + 3min + 10s, t0 + 3min + 5s) == Verdict::wait);
+        expect(quarantine.timed_out("/p/a.cppm", t0 + 4min, t0 + 4min + 10s, t0 + 4min + 5s) == Verdict::quarantined);
+        expect(quarantine.due(t0 + 4min + 10s + 3min).empty()) << "the second term is longer";
+        expect(quarantine.release("/p/a.cppm") && !quarantine.contains("/p/a.cppm")) << "a change hands the file back";
+        const auto answeredAgain = t0 + 10min;
+        quarantine.timed_out("/p/b.cppm", answeredAgain, answeredAgain + 10s, answeredAgain + 5s);
+        quarantine.answered("/p/b.cppm");
+        expect(quarantine.timed_out("/p/b.cppm", answeredAgain + 20s, answeredAgain + 30s, answeredAgain + 25s) == Verdict::wait) << "an answer starts the count over";
+
+        // clangd answered nothing since the requests were sent, for two files: the engine is stuck.
+        cld::Quarantine stalled;
+        const auto t1 = t0 + 1h;
+        expect(stalled.timed_out("/p/main.cpp", t1, t1 + 10s, t1 - 1s) == Verdict::wait);
+        expect(stalled.timed_out("/p/plain.cpp", t1 + 2s, t1 + 12s, t1 - 1s) == Verdict::stalled);
+        expect(stalled.first_stalled() == std::optional<std::string> { "/p/main.cpp" }) << "the file asked about first is the likeliest cause";
+    };
+
+    "clangd's log is forwarded without flooding"_test = [] {
+        using namespace std::chrono_literals;
+        cld::LineLimiter limiter { 3, 10s };
+        const auto t0 = cld::GuardClock::now();
+        int forwarded { 0 };
+        for (int i { 0 }; i < 1000; ++i) forwarded += limiter.admit(t0 + std::chrono::milliseconds { i }).forward ? 1 : 0;
+        expect(forwarded == 3) << forwarded;
+        const auto next = limiter.admit(t0 + 11s);
+        expect(next.forward && next.suppressedBefore == 997u) << next.suppressedBefore;
+        expect(limiter.admit(t0 + 12s).suppressedBefore == 0u);
+    };
+
+    "module preparation takes a quarter of the cores"_test = [] {
+        expect(cld::preparation_limit(32, false, 0) == 4u) << "16 cores";
+        expect(cld::preparation_limit(32, false, 2) == 2u) << "half while a person waits for a file";
+        expect(cld::preparation_limit(10, true, 0) == 2u) << "macOS counts cores as threads";
+        expect(cld::preparation_limit(4, false, 0) == 1u && cld::preparation_limit(0, false, 5) == 1u) << "never less than one";
     };
 
     "merging"_test = [] {

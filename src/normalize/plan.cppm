@@ -45,8 +45,11 @@ struct EnginePlan {
     std::vector<EngineEntry> entries;
     std::vector<PlannedModule> modules;
     std::vector<std::pair<std::string, std::string>> primeSources;   // prime file -> its content
+    // Stand-ins (robustness design C2): an empty unit per module nothing usable provides, and those modules.
+    std::vector<std::pair<std::string, std::string>> stubSources;    // stand-in file -> its content
+    std::vector<std::string> stubModules;
     std::vector<PlanIssue> issues;
-    std::vector<std::string> excludedFiles;   // importable units left out because an import cannot resolve
+    std::vector<std::string> excludedFiles;   // providers left out because they cannot be built
     std::string contextSet;                   // empty: every set
     std::size_t stdUnits { 0 };
 };
@@ -60,19 +63,26 @@ struct PlanInput {
     std::string macosSdk;                                            // for kits that require it
     std::function<project::ScanResult(std::string_view path)> scanner;
     spec::MetadataReader metadataReader;
-    // Modules the engine reported it could not build, with the reason: their importers are
-    // left out like importers of an unresolvable module, so they are answered at once.
-    std::map<std::string, std::string, std::less<>> failedModules;
+    // Modules the engine reported it cannot find, with the reason: providers importing one cannot be
+    // built and are left out like providers of an unresolvable import. A module that was found and did
+    // not compile is not one of them; its importers stay (robustness design C3).
+    std::map<std::string, std::string, std::less<>> unresolvedModules;
     // Where `import M;` units for parallel preparation are written; empty: none are planned.
     std::string primeDirectory;
     // The directory module hints name; nothing is created there. Empty: no hints.
     std::string moduleHintDirectory;
-    // Engine decisions (overall design 5.4), set by the core engine's configure_plan. Units whose
-    // imports cannot resolve, and their importers, stay out of the database: clangd 23.1 can stop
-    // answering for them (v1 experiment E13).
+    // Where stand-ins for modules nothing usable provides are written (robustness design C2). Empty: no
+    // stand-ins; providers whose imports cannot resolve leave the database instead.
+    std::string stubDirectory;
+    // Engine decisions (overall design 5.4), set by the core engine's configure_plan. Providers whose
+    // imports cannot resolve, and providers importing them, stay out of the database: clangd 23.1
+    // deadlocks building them (robustness design, experiments S2, S6). Other units always stay.
     bool excludeUnresolvedImports { true };
     // MSVC STL contexts turn aligned allocation off (clangd 23.1.0, usable plan E8/E9).
     bool noAlignedAllocationWithMsvcStl { true };
+    // The core engine could not build the toolchain's standard library module (robustness design C5): C++
+    // units are read with the semantic kit instead, as for a set without a usable toolchain.
+    bool preferKit { false };
 };
 
 EnginePlan plan_engine(const PlanInput& input);

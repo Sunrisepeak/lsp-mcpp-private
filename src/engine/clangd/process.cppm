@@ -44,6 +44,11 @@ struct ModuleFailure {
     std::string failedSource;   // the source that did not compile, when the reason names one
 };
 std::optional<ModuleFailure> parse_module_failure(std::string_view line);
+// What a module build failure means for the engine database (robustness design C3). `unresolved`:
+// clangd found no unit for the module ("Don't get the module unit"); a provider importing it cannot be
+// built. `compile`: the unit was found and did not compile; its importers get errors, not a hang (S3).
+enum class FailureKind { unresolved, compile, other };
+FailureKind failure_kind(const ModuleFailure& failure);
 // "clangd version 23.1.0 (https://github.com/llvm/llvm-project ea7d852a70e8...)" -> "23.1.0"
 std::string parse_clangd_version(std::string_view output);
 

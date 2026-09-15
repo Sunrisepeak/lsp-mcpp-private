@@ -218,7 +218,7 @@ int main() {
         const auto plan = n::plan_engine(input);
         std::set<std::string> files;
         for (const auto& entry : plan.entries) files.insert(entry.file);
-        expect(!files.contains("/p/src/main.cpp")) << "a unit importing a module that cannot resolve is left out";
+        expect(files.contains("/p/src/main.cpp")) << "a unit that provides no module stays whatever it imports: clangd answers it (experiment S10)";
         expect(files.contains("/p/src/app.cpp")) << "a non-module unit whose imports resolve is written";
         expect(files.contains("/p/src/greet.cppm") && files.contains("/p/src/detail.cppm"));
         expect(!files.contains("/p/src/broken.cppm")) << "an interface with an unresolvable import is left out";
@@ -248,6 +248,236 @@ int main() {
         expect(fatal(text.has_value()));
         expect(nlohmann::json::parse(*text).size() == plan.entries.size());
         mcppls::platform::fs::remove_all(root);
+    };
+
+    "a C library listed first decides neither how std nor how C sources are built"_test = [] {
+        // The shape of a workspace whose dependencies include C libraries (xlings: compat.mbedtls is its first set).
+        const std::map<std::string, std::string> sources {
+            { "/deps/mbedtls/library/aes.c", "int aes(void) { return 0; }\n" },
+            { "/p/src/main.cpp", "import std;\nimport app.core;\nint main() {}\n" },
+            { "/p/src/core.cppm", "export module app.core;\nimport std;\n" },
+        };
+        s::Database database;
+        database.hasIde = true;
+        s::Set library;
+        library.name = "compat.mbedtls";
+        library.hasIde = true;
+        library.toolchain = "gcc-16.1.0-x86_64-linux-gnu";
+        s::TranslationUnit c;
+        c.source = "/deps/mbedtls/library/aes.c";
+        c.workDirectory = "/deps/mbedtls";
+        c.arguments = { "/opt/gcc/bin/gcc", "-I/deps/mbedtls/include", "-std=c11", "-O0", "-c", c.source };
+        library.units.push_back(c);
+        s::Set app;
+        app.name = "app";
+        app.hasIde = true;
+        app.toolchain = library.toolchain;
+        for (const std::string path : { "/p/src/core.cppm", "/p/src/main.cpp" }) {
+            s::TranslationUnit unit;
+            unit.source = path;
+            unit.workDirectory = "/p";
+            unit.arguments = { "/opt/gcc/bin/g++", "-std=c++23", "-fmodules", "-O0", "-c", path };
+            app.units.push_back(std::move(unit));
+        }
+        database.sets = { library, app };
+        std::map<std::string, ToolchainFacts, std::less<>> facts { { library.toolchain, gcc_facts() } };
+        n::PlanInput input;
+        input.database = &database;
+        input.facts = &facts;
+        input.engineDriverDirectory = "/payload/clangd/bin";
+        input.primeDirectory = "/cache/prime";
+        input.scanner = [&](std::string_view path) {
+            const auto it = sources.find(std::string { path });
+            return it == sources.end() ? p::ScanResult {} : p::scan_source(it->second);
+        };
+        input.metadataReader = [](std::string_view) {
+            return std::vector<s::ModuleEntry> { { "std", "/opt/gcc/include/c++/16/bits/std.cc", true, {}, {} } };
+        };
+        const auto plan = n::plan_engine(input);
+        const auto entry_of = [&](std::string_view file) -> const n::EngineEntry* {
+            const auto it = std::ranges::find_if(plan.entries, [&](const n::EngineEntry& entry) { return entry.file == file; });
+            return it == plan.entries.end() ? nullptr : &*it;
+        };
+        const auto* stdEntry = entry_of("/opt/gcc/include/c++/16/bits/std.cc");
+        expect(fatal(stdEntry != nullptr));
+        expect(contains(stdEntry->arguments, "-std=c++23") && !contains(stdEntry->arguments, "-std=c11") && !contains(stdEntry->arguments, "-I/deps/mbedtls/include"))
+            << "std takes the arguments of a C++ unit that imports it: " << std::format("{}", stdEntry->arguments);
+        const auto* aes = entry_of("/deps/mbedtls/library/aes.c");
+        expect(fatal(aes != nullptr));
+        expect(aes->arguments.front() == "/payload/clangd/bin/clang" && contains(aes->arguments, "-std=c11"))
+            << "a C source is read as C: " << std::format("{}", aes->arguments);
+        const auto* core = entry_of("/p/src/core.cppm");
+        expect(fatal(core != nullptr));
+        expect(core->arguments.front() == "/payload/clangd/bin/clang++");
+        const auto prime = std::ranges::find_if(plan.entries, [](const n::EngineEntry& entry) { return entry.file.ends_with("-std.cpp"); });
+        expect(fatal(prime != plan.entries.end()));
+        expect(contains(prime->arguments, "-std=c++23") && !contains(prime->arguments, "-std=c11")) << std::format("{}", prime->arguments);
+    };
+
+    "a module nothing provides gets a stand-in, and every unit stays"_test = [] {
+        // robustness design C2: with stand-ins every import resolves, so clangd never builds a module whose import it
+        // cannot resolve (experiments S2, S6); only the names the missing module would declare are missing.
+        const std::map<std::string, std::string> sources {
+            { "/p/src/main.cpp", "import hello.greet;\nimport missing.module;\nint main() {}\n" },
+            { "/p/src/greet.cppm", "export module hello.greet;\n" },
+            { "/p/src/broken.cppm", "export module broken;\nimport nowhere;\n" },
+            { "/p/src/user.cppm", "export module user;\nimport broken;\n" },
+            { "/p/src/lost.cppm", "export module lost;\n" },
+            { "/p/src/usedlost.cpp", "import lost;\nint f() { return 0; }\n" },
+        };
+        s::Database database;
+        database.hasIde = true;
+        s::Set set;
+        set.name = "hello";
+        set.hasIde = true;
+        set.toolchain = "gcc-16.1.0-x86_64-linux-gnu";
+        for (const auto& [path, text] : sources) {
+            s::TranslationUnit unit;
+            unit.source = path;
+            unit.workDirectory = "/p";
+            unit.arguments = { "/opt/gcc/bin/g++", "-std=c++23", "-fmodules", "-c", path };
+            set.units.push_back(std::move(unit));
+        }
+        database.sets.push_back(set);
+        std::map<std::string, ToolchainFacts, std::less<>> facts { { set.toolchain, gcc_facts() } };
+        n::PlanInput input;
+        input.database = &database;
+        input.facts = &facts;
+        input.engineDriverDirectory = "/payload/clangd/bin";
+        input.stubDirectory = "/cache/stubs";
+        input.moduleHintDirectory = "/cache/hints";
+        input.scanner = [&](std::string_view path) {
+            const auto it = sources.find(std::string { path });
+            return it == sources.end() ? p::ScanResult {} : p::scan_source(it->second);
+        };
+        // clangd reported that it cannot find `lost` although the plan has its unit.
+        input.unresolvedModules = { { "lost", "Don't get the module unit for module lost" } };
+        const auto plan = n::plan_engine(input);
+        std::map<std::string, const n::EngineEntry*> byFile;
+        std::map<std::string, const n::EngineEntry*> byModule;
+        for (const auto& entry : plan.entries) {
+            byFile[entry.file] = &entry;
+            if (!entry.provides.empty()) byModule[entry.provides] = &entry;
+        }
+        for (const std::string file : { "/p/src/main.cpp", "/p/src/greet.cppm", "/p/src/broken.cppm", "/p/src/user.cppm", "/p/src/usedlost.cpp" }) {
+            expect(byFile.contains(file)) << file << " stays";
+        }
+        expect(!byFile.contains("/p/src/lost.cppm")) << "a unit clangd cannot find is no use to it";
+        const std::vector<std::string> wanted { "lost", "missing.module", "nowhere" };
+        auto stubs = plan.stubModules;
+        std::ranges::sort(stubs);
+        expect(stubs == wanted) << std::format("{}", stubs);
+        for (const auto& name : wanted) {
+            expect(fatal(byModule.contains(name)));
+            const auto& entry = *byModule[name];
+            expect(entry.file.starts_with("/cache/stubs/") && entry.file.ends_with(".cppm") && entry.imports.empty());
+            expect(contains(entry.arguments, "c++-module") && contains(entry.arguments, "-std=c++23") && entry.arguments.back() == entry.file);
+        }
+        expect(std::ranges::any_of(plan.stubSources, [](const auto& source) { return source.second == "export module nowhere;\n"; }));
+        expect(contains(byFile["/p/src/user.cppm"]->moduleHints, "-fmodule-file=nowhere=/cache/hints/nowhere.pcm")) << "the stand-in is named to clangd like any unit";
+        expect(plan.excludedFiles == std::vector<std::string> { "/p/src/lost.cppm" }) << std::format("{}", plan.excludedFiles);
+    };
+
+    "a module clangd could not find leaves out only the providers that import it"_test = [] {
+        // robustness design C2: clangd deadlocks building a module whose imports it cannot resolve (experiments S2, S6),
+        // and nothing else stops it answering, so the providers above that module go and every other unit stays.
+        const std::map<std::string, std::string> sources {
+            { "/p/src/base.cppm", "export module base;\n" },
+            { "/p/src/mid.cppm", "export module mid;\nimport base;\n" },
+            { "/p/src/top.cppm", "export module top;\nimport mid;\n" },
+            { "/p/src/main.cpp", "import top;\nimport other;\nint main() {}\n" },
+            { "/p/src/impl.cpp", "module mid;\nint helper() { return 1; }\n" },
+            { "/p/src/other.cppm", "export module other;\n" },
+        };
+        s::Database database;
+        database.hasIde = true;
+        s::Set set;
+        set.name = "app";
+        set.hasIde = true;
+        set.toolchain = "gcc-16.1.0-x86_64-linux-gnu";
+        for (const auto& [path, text] : sources) {
+            s::TranslationUnit unit;
+            unit.source = path;
+            unit.workDirectory = "/p";
+            unit.arguments = { "/opt/gcc/bin/g++", "-std=c++23", "-fmodules", "-c", path };
+            set.units.push_back(std::move(unit));
+        }
+        database.sets.push_back(set);
+        std::map<std::string, ToolchainFacts, std::less<>> facts { { set.toolchain, gcc_facts() } };
+        n::PlanInput input;
+        input.database = &database;
+        input.facts = &facts;
+        input.engineDriverDirectory = "/payload/clangd/bin";
+        input.scanner = [&](std::string_view path) {
+            const auto it = sources.find(std::string { path });
+            return it == sources.end() ? p::ScanResult {} : p::scan_source(it->second);
+        };
+        input.unresolvedModules = { { "base", "Don't get the module unit for module base" } };
+        const auto plan = n::plan_engine(input);
+        std::set<std::string> files;
+        for (const auto& entry : plan.entries) files.insert(entry.file);
+        expect(files.contains("/p/src/base.cppm")) << "the unit itself imports nothing";
+        expect(!files.contains("/p/src/mid.cppm") && !files.contains("/p/src/top.cppm")) << "providers above it cannot be built";
+        expect(files.contains("/p/src/main.cpp") && files.contains("/p/src/impl.cpp")) << "units that provide nothing stay";
+        expect(files.contains("/p/src/other.cppm")) << "an unrelated module is untouched";
+        expect(plan.excludedFiles.size() == 2u) << plan.excludedFiles.size();
+    };
+
+    "C++ units are read with the semantic kit when the toolchain's std could not be built"_test = [] {
+        const std::map<std::string, std::string> sources {
+            { "/p/src/main.cpp", "import std;\nint main() {}\n" },
+            { "/p/src/zlib.c", "int crc(void) { return 0; }\n" },
+        };
+        s::Database database;
+        database.hasIde = true;
+        s::Set set;
+        set.name = "app";
+        set.hasIde = true;
+        set.toolchain = "gcc-16.1.0-x86_64-linux-gnu";
+        s::TranslationUnit cxx;
+        cxx.source = "/p/src/main.cpp";
+        cxx.workDirectory = "/p";
+        cxx.arguments = { "/opt/gcc/bin/g++", "-std=c++23", "-fmodules", "-I/p/include", "-c", cxx.source };
+        s::TranslationUnit c;
+        c.source = "/p/src/zlib.c";
+        c.workDirectory = "/p";
+        c.arguments = { "/opt/gcc/bin/gcc", "-std=c11", "-c", c.source };
+        set.units = { cxx, c };
+        database.sets.push_back(set);
+        std::map<std::string, ToolchainFacts, std::less<>> facts { { set.toolchain, gcc_facts() } };
+        s::Kit kit;
+        kit.target = "x86_64-unknown-linux-gnu";
+        kit.moduleMetadata = "/kit/lib/libc++.modules.json";
+        kit.arguments = { "-nostdinc++" };
+        kit.systemIncludeDirectories = { "/kit/include/c++/v1" };
+        n::PlanInput input;
+        input.database = &database;
+        input.facts = &facts;
+        input.kit = &kit;
+        input.preferKit = true;
+        input.engineDriverDirectory = "/payload/clangd/bin";
+        input.scanner = [&](std::string_view path) {
+            const auto it = sources.find(std::string { path });
+            return it == sources.end() ? p::ScanResult {} : p::scan_source(it->second);
+        };
+        input.metadataReader = [](std::string_view manifest) {
+            if (manifest == "/kit/lib/libc++.modules.json") return std::vector<s::ModuleEntry> { { "std", "/kit/share/libc++/v1/std.cppm", true, { "/kit/share/libc++/v1" }, {} } };
+            return std::vector<s::ModuleEntry> { { "std", "/opt/gcc/include/c++/16/bits/std.cc", true, {}, {} } };
+        };
+        const auto plan = n::plan_engine(input);
+        const auto entry_of = [&](std::string_view file) -> const n::EngineEntry* {
+            const auto it = std::ranges::find_if(plan.entries, [&](const n::EngineEntry& entry) { return entry.file == file; });
+            return it == plan.entries.end() ? nullptr : &*it;
+        };
+        const auto* main = entry_of("/p/src/main.cpp");
+        expect(fatal(main != nullptr));
+        expect(contains(main->arguments, "-nostdinc++") && contains(main->arguments, "-I/p/include") && !contains_prefix(main->arguments, "--gcc-install-dir"))
+            << std::format("{}", main->arguments);
+        expect(entry_of("/kit/share/libc++/v1/std.cppm") != nullptr) << "std comes from the kit";
+        expect(entry_of("/opt/gcc/include/c++/16/bits/std.cc") == nullptr) << "and not from the toolchain";
+        const auto* zlib = entry_of("/p/src/zlib.c");
+        expect(fatal(zlib != nullptr));
+        expect(zlib->arguments.front() == "/payload/clangd/bin/clang" && contains_prefix(zlib->arguments, "--gcc-install-dir")) << "a C unit keeps its toolchain";
     };
 
     "a kit plan without a toolchain"_test = [] {

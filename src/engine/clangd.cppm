@@ -47,6 +47,7 @@ struct PendingRequest {
     int generation { 0 };
     Clock::time_point limit {};       // how long a request may be kept waiting at most; see keep_waiting
     Reply reply;
+    Clock::time_point sent {};        // when it was sent to clangd
 };
 
 // usable plan W7: a request whose deadline passed while the modules its file imports are still

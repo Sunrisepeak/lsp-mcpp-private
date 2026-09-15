@@ -15,6 +15,7 @@ import mcppls.lsp.protocol;
 import mcppls.project.scan;
 import mcppls.normalize.plan;
 import mcppls.engine;
+import mcppls.engine.clangd.guard;
 import mcppls.engine.clangd.primer;
 import mcppls.engine.clangd.process;
 
@@ -71,14 +72,27 @@ private:
     std::string databaseDirectory_;
     std::string primeDirectory_;
     std::string moduleHintDirectory_;
+    std::string stubDirectory_;       // stand-ins for modules nothing usable provides (robustness design C2)
 
     // Plan.
     bool planApplied_ { false };
     std::string writtenDatabase_;
     std::string writtenStructure_;   // the written database without module hints
+    std::map<std::string, std::string, std::less<>> writtenArguments_;   // path key -> the unit's engine command, without hints
     std::set<std::string> excluded_;   // path keys
-    // Modules clangd could not build, by name, with the reason; cleared when sources change.
-    std::map<std::string, std::string, std::less<>> failedModules_;
+    // Modules clangd could not find (robustness design C3), with the reason and the unit the plan had
+    // providing each then. An entry is forgotten when that unit, or its command, changes; not on every save.
+    struct UnresolvedModule {
+        std::string reason;
+        std::string provider;                          // the plan's unit for the module; empty when it had none
+        std::optional<platform::fs::FileStamp> stamp;  // of that unit
+        std::string command;                           // its engine command
+    };
+    std::map<std::string, UnresolvedModule, std::less<>> unresolvedModules_;
+    std::set<std::string, std::less<>> reportedFailures_;   // modules whose compile failure was logged
+    std::map<std::string, std::string, std::less<>> moduleCommands_;   // importable module -> its unit's engine command
+    // robustness design C5: clangd could not build the toolchain's standard library; C++ units are read with the kit.
+    bool stdFromKit_ { false };
 
     // Parallel module preparation (primer.cppm): `import M;` units opened in clangd.
     Primer primer_;
@@ -101,10 +115,15 @@ private:
     std::vector<std::pair<Json, Reply>> deferred_;   // client messages before clangd accepts traffic
     std::set<std::string> diagnosed_;                // client URIs clangd published diagnostics for
     std::set<std::string> awaitingDiagnostics_;      // client URIs
-    std::map<std::string, int, std::less<>> timeoutsByUri_;
     std::deque<Clock::time_point> crashes_;
     std::vector<Issue> issues_;
     std::optional<Clock::time_point> restartAt_;
+    std::string restartReason_;
+    // robustness design C4, C6: restarts spaced out; files clangd stopped answering for set aside one by one.
+    RestartGate restartGate_;
+    Quarantine quarantine_;                                   // path keys
+    std::optional<Clock::time_point> lastAnswerAt_;           // clangd's last answer to any client request
+    std::map<std::string, Clock::time_point, std::less<>> touchedAt_;   // path key -> when the document was last opened or changed
 
 public:
     explicit ClangdEngine(Options options) : options_ { std::move(options) }, traits_ { traits_for_version(options_.version) } {}
@@ -139,6 +158,7 @@ public:
         databaseDirectory_ = base::join_path(cache, "contexts/default/cdb");
         primeDirectory_ = base::join_path(cache, "contexts/default/prime");
         moduleHintDirectory_ = base::join_path(cache, "contexts/default/module-hints");   // never created
+        stubDirectory_ = base::join_path(cache, "contexts/default/stubs");
         (void)platform::fs::create_directories(databaseDirectory_);
         // clangd starts without a database; the first plan is written before any document reaches it.
         platform::fs::remove_all(base::join_path(databaseDirectory_, "compile_commands.json"));
@@ -153,9 +173,15 @@ public:
 
     void configure_plan(normalize::PlanInput& input) const override {
         input.engineDriverDirectory = options_.executable.empty() ? std::string {} : base::parent_path(options_.executable);
-        input.failedModules = failedModules_;
+        for (const auto& [name, unresolved] : unresolvedModules_) {
+            // The kit brings its own standard library: what clangd could not find of the toolchain's does not apply.
+            if (stdFromKit_ && input.kit != nullptr && (name == "std" || name == "std.compat")) continue;
+            input.unresolvedModules.emplace(name, unresolved.reason);
+        }
+        input.preferKit = stdFromKit_;
         input.primeDirectory = traits_.needsModulePreparation ? primeDirectory_ : std::string {};
         input.moduleHintDirectory = traits_.needsModuleHints ? moduleHintDirectory_ : std::string {};
+        input.stubDirectory = traits_.hangsOnUnresolvedImports ? stubDirectory_ : std::string {};
         input.excludeUnresolvedImports = traits_.hangsOnUnresolvedImports;
         input.noAlignedAllocationWithMsvcStl = traits_.msvcStlNeedsNoAlignedAllocation;
     }
@@ -182,12 +208,43 @@ public:
                 log::error("cannot write the engine database ({}): {}", host_->root_directory(), written.error().message);
             }
             writtenDatabase_ = database;
-            log::info("engine database ({}): {} entries ({} standard library units), {} left out, {} issues", host_->root_directory(), plan->entries.size(),
-                      plan->stdUnits, plan->excludedFiles.size(), plan->issues.size());
+            log::info("engine database ({}): {} entries ({} standard library units, {} stand-ins), {} left out, {} issues", host_->root_directory(),
+                      plan->entries.size(), plan->stdUnits, plan->stubModules.size(), plan->excludedFiles.size(), plan->issues.size());
         }
         std::set<std::string> newExcluded;
         for (const auto& file : plan->excludedFiles) newExcluded.insert(base::path_key(file));
-        const bool restartNeeded { structureChanged && planApplied_ && handshakeDone_ };
+        std::map<std::string, std::string, std::less<>> newModuleSources;
+        std::map<std::string, std::string, std::less<>> newModuleCommands;
+        for (const auto& entry : plan->entries) {
+            if (entry.provides.empty()) continue;
+            newModuleSources.emplace(entry.provides, entry.file);
+            newModuleCommands.emplace(entry.provides, lsp::dump(Json(entry.arguments)));
+        }
+        // robustness design C4: clangd keeps where it found a module after the database drops that unit, and
+        // building the dropped unit can deadlock it (experiment S12). Only a provider leaving, or moving, needs a
+        // fresh clangd; new units, units coming back and every other change are read from the database as it is.
+        std::set<std::string, std::less<>> imported;
+        for (const auto& entry : plan->entries) imported.insert(entry.imports.begin(), entry.imports.end());
+        bool providerLeft { false };
+        for (const auto& [name, source] : moduleSources_) {
+            const auto now = newModuleSources.find(name);
+            const bool moved { now == newModuleSources.end() || !base::same_path(now->second, source) };
+            // A module nothing imports any more cannot be built by mistake.
+            if (moved && imported.contains(name)) providerLeft = true;
+        }
+        // A unit of the project compiled with other arguments (another context, changed build flags): clangd
+        // does not rebuild a document it has open for a changed database, so a fresh clangd applies them.
+        std::map<std::string, std::string, std::less<>> newArguments;
+        for (const auto& entry : plan->entries) newArguments.emplace(base::path_key(entry.file), lsp::dump(Json(entry.arguments)));
+        bool argumentsChanged { false };
+        for (const auto& [file, arguments] : writtenArguments_) {
+            if ((!stubDirectory_.empty() && base::is_within(file, base::path_key(stubDirectory_)))
+                || (!primeDirectory_.empty() && base::is_within(file, base::path_key(primeDirectory_)))) continue;
+            if (const auto now = newArguments.find(file); now != newArguments.end() && now->second != arguments) argumentsChanged = true;
+        }
+        writtenArguments_ = std::move(newArguments);
+        (void)structureChanged;
+        const bool restartNeeded { (providerLeft || argumentsChanged) && planApplied_ && handshakeDone_ };
         if (!restartNeeded && accepting_) {
             for (const auto& document : host_->documents()) {
                 if (document.path.empty()) continue;
@@ -210,34 +267,42 @@ public:
                 primer_.set_modules(std::move(modules));
             }
         }
-        moduleSources_.clear();
-        for (const auto& entry : plan->entries) {
-            if (!entry.provides.empty()) moduleSources_.emplace(entry.provides, entry.file);
-        }
+        moduleSources_ = std::move(newModuleSources);
+        moduleCommands_ = std::move(newModuleCommands);
         startupBmis_.reset();
         planApplied_ = true;
+        const bool forgot { forget_changed_unresolved_() };
         if (restartNeeded) {
-            restart_("the engine database changed");
+            request_restart_(providerLeft ? "a module's unit left the engine database" : "units are compiled with other arguments");
         } else {
             accept_traffic_if_ready_();
             prepare_modules_();
         }
+        if (forgot) host_->request_replan();
     }
 
     void document(const DocumentEvent& event) override {
         const DocumentView& document { event.document };
         switch (event.change) {
         case DocumentChange::opened:
-            if (accepting_ && !excluded_path_(document.path)) {
+            touch_(document.path);
+            if (accepting_ && !excluded_path_(document.path) && !quarantined_(document.path)) {
                 open_in_engine_(document);
                 prepare_imports_of_(document);
             }
             break;
         case DocumentChange::changed:
+            touch_(document.path);
+            // A file set aside goes back to clangd when it changes, with its whole text.
+            if (!document.path.empty() && quarantine_.release(base::path_key(document.path))) {
+                update_quarantine_issue_();
+                if (accepting_ && !excluded_path_(document.path)) open_in_engine_(document);
+                break;
+            }
             if (accepting_ && !excluded_path_(document.path) && event.message != nullptr) (void)send_(*event.message);
             break;
         case DocumentChange::closed: {
-            const bool wasExcluded { excluded_path_(document.path) };
+            const bool wasExcluded { excluded_path_(document.path) || quarantined_(document.path) };
             awaitingDiagnostics_.erase(document.uri);
             diagnosed_.erase(document.uri);
             if (accepting_ && !wasExcluded && event.message != nullptr) (void)send_(*event.message);
@@ -245,7 +310,9 @@ public:
             break;
         }
         case DocumentChange::saved:
-            if (!document.path.empty() && !excluded_path_(document.path) && accepting_ && event.message != nullptr) (void)send_(*event.message);
+            if (!document.path.empty() && !excluded_path_(document.path) && !quarantined_(document.path) && accepting_ && event.message != nullptr) {
+                (void)send_(*event.message);
+            }
             sources_changed();
             break;
         }
@@ -260,12 +327,10 @@ public:
     }
 
     void sources_changed() override {
-        if (failedModules_.empty()) return;
-        failedModules_.clear();
-        host_->request_replan();
+        if (forget_changed_unresolved_()) host_->request_replan();
     }
 
-    bool claims(const RequestView& request) const override { return !unavailable_ && !excluded_path_(request.path); }
+    bool claims(const RequestView& request) const override { return !unavailable_ && !excluded_path_(request.path) && !quarantined_(request.path); }
 
     void request(const RequestView&, const Json& message, Reply reply) override {
         if (unavailable_) {
@@ -333,6 +398,7 @@ public:
             if (request.deadline <= now) expired.push_back(id);
         }
         bool restart { false };
+        bool stalled { false };
         for (const auto id : expired) {
             PendingRequest request { std::move(pending_[id]) };
             pending_.erase(id);
@@ -347,10 +413,15 @@ public:
                 log::warning("clangd ({}) did not answer {} in time", host_->root_directory(), request.method);
                 if (request.reply) request.reply(Answer {});
                 (void)send_(lsp::make_notification("$/cancelRequest", Json { { "id", id } }));
-                // A file whose modules are still being built is slow, not stuck: restarting would throw that work away.
+                // A file whose modules are still being built is slow, not stuck: setting it aside would throw that work away.
                 if (awaitingDiagnostics_.contains(host_->client_uri(request.uri))) break;
-                add_issue_(Issue { "engine-timeout", std::format("clangd did not answer {} in time", request.method), "mcppls.restartServer" });
-                if (++timeoutsByUri_[request.uri] >= 3) restart = true;
+                const std::string path { host_->path_of_uri(request.uri) };
+                if (path.empty()) break;
+                switch (quarantine_.timed_out(base::path_key(path), request.sent, now, lastAnswerAt_)) {
+                case Quarantine::Verdict::wait: break;
+                case Quarantine::Verdict::quarantined: set_aside_(path, "it stopped answering its requests"); break;
+                case Quarantine::Verdict::stalled: stalled = true; break;
+                }
                 break;
             }
             case Purpose::engine_initialize:
@@ -361,7 +432,26 @@ public:
                 break;
             }
         }
-        if (restart) restart_("repeated timeouts");
+        if (stalled) {
+            // clangd answered nobody: the engine is stuck. The file asked about first is the likeliest cause.
+            if (auto first = quarantine_.first_stalled()) {
+                for (const auto& document : host_->documents()) {
+                    if (!document.path.empty() && base::path_key(document.path) == *first) set_aside_(document.path, "clangd stopped answering after it");
+                }
+            }
+            add_issue_(Issue { "engine-timeout", "clangd stopped answering; it was restarted", "mcppls.restartServer" });
+            request_restart_("clangd stopped answering");
+        } else if (restart) {
+            request_restart_("clangd did not answer initialize");
+        }
+        for (const auto& key : quarantine_.due(now)) {
+            for (const auto& document : host_->documents()) {
+                if (document.path.empty() || base::path_key(document.path) != key) continue;
+                log::info("handing {} back to clangd ({})", document.path, host_->root_directory());
+                if (accepting_ && !excluded_path_(document.path)) open_in_engine_(document);
+            }
+            update_quarantine_issue_();
+        }
         std::vector<std::string> overdue;
         for (const auto& [module, at] : primeDeadlines_) {
             if (at <= now) overdue.push_back(module);
@@ -372,7 +462,7 @@ public:
         }
         if (restartAt_ && *restartAt_ <= now) {
             restartAt_.reset();
-            restart_("recovering from an exit");
+            restart_(restartReason_.empty() ? std::string_view { "recovering from an exit" } : std::string_view { restartReason_ });
         }
         if (!expired.empty()) host_->status_changed();
     }
@@ -463,12 +553,24 @@ private:
         if (!process_) process_ = make_process_();
         auto sink = sink_;
         const std::string root { host_->root_directory() };
+        // robustness design C7: clangd's errors are forwarded without flooding the log; failures are read from every line.
+        struct LimitedLog {
+            std::mutex mutex;
+            LineLimiter limiter { 40, std::chrono::seconds { 10 } };
+        };
+        auto limited = std::make_shared<LimitedLog>();
         auto started = process_->start(
             config,
             [sink, generation](Json message) { sink(Json { { "kind", "message" }, { "generation", generation }, { "message", std::move(message) } }); },
             [sink, generation] { sink(Json { { "kind", "closed" }, { "generation", generation } }); },
-            [sink, generation, root](std::string_view line) {
-                log::info("clangd ({}): {}", root, line);
+            [sink, generation, root, limited](std::string_view line) {
+                LineLimiter::Decision decision;
+                {
+                    const std::lock_guard lock { limited->mutex };
+                    decision = limited->limiter.admit(GuardClock::now());
+                }
+                if (decision.suppressedBefore > 0) log::info("clangd ({}): {} more lines left out of this log", root, decision.suppressedBefore);
+                if (decision.forward) log::info("clangd ({}): {}", root, line);
                 if (auto failure = parse_module_failure(line)) {
                     sink(Json { { "kind", "module-failed" }, { "generation", generation },
                                 { "failure", Json { { "module", failure->module }, { "reason", failure->reason }, { "source", failure->failedSource } } } });
@@ -500,6 +602,8 @@ private:
 
     void restart_(std::string_view reason) {
         log::info("restarting clangd ({}): {}", host_->root_directory(), reason);
+        restartGate_.record(Clock::now());
+        restartAt_.reset();
         // Requests to the old process are answered by the other engines.
         auto old = std::move(pending_);
         pending_.clear();
@@ -511,7 +615,6 @@ private:
         if (process_) process_->stop(std::chrono::milliseconds { 500 });
         diagnosed_.clear();
         host_->forget_engine_diagnostics(ENGINE_ID);
-        timeoutsByUri_.clear();
         start_process_();
     }
 
@@ -524,7 +627,7 @@ private:
         const auto timeout = is_interactive(method) ? std::min(options_.requestTimeout, INTERACTIVE_TIMEOUT) : options_.requestTimeout;
         const auto now = Clock::now();
         pending_[engineId] = PendingRequest { Purpose::client, id, method, uri != nullptr && uri->is_string() ? uri->get<std::string>() : std::string {},
-                                              now + timeout, generation_, now + options_.requestTimeout, std::move(reply) };
+                                              now + timeout, generation_, now + options_.requestTimeout, std::move(reply), now };
         Json forwarded = message;
         forwarded["id"] = engineId;
         if (!send_(forwarded)) {
@@ -547,7 +650,7 @@ private:
         if (!handshakeDone_ || !planApplied_ || accepting_) return;
         accepting_ = true;
         for (const auto& document : host_->documents()) {
-            if (!excluded_path_(document.path)) open_in_engine_(document);
+            if (!excluded_path_(document.path) && !quarantined_(document.path)) open_in_engine_(document);
         }
         std::vector<std::pair<Json, Reply>> toFlush;
         toFlush.swap(deferred_);
@@ -556,7 +659,7 @@ private:
                 const Json* params { lsp::find(message, "params") };
                 const Json* uri { params != nullptr ? lsp::find_path(*params, { "textDocument", "uri" }) : nullptr };
                 const std::string path { uri != nullptr && uri->is_string() ? host_->path_of_uri(uri->get<std::string>()) : std::string {} };
-                if (excluded_path_(path)) {
+                if (excluded_path_(path) || quarantined_(path)) {
                     if (reply) reply(Answer {});
                 } else {
                     request_now_(message, std::move(reply));
@@ -604,13 +707,15 @@ private:
             break;
         }
         case Purpose::client: {
-            timeoutsByUri_.erase(request.uri);
+            lastAnswerAt_ = Clock::now();
+            if (const std::string path { host_->path_of_uri(request.uri) }; !path.empty()) quarantine_.answered(base::path_key(path));
             if (!request.reply) return;
             if (message.contains("error")) {
                 request.reply(Answer { Answer::Kind::error, message["error"] });
                 return;
             }
             Json result = message.value("result", Json {});
+            drop_generated_locations_(result);
             host_->client_view(result);
             request.reply(Answer { Answer::Kind::result, std::move(result) });
             break;
@@ -660,40 +765,163 @@ private:
         }
         const auto now = Clock::now();
         crashes_.push_back(now);
-        while (!crashes_.empty() && now - crashes_.front() > std::chrono::minutes { 3 }) crashes_.pop_front();
+        while (!crashes_.empty() && now - crashes_.front() > std::chrono::minutes { 5 }) crashes_.pop_front();
         add_issue_(Issue { "engine-crashed", "clangd exited unexpectedly", "mcppls.restartServer" });
-        if (crashes_.size() >= 3) {
+        // robustness design C6: what clangd was asked about, or given, just before it exited is set aside, so
+        // one file that crashes it does not take clangd away from the others.
+        std::set<std::string> suspects;
+        for (const auto& [id, request] : old) {
+            if (request.purpose == Purpose::client) {
+                if (const std::string path { host_->path_of_uri(request.uri) }; !path.empty()) suspects.insert(path);
+            }
+        }
+        for (const auto& document : host_->documents()) {
+            const auto touched = touchedAt_.find(base::path_key(document.path));
+            if (!document.path.empty() && touched != touchedAt_.end() && now - touched->second < std::chrono::seconds { 10 }) suspects.insert(document.path);
+        }
+        for (const auto& path : suspects) set_aside_(path, "clangd exited while working on it");
+        if (crashes_.size() >= 5) {
             unavailable_ = true;
             flush_deferred_without_engine_();
         } else {
-            restartAt_ = now + std::chrono::seconds { 1 << (crashes_.size() - 1) };
+            restartReason_ = "recovering from an exit";
+            restartAt_ = std::max(now + std::chrono::seconds { 1 << std::min<std::size_t>(crashes_.size() - 1, 6) }, restartGate_.earliest(now));
         }
         host_->status_changed();
     }
 
     void handle_module_failure_(const Json& failure) {
-        bool added { false };
-        const std::string reason { failure.value("reason", std::string {}) };
-        auto add = [&](std::string name) {
-            if (name.empty() || failedModules_.contains(name)) return;
-            log::warning("clangd could not build module {} ({}): {}", name, host_->root_directory(), reason);
-            failedModules_.emplace(std::move(name), reason);
-            added = true;
-        };
-        add(failure.value("module", std::string {}));
-        if (const std::string source { failure.value("source", std::string {}) }; !source.empty()) {
-            if (auto text = platform::fs::read_file(source)) add(project::provided_name(project::scan_source(*text)));
+        const ModuleFailure parsed { failure.value("module", std::string {}), failure.value("reason", std::string {}), failure.value("source", std::string {}) };
+        if (parsed.module.empty()) return;
+        const FailureKind kind { failure_kind(parsed) };
+        // The standard library, which nearly every unit imports: a failure there is how this server built it,
+        // not the project, and it would take nearly every module with it. The semantic kit brings its own
+        // (robustness design C5).
+        const auto standard = moduleSources_.find("std");
+        const bool stdFailed { parsed.module == "std" || parsed.module == "std.compat"
+                               || (kind == FailureKind::compile && standard != moduleSources_.end() && base::same_path(parsed.failedSource, standard->second)) };
+        if (stdFailed && kind != FailureKind::other && !stdFromKit_) {
+            stdFromKit_ = true;
+            log::warning("clangd could not build the standard library module ({}): {}; reading the project with the semantic kit",
+                         host_->root_directory(), parsed.reason);
+            add_issue_(Issue { "std-fallback-kit",
+                std::format("clangd could not build the toolchain's standard library module ({}); files are read with the semantic kit", parsed.reason),
+                "mcppls.showLogs" });
+            host_->request_replan();
+            host_->status_changed();
         }
-        if (added) host_->request_replan();
+        if (kind != FailureKind::unresolved) {
+            // Found and not compiled: its importers get errors, they do not hang (experiment S3). Nothing to replan.
+            if (reportedFailures_.insert(parsed.module).second) {
+                log::info("clangd could not build module {} ({}): {}", parsed.module, host_->root_directory(), parsed.reason);
+            }
+            return;
+        }
+        if (unresolvedModules_.contains(parsed.module)) return;
+        log::warning("clangd could not find module {} ({}): {}", parsed.module, host_->root_directory(), parsed.reason);
+        UnresolvedModule unresolved { parsed.reason, {}, {}, {} };
+        if (const auto provider = moduleSources_.find(parsed.module); provider != moduleSources_.end()) {
+            unresolved.provider = provider->second;
+            unresolved.stamp = platform::fs::stamp(provider->second);
+            unresolved.command = moduleCommands_.contains(parsed.module) ? moduleCommands_.find(parsed.module)->second : std::string {};
+        }
+        unresolvedModules_.emplace(parsed.module, std::move(unresolved));
+        host_->request_replan();
+    }
+
+    // Unresolved modules whose unit or command is no longer what it was when clangd reported them are
+    // forgotten, so the next plan tries them again. Returns whether any was.
+    bool forget_changed_unresolved_() {
+        bool forgot { false };
+        for (auto it = unresolvedModules_.begin(); it != unresolvedModules_.end();) {
+            const auto provider = moduleSources_.find(it->first);
+            const std::string current { provider == moduleSources_.end() ? std::string {} : provider->second };
+            const auto command = moduleCommands_.find(it->first);
+            const bool changed { !base::same_path(current, it->second.provider) || (!current.empty() && platform::fs::stamp(current) != it->second.stamp)
+                                 || (!current.empty() && (command == moduleCommands_.end() ? std::string {} : command->second) != it->second.command) };
+            if (changed) {
+                log::info("trying module {} again ({})", it->first, host_->root_directory());
+                it = unresolvedModules_.erase(it);
+                forgot = true;
+            } else {
+                ++it;
+            }
+        }
+        return forgot;
+    }
+
+    // ---- files set aside, and restarts -------------------------------------------------------
+
+    void touch_(std::string_view path) {
+        if (!path.empty()) touchedAt_[base::path_key(path)] = Clock::now();
+    }
+
+    bool quarantined_(std::string_view path) const { return !path.empty() && quarantine_.contains(base::path_key(path)); }
+
+    void set_aside_(const std::string& path, std::string_view why) {
+        const std::string key { base::path_key(path) };
+        if (!quarantine_.contains(key)) quarantine_.put(key, Clock::now());
+        log::warning("setting {} aside from clangd for a while ({}): {}; mcppls's engine answers for it", path, host_->root_directory(), why);
+        for (const auto& document : host_->documents()) {
+            if (document.path.empty() || base::path_key(document.path) != key) continue;
+            awaitingDiagnostics_.erase(document.uri);
+            if (accepting_) (void)send_(lsp::make_notification("textDocument/didClose", Json { { "textDocument", Json { { "uri", document.uri } } } }));
+        }
+        update_quarantine_issue_();
+    }
+
+    void update_quarantine_issue_() {
+        std::erase_if(issues_, [](const Issue& issue) { return issue.code == "file-quarantined"; });
+        if (const std::size_t count { quarantine_.size() }; count > 0) {
+            issues_.push_back(Issue { "file-quarantined",
+                std::format("clangd stopped answering for {} file{}; mcppls's engine answers for {} until {} changes", count, count == 1 ? "" : "s",
+                            count == 1 ? "it" : "them", count == 1 ? "it" : "they"), "mcppls.restartServer" });
+        }
+        host_->status_changed();
+    }
+
+    // A restart now, or as soon as the gate allows (robustness design C4).
+    void request_restart_(std::string_view reason) {
+        const auto now = Clock::now();
+        const auto at = restartGate_.earliest(now);
+        if (at <= now) {
+            restart_(reason);
+            return;
+        }
+        if (!restartAt_ || at < *restartAt_) {
+            restartAt_ = at;
+            restartReason_ = std::string { reason };
+            log::info("restarting clangd ({}) in {} s: {}", host_->root_directory(),
+                      std::chrono::duration_cast<std::chrono::seconds>(at - now).count(), reason);
+        }
     }
 
     // ---- parallel module preparation ------------------------------------------------------
 
     void write_prime_sources_(const normalize::EnginePlan& plan) {
-        if (plan.primeSources.empty()) return;
-        (void)platform::fs::create_directories(primeDirectory_);
-        for (const auto& [file, content] : plan.primeSources) {
-            if (platform::fs::read_file(file).value_or("") != content) (void)platform::fs::write_file(file, content);
+        if (!plan.primeSources.empty()) (void)platform::fs::create_directories(primeDirectory_);
+        if (!plan.stubSources.empty()) (void)platform::fs::create_directories(stubDirectory_);
+        for (const auto& sources : { &plan.primeSources, &plan.stubSources }) {
+            for (const auto& [file, content] : *sources) {
+                if (platform::fs::read_file(file).value_or("") != content) (void)platform::fs::write_file(file, content);
+            }
+        }
+    }
+
+    // Locations in files this server generates (stand-ins, prime units) are not places in the project: a
+    // definition of a module nothing provides is no definition at all.
+    void drop_generated_locations_(Json& result) const {
+        const auto generated = [&](const Json& location) {
+            if (!location.is_object()) return false;
+            const std::string uri { location.value("uri", location.value("targetUri", std::string {})) };
+            if (uri.empty()) return false;
+            const std::string path { host_->path_of_uri(uri) };
+            return !path.empty() && ((!stubDirectory_.empty() && base::is_within(path, stubDirectory_)) || (!primeDirectory_.empty() && base::is_within(path, primeDirectory_)));
+        };
+        if (result.is_array()) {
+            result.erase(std::remove_if(result.begin(), result.end(), generated), result.end());
+        } else if (generated(result)) {
+            result = nullptr;
         }
     }
 
@@ -759,10 +987,9 @@ private:
         // opening a file, typing, asking for completion. Preparation leaves a core to each file still
         // waiting for its modules and one more for requests, so it never holds every worker (hardware
         // threads count as two per core except on macOS, where they are cores).
-        const std::size_t threads { std::max<std::size_t>(1, std::thread::hardware_concurrency()) };
-        const std::size_t cores { mcppls::os::FAMILY == mcppls::os::Family::macos ? threads : std::max<std::size_t>(1, threads / 2) };
-        const std::size_t reserved { awaitingDiagnostics_.size() + 1 };
-        primer_.set_limit(cores > reserved ? cores - reserved : 1);
+        // robustness design C7: a quarter of the cores, half of that while a file waits, so preparing a large
+        // workspace does not take the machine from the person using it.
+        primer_.set_limit(preparation_limit(std::thread::hardware_concurrency(), mcppls::os::FAMILY == mcppls::os::Family::macos, awaitingDiagnostics_.size()));
         for (const PrimeModule* module : primer_.start_ready([this](const PrimeModule& candidate) { return module_already_built_(candidate); })) {
             const std::string uri { base::path_to_uri(module->primeFile) };
             Json params { { "textDocument", Json { { "uri", uri }, { "languageId", "cpp" }, { "version", 1 },

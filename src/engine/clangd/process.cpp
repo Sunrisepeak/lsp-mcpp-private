@@ -45,6 +45,12 @@ std::optional<ModuleFailure> parse_module_failure(std::string_view line) {
     return failure;
 }
 
+FailureKind failure_kind(const ModuleFailure& failure) {
+    if (failure.reason.find("Don't get the module unit") != std::string::npos) return FailureKind::unresolved;
+    if (failure.reason.starts_with("Failed to compile")) return FailureKind::compile;
+    return FailureKind::other;
+}
+
 std::string parse_clangd_version(std::string_view output) {
     for (auto line : base::split_lines(output)) {
         const std::size_t marker { line.find("clangd version ") };
