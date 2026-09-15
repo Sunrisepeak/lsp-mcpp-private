@@ -1448,7 +1448,7 @@
  "S5-5.2-12": [
   {
    "script": "src/ai/review/pipeline.cpp",
-   "contains": "value[\"complete\"] = result.unbuilt.empty() && result.impact.unsearched.empty();"
+   "contains": "value[\"complete\"] = result.unbuilt.empty() && result.impact.unsearched.empty() && !result.toolchainFailure;"
   }
  ],
  "S5-5.3-1": [
