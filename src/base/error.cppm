@@ -1,10 +1,10 @@
 // Errors travel as values. A function that can fail returns base::Result<T>;
 // the error carries a stable machine code and a human message.
-export module lspmcpp.base.error;
+export module mcppls.base.error;
 
 import std;
 
-export namespace lspmcpp::base {
+export namespace mcppls::base {
 
 struct Error {
     std::string code;
@@ -18,4 +18,4 @@ Error make_error(std::string_view code, std::string message);
 std::unexpected<Error> fail(std::string_view code, std::string message);
 std::string to_string(const Error& error);
 
-} // namespace lspmcpp::base
+} // namespace mcppls::base

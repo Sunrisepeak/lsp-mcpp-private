@@ -1,14 +1,14 @@
 // Building an S1 model where the build does not provide one: from a
 // compile_commands.json plus scanning and probing, or from sources alone.
-export module lspmcpp.project.infer;
+export module mcppls.project.infer;
 
 import std;
-import lspmcpp.spec.database;
-import lspmcpp.toolchain.probe;
-import lspmcpp.project.compdb;
-import lspmcpp.project.scan;
+import mcppls.spec.database;
+import mcppls.toolchain.probe;
+import mcppls.project.compdb;
+import mcppls.project.scan;
 
-export namespace lspmcpp::project {
+export namespace mcppls::project {
 
 using Scanner = std::function<ScanResult(std::string_view path)>;
 using FactsMap = std::map<std::string, toolchain::ToolchainFacts, std::less<>>;
@@ -44,4 +44,4 @@ InferredDatabase infer_database(std::string_view root, const InferOptions& optio
 // Scans a file from disk.
 Scanner file_scanner();
 
-} // namespace lspmcpp::project
+} // namespace mcppls::project

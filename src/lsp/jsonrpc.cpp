@@ -1,11 +1,11 @@
-module lspmcpp.lsp.jsonrpc;
+module mcppls.lsp.jsonrpc;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
-import lspmcpp.base.text;
+import mcppls.base.error;
+import mcppls.base.text;
 
-namespace lspmcpp::lsp {
+namespace mcppls::lsp {
 
 void FrameReader::feed(std::string_view bytes) { buffer_.append(bytes); }
 
@@ -129,4 +129,4 @@ std::optional<std::int64_t> int_at(const Json& object, std::string_view key) {
     return value->get<std::int64_t>();
 }
 
-} // namespace lspmcpp::lsp
+} // namespace mcppls::lsp

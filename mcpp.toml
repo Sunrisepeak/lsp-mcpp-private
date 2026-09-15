@@ -1,5 +1,5 @@
 [package]
-name        = "lsp-mcpp"
+name        = "mcpp-language-server"
 version     = "0.1.0"
 description = "Compiler-agnostic C++ modules language server"
 license     = "Apache-2.0"
@@ -10,22 +10,27 @@ repo        = "https://github.com/Sunrisepeak/lsp-mcpp-private"
 sources = ["src/**/*.cppm", "src/**/*.cpp"]
 
 # Four executables share every module under src/.
-[targets.lsp-mcpp]
+[targets.mcppls]
 kind = "bin"
 main = "src/main.cpp"
 
-[targets.lsp-mcpp-conformance]
+[targets.mcppls-conformance]
 kind = "bin"
 main = "src/tools/conformance.cpp"
 
-[targets.lsp-mcpp-lspgen]
+[targets.mcppls-lspgen]
 kind = "bin"
 main = "src/tools/lspgen.cpp"
 
 # Stands in for mcpp in conformance fixtures: the build-database contract of mcpp-community/mcpp#636.
-[targets.lsp-mcpp-mock-mcpp]
+[targets.mcppls-mock-mcpp]
 kind = "bin"
 main = "src/tools/mockmcpp.cpp"
+
+# Stands in for the mcppls-model gateway in tests: model-gateway/PROTOCOL.md over stdin/stdout.
+[targets.mcppls-mock-model]
+kind = "bin"
+main = "src/tools/mockmodel.cpp"
 
 [toolchain]
 default = "llvm@22.1.8"
@@ -39,14 +44,14 @@ cmdline              = "0.0.2"
 json = "3.12.0"
 
 [dev-dependencies]
-lsp-mcpp-testing = { path = "testing" }
+mcppls-testing = { path = "testing" }
 
 # Platform facts are a package chosen by the target, consumed with `if constexpr`.
 [target.'cfg(os = "linux")'.dependencies]
-lsp-mcpp-os-linux = { path = "os/linux" }
+mcppls-os-linux = { path = "os/linux" }
 
 [target.'cfg(os = "macos")'.dependencies]
-lsp-mcpp-os-macos = { path = "os/macos" }
+mcppls-os-macos = { path = "os/macos" }
 
 [target.'cfg(windows)'.dependencies]
-lsp-mcpp-os-windows = { path = "os/windows" }
+mcppls-os-windows = { path = "os/windows" }

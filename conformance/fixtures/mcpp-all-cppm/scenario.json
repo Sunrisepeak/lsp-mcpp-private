@@ -162,6 +162,194 @@
       "expect": "src/calc/geometry.cppm"
     },
     {
+      "id": "Q1-symbol-partition",
+      "kind": "mcp",
+      "tool": "cxx_symbol",
+      "arguments": {
+        "name": "calc::length"
+      },
+      "expect": [
+        {
+          "path": "/symbols/0/module",
+          "equals": "calc:geometry"
+        },
+        {
+          "path": "/symbols/0/definition/file",
+          "equals": "src/calc/geometry.cppm"
+        }
+      ]
+    },
+    {
+      "id": "Q1-kind",
+      "kind": "mcp",
+      "tool": "cxx_symbol",
+      "arguments": {
+        "name": "calc::vec2",
+        "kind": "struct"
+      },
+      "expect": [
+        {
+          "path": "/symbols/0/module",
+          "equals": "calc:types"
+        },
+        {
+          "path": "/symbols/0/kind",
+          "equals": "struct"
+        }
+      ]
+    },
+    {
+      "id": "Q2-references-reexported",
+      "kind": "mcp",
+      "tool": "cxx_references",
+      "arguments": {
+        "name": "calc::format_pair"
+      },
+      "expect": [
+        {
+          "path": "/groups/*/file",
+          "equals": "src/main.cpp"
+        },
+        {
+          "path": "/groups/*/file",
+          "equals": "src/text/text.cppm"
+        },
+        {
+          "path": "/scope/complete",
+          "equals": true
+        }
+      ]
+    },
+    {
+      "id": "Q2-callers",
+      "kind": "mcp",
+      "tool": "cxx_references",
+      "arguments": {
+        "name": "calc::length",
+        "direction": "callers"
+      },
+      "expect": [
+        {
+          "path": "/calls/*/symbol/name",
+          "equals": "main"
+        },
+        {
+          "path": "/calls/*/sites/*/file",
+          "equals": "tests/calc_test.cpp"
+        }
+      ]
+    },
+    {
+      "id": "Q4-module-reexports",
+      "kind": "mcp",
+      "tool": "cxx_module",
+      "arguments": {
+        "name": "calc"
+      },
+      "expect": [
+        {
+          "path": "/exportedPartitions",
+          "contains": "calc:geometry"
+        },
+        {
+          "path": "/exportedPartitions",
+          "contains": "calc:types"
+        },
+        {
+          "path": "/imports",
+          "contains": "calc.text"
+        },
+        {
+          "path": "/interface/declarations/*/qualifiedName",
+          "equals": "calc::length"
+        },
+        {
+          "path": "/interface/declarations",
+          "contains": {
+            "qualifiedName": "calc::vec2",
+            "kind": "struct",
+            "unit": "calc:types"
+          }
+        },
+        {
+          "path": "/interface/reexports",
+          "contains": "calc.text"
+        }
+      ]
+    },
+    {
+      "id": "Q4-module-importers",
+      "kind": "mcp",
+      "tool": "cxx_module",
+      "arguments": {
+        "name": "calc.text"
+      },
+      "expect": [
+        {
+          "path": "/importedBy",
+          "contains": "calc"
+        }
+      ]
+    },
+    {
+      "id": "Q4-graph",
+      "kind": "mcp",
+      "tool": "cxx_module",
+      "arguments": {
+        "graph": true
+      },
+      "expect": [
+        {
+          "path": "/imports",
+          "contains": {
+            "from": "calc",
+            "to": "calc.text"
+          }
+        },
+        {
+          "path": "/modules/*/name",
+          "equals": "calc:geometry"
+        }
+      ]
+    },
+    {
+      "id": "Q5-build-context",
+      "kind": "mcp",
+      "tool": "cxx_build_context",
+      "arguments": {
+        "file": "src/calc/types.cppm"
+      },
+      "expect": [
+        {
+          "path": "/module",
+          "equals": "calc:types"
+        },
+        {
+          "path": "/sets/0/role",
+          "equals": "module-partition-interface"
+        }
+      ]
+    },
+    {
+      "id": "Q8-cli-references",
+      "kind": "cli",
+      "args": [
+        "query",
+        "refs",
+        "calc::length"
+      ],
+      "expect": [
+        {
+          "path": "/groups/*/file",
+          "equals": "tests/calc_test.cpp"
+        },
+        {
+          "path": "/symbol/module",
+          "equals": "calc:geometry"
+        }
+      ]
+    },
+    {
       "id": "W1",
       "kind": "workspace-unchanged"
     }

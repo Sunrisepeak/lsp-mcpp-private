@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assemble an `lsp-mcpp-kit` semantic kit (spec S4) for one platform.
+"""Assemble an `mcppls-kit` semantic kit (spec S4) for one platform.
 
     build_kit.py --platform linux-x64    --out DIR [--cache DIR] [--work DIR] [--jobs N]
     build_kit.py --platform darwin-arm64 --out DIR [...]          # on a macOS host
@@ -383,7 +383,7 @@ def recipe_libcxx_source(args, lock, spec, kit_dir, work_dir):
 
     data = {
         "kit-version": KIT_VERSION,
-        "name": f"lsp-mcpp-kit-libcxx-{version}-{target}",
+        "name": f"mcppls-kit-libcxx-{version}-{target}",
         "target": target,
         "stdlib": {"name": "libc++", "version": version, "module-metadata": relative(manifests[0])},
         "system-include-directories": include_dirs,
@@ -461,7 +461,7 @@ def recipe_llvm_mingw(args, lock, spec, kit_dir, work_dir):
 
     data = {
         "kit-version": KIT_VERSION,
-        "name": f"lsp-mcpp-kit-libcxx-{version}-{MINGW_TRIPLE}",
+        "name": f"mcppls-kit-libcxx-{version}-{MINGW_TRIPLE}",
         "target": MINGW_TRIPLE,
         "stdlib": {"name": "libc++", "version": version, "module-metadata": manifest_rel},
         "system-include-directories": ["generic-w64-mingw32/include/c++/v1", "generic-w64-mingw32/include"],
@@ -502,7 +502,7 @@ def main():
     if os.path.exists(kit_dir):
         shutil.rmtree(kit_dir)
     os.makedirs(kit_dir)
-    work_dir = os.path.abspath(args.work) if args.work else tempfile.mkdtemp(prefix="lsp-mcpp-kit-")
+    work_dir = os.path.abspath(args.work) if args.work else tempfile.mkdtemp(prefix="mcppls-kit-")
     os.makedirs(work_dir, exist_ok=True)
 
     data = RECIPES[spec["recipe"]](args, lock, spec, kit_dir, work_dir)

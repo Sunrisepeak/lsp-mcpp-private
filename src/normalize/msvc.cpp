@@ -1,13 +1,13 @@
-module lspmcpp.normalize.msvc;
+module mcppls.normalize.msvc;
 
 import std;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
-import lspmcpp.spec.database;
-import lspmcpp.toolchain.probe;
-import lspmcpp.normalize.gnu;
+import mcppls.base.path;
+import mcppls.base.text;
+import mcppls.spec.database;
+import mcppls.toolchain.probe;
+import mcppls.normalize.gnu;
 
-namespace lspmcpp::normalize {
+namespace mcppls::normalize {
 
 namespace {
 
@@ -140,7 +140,7 @@ std::vector<std::string> translate_msvc(const MsvcInput& input) {
     if (!standardGiven) out.emplace_back("-std=c++14");
     out.push_back("-fms-runtime-lib=" + runtime);
     if (input.facts != nullptr) {
-        for (auto& argument : windows_msvc_arguments(*input.facts, out)) out.push_back(std::move(argument));
+        for (auto& argument : windows_msvc_arguments(*input.facts, out, input.noAlignedAllocationWithMsvcStl)) out.push_back(std::move(argument));
     }
     if (input.importable) {
         out.emplace_back("-x");
@@ -149,4 +149,4 @@ std::vector<std::string> translate_msvc(const MsvcInput& input) {
     return out;
 }
 
-} // namespace lspmcpp::normalize
+} // namespace mcppls::normalize

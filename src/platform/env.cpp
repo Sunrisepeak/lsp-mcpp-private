@@ -1,14 +1,14 @@
-module lspmcpp.platform.env;
+module mcppls.platform.env;
 
 import std;
 import openkal.types;
 import openkal.env;
-import lspmcpp.os;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
-import lspmcpp.platform.fs;
+import mcppls.os;
+import mcppls.base.path;
+import mcppls.base.text;
+import mcppls.platform.fs;
 
-namespace lspmcpp::platform::env {
+namespace mcppls::platform::env {
 
 namespace {
 
@@ -58,7 +58,7 @@ std::vector<std::string> variables() {
 
 std::optional<std::string> get(std::string_view name) {
     if (auto value = exact_value(name)) return value;
-    if constexpr (lspmcpp::os::FAMILY == lspmcpp::os::Family::windows) {
+    if constexpr (mcppls::os::FAMILY == mcppls::os::Family::windows) {
         // Windows names compare without regard to case ("Path" is PATH).
         for (const auto& candidate : names()) {
             if (base::iequals_ascii(candidate, name)) return exact_value(candidate);
@@ -71,7 +71,7 @@ namespace {
 
 std::vector<std::string> split_path_list(std::string_view pathList) {
     std::vector<std::string> result;
-    for (auto piece : base::split(pathList, lspmcpp::os::PATH_LIST_SEPARATOR)) {
+    for (auto piece : base::split(pathList, mcppls::os::PATH_LIST_SEPARATOR)) {
         piece = base::trim(piece);
         if (piece.size() >= 2 && piece.front() == '"' && piece.back() == '"') piece = piece.substr(1, piece.size() - 2);
         if (piece.empty()) continue;
@@ -92,7 +92,7 @@ std::optional<std::string> find_executable(std::string_view name) { return find_
 std::optional<std::string> find_executable(std::string_view name, std::string_view pathList) {
     if (name.empty()) return std::nullopt;
     std::string file { name };
-    const std::string_view suffix { lspmcpp::os::EXECUTABLE_SUFFIX };
+    const std::string_view suffix { mcppls::os::EXECUTABLE_SUFFIX };
     if (!suffix.empty() && !base::iequals_ascii(base::extension(file), suffix)) file += suffix;
     if (base::is_absolute_path(file)) {
         if (fs::is_regular_file(file)) return base::normalize_path(file);
@@ -116,4 +116,4 @@ std::vector<std::string> arguments() {
     return result;
 }
 
-} // namespace lspmcpp::platform::env
+} // namespace mcppls::platform::env

@@ -1,8 +1,8 @@
 [package]
-name        = "lsp-mcpp-os-linux"
+name        = "mcppls-os-linux"
 version     = "0.1.0"
-description = "Platform facts of linux for lsp-mcpp, exported as module lspmcpp.os"
+description = "Platform facts of linux for mcppls, exported as module mcppls.os"
 license     = "Apache-2.0"
 
-[targets.lsp-mcpp-os-linux]
+[targets.mcppls-os-linux]
 kind = "lib"

@@ -1,41 +1,48 @@
-module lspmcpp.server.session;
+module mcppls.server.session;
 
 import std;
 import nlohmann.json;
-import lspmcpp.os;
-import lspmcpp.base.error;
-import lspmcpp.base.log;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
-import lspmcpp.base.uri;
-import lspmcpp.base.version;
-import lspmcpp.platform.dirs;
-import lspmcpp.platform.fs;
-import lspmcpp.platform.stdio;
-import lspmcpp.platform.task;
-import lspmcpp.lsp.jsonrpc;
-import lspmcpp.lsp.protocol;
-import lspmcpp.server.payload;
-import lspmcpp.server.router;
-import lspmcpp.server.workspace;
+import mcppls.os;
+import mcppls.base.error;
+import mcppls.base.log;
+import mcppls.base.path;
+import mcppls.base.text;
+import mcppls.base.uri;
+import mcppls.base.version;
+import mcppls.platform.dirs;
+import mcppls.platform.fs;
+import mcppls.platform.stdio;
+import mcppls.platform.task;
+import mcppls.lsp.jsonrpc;
+import mcppls.lsp.protocol;
+import mcppls.engine.payload;
+import mcppls.orchestrator.report;
+import mcppls.orchestrator.client;
+import mcppls.orchestrator.routing;
+import mcppls.orchestrator.workspace;
 
-namespace lspmcpp::server {
+namespace mcppls::server {
 
 namespace {
 
 using Json = nlohmann::json;
 using Clock = std::chrono::steady_clock;
 namespace log = base::log;
+using orchestrator::Event;
+using orchestrator::EventChannel;
+using orchestrator::EventKind;
+using orchestrator::Workspace;
 
 // usable plan W9.1: one event loop feeding one or more WorkspaceRoots. Everything a root itself
 // owns (project model, module index, plan, clangd engine, documents) moved to
-// lspmcpp.server.workspace; this class is left with the client-facing LSP protocol (capability
+// mcppls.server.workspace; this class is left with the client-facing LSP protocol (capability
 // negotiation, initialize/shutdown/exit), workspace/didChangeWorkspaceFolders, and routing a
 // document-bearing message to the root with the longest matching root prefix, or to the first
 // root for the handful of S3 requests that name no document (documented in handle_modules_request_).
 class Session {
 private:
     SessionOptions options_;
+    const std::chrono::steady_clock::time_point started_ { std::chrono::steady_clock::now() };
     std::shared_ptr<EventChannel> events_ { std::make_shared<EventChannel>() };
 
     // Editor side.
@@ -53,11 +60,12 @@ private:
     bool usePolling_ { false };   // usable plan W9.3: decided once from the client's own capabilities
 
     // The payload (clangd, kit) is the same for every root; resolved and checked once (design 15.3, W9.4).
-    PayloadPaths payload_;
+    engine::PayloadPaths payload_;
     bool payloadCorrupt_ { false };
 
-    // usable plan W9.1: one project model and one clangd per workspace root.
-    std::vector<std::unique_ptr<WorkspaceRoot>> roots_;
+    orchestrator::StdioSink client_;
+    // usable plan W9.1: one project model and one set of engines per workspace root.
+    std::vector<std::unique_ptr<Workspace>> roots_;
 
 public:
     explicit Session(SessionOptions options) : options_ { std::move(options) } {}
@@ -96,8 +104,8 @@ private:
         } }.detach();
     }
 
-    void reply_(const Json& id, Json result) { reply(id, std::move(result)); }
-    void reply_error_(const Json& id, int code, std::string_view message) { reply_error(id, code, message); }
+    void reply_(const Json& id, Json result) { client_.reply(id, std::move(result)); }
+    void reply_error_(const Json& id, int code, std::string_view message) { client_.reply_error(id, code, message); }
 
     static std::string uri_of_params_(const Json& params) {
         const Json* uri { lsp::find_path(params, { "textDocument", "uri" }) };
@@ -112,7 +120,7 @@ private:
         return path ? platform::fs::canonical_path(*path) : std::string {};
     }
 
-    WorkspaceRoot* root_by_key_(const std::string& key) const {
+    Workspace* root_by_key_(const std::string& key) const {
         auto it = std::ranges::find_if(roots_, [&](const auto& root) { return root->key() == key; });
         return it == roots_.end() ? nullptr : it->get();
     }
@@ -120,8 +128,8 @@ private:
     // The root with the longest matching prefix of `path` (usable plan W9.1); the first root when
     // `path` is empty or matches none (a document outside every known folder, or an S3 request
     // that names no document at all).
-    WorkspaceRoot* root_for_path_(std::string_view path) const {
-        WorkspaceRoot* best { nullptr };
+    Workspace* root_for_path_(std::string_view path) const {
+        Workspace* best { nullptr };
         for (const auto& root : roots_) {
             if (!path.empty() && root->owns_path(path) && (!best || root->root().size() > best->root().size())) best = root.get();
         }
@@ -129,7 +137,7 @@ private:
         return roots_.empty() ? nullptr : roots_.front().get();
     }
 
-    WorkspaceRoot* root_for_message_(const Json& params) const {
+    Workspace* root_for_message_(const Json& params) const {
         const std::string uri { uri_of_params_(params) };
         return root_for_path_(uri.empty() ? std::string {} : canonical_path_of_uri_(uri));
     }
@@ -151,17 +159,15 @@ private:
             log::info("the client closed its input");
             exitRequested_ = true;
             break;
-        case EventKind::engine_message:
-            if (auto* root = root_by_key_(event.rootKey)) root->handle_engine_message(event.generation, event.message);
-            break;
-        case EventKind::engine_closed:
-            if (auto* root = root_by_key_(event.rootKey)) root->handle_engine_closed(event.generation);
-            break;
-        case EventKind::engine_module_failed:
-            if (auto* root = root_by_key_(event.rootKey)) root->handle_module_failure(event.generation, event.message);
+        case EventKind::engine_event:
+            if (auto* root = root_by_key_(event.rootKey)) root->handle_engine_event(event.engineId, event.message);
             break;
         case EventKind::model_loaded:
             if (auto* root = root_by_key_(event.rootKey)) root->handle_model_loaded(event.generation, std::move(event.model));
+            break;
+        case EventKind::external: break;   // no other entry shares an LSP session's loop
+        case EventKind::review_finished:
+            if (auto* root = root_by_key_(event.rootKey)) root->handle_review_finished(event.message);
             break;
         }
     }
@@ -201,6 +207,17 @@ private:
             handle_modules_request_(id, method, params);
             return;
         }
+        // overall design 7.7: the review of the workspace's changes, run in the background, its findings published as diagnostics.
+        if (method == lsp::method::WORKSPACE_EXECUTE_COMMAND && params.value("command", std::string {}).starts_with("mcppls.review.")) {
+            const std::string command { params.value("command", std::string {}) };
+            const Json arguments = params.value("arguments", Json::array());
+            for (auto& root : roots_) {
+                if (command == "mcppls.review.run") (void)root->start_review(arguments);
+                else if (command == "mcppls.review.clear") root->clear_review();
+            }
+            reply_(id, nullptr);
+            return;
+        }
         if (auto* root = root_for_message_(params)) root->route_client_request(message);
         else reply_(id, nullptr);
     }
@@ -217,13 +234,15 @@ private:
         if (const Json* init = lsp::find(params, "initializationOptions"); init != nullptr && init->is_object()) {
             if (auto compiler = lsp::string_at(*init, "compiler")) compilerOverride_ = *compiler;
             if (auto kit = lsp::string_at(*init, "semanticKit")) kitEnabled_ = *kit != "off";
+            // overall design 5.6: the core engine a client chose (mcppls.engine), unless the command line named one.
+            if (auto chosen = lsp::string_at(*init, "engine"); chosen && !chosen->empty() && !options_.engineFromCommandLine) options_.engine = *chosen;
         }
 
         // usable plan W9.4: resolved and checked once, before any root trusts either with anything.
-        payload_ = resolve_payload(PayloadRequest { options_.payloadDirectory, options_.clangd, options_.kit });
+        payload_ = engine::resolve_payload(engine::PayloadRequest { options_.payloadDirectory, options_.clangd, options_.kit, options_.engine });
         {
             const std::string integrityCache { base::join_path(platform::dirs::cache_directory(), "payload-integrity.json") };
-            for (const auto& problem : verify_payload_integrity(payload_, integrityCache)) {
+            for (const auto& problem : engine::verify_payload_integrity(payload_, integrityCache)) {
                 log::error("payload integrity: {} {}", problem.path, problem.reason);
                 payloadCorrupt_ = true;
             }
@@ -235,7 +254,7 @@ private:
         usePolling_ = !(dynamic != nullptr && dynamic->is_boolean() && dynamic->get<bool>());
 
         for (const auto& folder : workspace_roots_(params)) create_root_(folder, roots_.empty());
-        if (roots_.empty()) answer_initialize_(Json::object());   // workspace_roots_ always names at least one; belt and braces
+        if (roots_.empty()) answer_initialize_(orchestrator::merge_capabilities(Json::object()));   // workspace_roots_ always names at least one
     }
 
     // A workspace folder: the path it names, and the URI the client named it by.
@@ -278,16 +297,16 @@ private:
     void create_root_(const Folder& folder, bool isFirst) {
         const std::string root { platform::fs::canonical_path(folder.path) };
         if (std::ranges::any_of(roots_, [&](const auto& existing) { return existing->root() == root; })) return;
-        auto created = std::make_unique<WorkspaceRoot>(root, root /* key: a root's own path is already unique */, options_, payload_,
-                                                       payloadCorrupt_, kitEnabled_, compilerOverride_, events_);
-        WorkspaceRoot* handle { created.get() };
+        auto created = std::make_unique<Workspace>(root, root /* key: a root's own path is already unique */, options_, payload_,
+                                                   payloadCorrupt_, kitEnabled_, compilerOverride_, events_, client_);
+        Workspace* handle { created.get() };
         // S3 4: status names the root by the client's own URI, which a symbolic link, an 8.3 short
         // name or a different spelling would otherwise make differ from the canonical path used inside.
         handle->set_client_uri(folder.uri);
         roots_.push_back(std::move(created));
         std::function<void(Json)> onEngineSettled;
         if (isFirst) onEngineSettled = [this](Json capabilities) { answer_initialize_(capabilities); };
-        handle->start(clientParams_, client_supports(clientCapabilities_, "status"), usePolling_, std::move(onEngineSettled));
+        handle->start(clientParams_, orchestrator::client_supports(clientCapabilities_, "status"), usePolling_, std::move(onEngineSettled));
         // The client's own initialize was answered before this root even existed (added later by
         // workspace/didChangeWorkspaceFolders, or created after an earlier root in this same batch
         // settled synchronously and so answered it already): unlock its status notifications now,
@@ -295,12 +314,12 @@ private:
         if (initializeAnswered_) handle->allow_status_notifications();
     }
 
-    void answer_initialize_(const Json& engineCapabilities) {
+    void answer_initialize_(const Json& capabilities) {
         if (initializeAnswered_) return;
         initializeAnswered_ = true;
         Json result {
-            { "capabilities", merge_capabilities(engineCapabilities) },
-            { "serverInfo", Json { { "name", "lsp-mcpp" }, { "version", std::string { base::VERSION } } } },
+            { "capabilities", capabilities.empty() ? orchestrator::merge_capabilities(Json::object()) : capabilities },
+            { "serverInfo", Json { { "name", "mcppls" }, { "version", std::string { base::VERSION } } } },
         };
         reply_(clientInitializeId_, std::move(result));
         for (auto& root : roots_) root->allow_status_notifications();
@@ -317,11 +336,11 @@ private:
         if (method == "cxxModules/graph") {
             // usable plan W9.1: S3's graph request carries no per-root parameter (documented
             // limitation); the first root answers, as the only root always did.
-            WorkspaceRoot* root { roots_.empty() ? nullptr : roots_.front().get() };
+            Workspace* root { roots_.empty() ? nullptr : roots_.front().get() };
             reply_(id, root ? root->graph() : Json(nullptr));
         } else if (method == "cxxModules/moduleInfo") {
             if (auto name = lsp::string_at(params, "name")) {
-                WorkspaceRoot* root { roots_.empty() ? nullptr : roots_.front().get() };
+                Workspace* root { roots_.empty() ? nullptr : roots_.front().get() };
                 reply_(id, root ? root->module_info(*name) : Json(nullptr));
                 return;
             }
@@ -334,13 +353,20 @@ private:
             }
             const base::Position at { static_cast<int>(lsp::int_at(*position, "line").value_or(0)),
                                       static_cast<int>(lsp::int_at(*position, "character").value_or(0)) };
-            WorkspaceRoot* root { root_for_path_(path) };
+            Workspace* root { root_for_path_(path) };
             reply_(id, root ? root->module_info_at(path, at) : Json(nullptr));
+        } else if (method == "cxxModules/report") {
+            // robustness design O3: what a bug report needs, for every root.
+            Json roots = Json::array();
+            for (const auto& root : roots_) roots.push_back(root->report());
+            const Json* clientInfo { lsp::find(clientParams_, "clientInfo") };
+            reply_(id, orchestrator::make_report(std::move(roots), clientInfo != nullptr ? *clientInfo : Json(nullptr), options_.engine, payload_, payloadCorrupt_,
+                                                 std::chrono::steady_clock::now() - started_));
         } else if (method == "cxxModules/contexts") {
-            WorkspaceRoot* root { root_for_message_(params) };
+            Workspace* root { root_for_message_(params) };
             reply_(id, root ? root->contexts() : Json(nullptr));
         } else if (method == "cxxModules/setContext") {
-            WorkspaceRoot* root { root_for_message_(params) };
+            Workspace* root { root_for_message_(params) };
             if (root == nullptr) {
                 reply_error_(id, lsp::INVALID_PARAMS, "no workspace root");
                 return;
@@ -411,14 +437,14 @@ private:
     // (usable plan W9.1); a polling root's own notification already carries only its own entries,
     // so it round-trips through this unchanged.
     void dispatch_watched_files_(const Json& params) {
-        std::map<WorkspaceRoot*, Json> perRoot;
+        std::map<Workspace*, Json> perRoot;
         for (const auto& change : params.value("changes", Json::array())) {
             // Not `Json uriValue { change.value(...) }`: brace-initializing a Json from a Json makes a
             // one-element array, which left every change without a path and so sent it to the first root.
             const auto uriValue = change.find("uri");
             const std::string uri { uriValue != change.end() && uriValue->is_string() ? uriValue->get<std::string>() : std::string {} };
             const std::string path { uri.empty() ? std::string {} : canonical_path_of_uri_(uri) };
-            WorkspaceRoot* root { root_for_path_(path) };
+            Workspace* root { root_for_path_(path) };
             if (root == nullptr) continue;
             auto& bucket = perRoot[root];
             if (!bucket.is_array()) bucket = Json::array();
@@ -451,11 +477,9 @@ private:
     void handle_client_response_(const Json& message) {
         const Json& id { message["id"] };
         if (!id.is_string()) return;
-        std::string rootKey;
-        int generation { 0 };
-        Json engineId;
-        if (!parse_engine_request_key(id.get<std::string>(), rootKey, generation, engineId)) return;   // a response to this server's own request
-        if (auto* root = root_by_key_(rootKey)) root->handle_client_response(message, generation, engineId);
+        const auto key = orchestrator::parse_engine_request_key(id.get<std::string>());
+        if (!key) return;   // a response to this server's own request
+        if (auto* root = root_by_key_(key->rootKey)) root->handle_client_response(*key, message);
     }
 
     void register_watchers_() {
@@ -468,10 +492,10 @@ private:
                                        "**/*.{cppm,ccm,cxxm,c++m,ixx,mpp,mxx,cpp,cc,cxx}" }) {
             watchers.push_back(Json { { "globPattern", std::string { glob } } });
         }
-        Json params { { "registrations", Json::array({ Json { { "id", "lsp-mcpp-watched-files" },
+        Json params { { "registrations", Json::array({ Json { { "id", "mcppls-watched-files" },
                                                               { "method", "workspace/didChangeWatchedFiles" },
                                                               { "registerOptions", Json { { "watchers", watchers } } } } }) } };
-        send_client_message(lsp::make_request(std::format("s:{}", nextServerRequest_++), "client/registerCapability", std::move(params)));
+        client_.send(lsp::make_request(std::format("s:{}", nextServerRequest_++), "client/registerCapability", std::move(params)));
     }
 
     // ---- timers -----------------------------------------------------------------------
@@ -488,4 +512,4 @@ int run_session(const SessionOptions& options) {
     return session.run();
 }
 
-} // namespace lspmcpp::server
+} // namespace mcppls::server

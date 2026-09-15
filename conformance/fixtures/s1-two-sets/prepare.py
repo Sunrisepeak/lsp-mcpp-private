@@ -47,7 +47,7 @@ database = {
     "revision": 0,
     "ide": {
         "profile-version": "0.2.0",
-        "generator": {"name": "lsp-mcpp-conformance", "version": "0.0.0"},
+        "generator": {"name": "mcppls-conformance", "version": "0.0.0"},
         "toolchains": {
             "llvm-22.1.8": {
                 "family": "clang",

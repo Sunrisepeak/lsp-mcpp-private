@@ -1,11 +1,11 @@
-module lspmcpp.platform.dirs;
+module mcppls.platform.dirs;
 
 import std;
-import lspmcpp.os;
-import lspmcpp.base.path;
-import lspmcpp.platform.env;
+import mcppls.os;
+import mcppls.base.path;
+import mcppls.platform.env;
 
-namespace lspmcpp::platform::dirs {
+namespace mcppls::platform::dirs {
 
 namespace {
 
@@ -18,7 +18,7 @@ std::optional<std::string> non_empty(std::string_view name) {
 } // namespace
 
 std::string home_directory() {
-    if constexpr (lspmcpp::os::FAMILY == lspmcpp::os::Family::windows) {
+    if constexpr (mcppls::os::FAMILY == mcppls::os::Family::windows) {
         if (auto profile = non_empty("USERPROFILE")) return *profile;
         auto drive = env::get("HOMEDRIVE");
         auto path = env::get("HOMEPATH");
@@ -31,20 +31,20 @@ std::string home_directory() {
 }
 
 std::string cache_directory() {
-    if (auto overridden = non_empty("LSP_MCPP_CACHE_DIR")) return *overridden;
-    if constexpr (lspmcpp::os::FAMILY == lspmcpp::os::Family::windows) {
-        if (auto local = non_empty("LOCALAPPDATA")) return base::join_path(*local, "lsp-mcpp");
-        return base::join_path(home_directory(), "AppData/Local/lsp-mcpp");
-    } else if constexpr (lspmcpp::os::FAMILY == lspmcpp::os::Family::macos) {
-        return base::join_path(home_directory(), "Library/Caches/lsp-mcpp");
+    if (auto overridden = non_empty("MCPPLS_CACHE_DIR")) return *overridden;
+    if constexpr (mcppls::os::FAMILY == mcppls::os::Family::windows) {
+        if (auto local = non_empty("LOCALAPPDATA")) return base::join_path(*local, "mcppls");
+        return base::join_path(home_directory(), "AppData/Local/mcppls");
+    } else if constexpr (mcppls::os::FAMILY == mcppls::os::Family::macos) {
+        return base::join_path(home_directory(), "Library/Caches/mcppls");
     } else {
-        if (auto xdg = non_empty("XDG_CACHE_HOME"); xdg && base::is_absolute_path(*xdg)) return base::join_path(*xdg, "lsp-mcpp");
-        return base::join_path(home_directory(), ".cache/lsp-mcpp");
+        if (auto xdg = non_empty("XDG_CACHE_HOME"); xdg && base::is_absolute_path(*xdg)) return base::join_path(*xdg, "mcppls");
+        return base::join_path(home_directory(), ".cache/mcppls");
     }
 }
 
 std::string temp_directory() {
-    if constexpr (lspmcpp::os::FAMILY == lspmcpp::os::Family::windows) {
+    if constexpr (mcppls::os::FAMILY == mcppls::os::Family::windows) {
         for (std::string_view name : { "TEMP", "TMP" }) {
             if (auto value = non_empty(name)) return *value;
         }
@@ -55,4 +55,4 @@ std::string temp_directory() {
     }
 }
 
-} // namespace lspmcpp::platform::dirs
+} // namespace mcppls::platform::dirs

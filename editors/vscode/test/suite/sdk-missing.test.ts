@@ -4,7 +4,7 @@
 // that hides the Command Line Tools before running this suite; there is no
 // way to simulate that locally short of actually uninstalling Xcode's
 // Command Line Tools. So this file runs its assertions only when
-// LSP_MCPP_E2E_EXPECT_SDK_MISSING=1, and skips itself cleanly everywhere
+// MCPPLS_E2E_EXPECT_SDK_MISSING=1, and skips itself cleanly everywhere
 // else -- including every local run and the ordinary CI hosts, all of which
 // have a real SDK and would otherwise never reach the 'degraded' state this
 // test requires.
@@ -13,14 +13,14 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import type { TestApi } from '../../src/extension';
 
-const EXTENSION_ID = 'mcpp-community.lsp-mcpp';
+const EXTENSION_ID = 'mcpp-community.mcpp-language-server';
 const STATUS_TIMEOUT_MS = 120_000;
 
 suite('macOS Command Line Tools prompt', function () {
     this.timeout(180_000);
 
     suiteSetup(function () {
-        if (process.env.LSP_MCPP_E2E_EXPECT_SDK_MISSING !== '1') {
+        if (process.env.MCPPLS_E2E_EXPECT_SDK_MISSING !== '1') {
             this.skip();
         }
     });
@@ -41,7 +41,7 @@ suite('macOS Command Line Tools prompt', function () {
         );
         assert.strictEqual(api.promptShownCount('commandLineTools'), 1);
 
-        await vscode.commands.executeCommand('lspMcpp.restartServer');
+        await vscode.commands.executeCommand('mcppls.restartServer');
         await api.waitForState('degraded', STATUS_TIMEOUT_MS);
         assert.strictEqual(api.promptShownCount('commandLineTools'), 1, 'restarting the server must not ask again');
     });

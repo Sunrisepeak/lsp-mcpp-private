@@ -1,11 +1,11 @@
-// lsp-mcpp-mock-mcpp: stands in for mcpp in conformance fixtures. It answers the
+// mcppls-mock-mcpp: stands in for mcpp in conformance fixtures. It answers the
 // machine-output contract of mcpp-community/mcpp#636 from data a fixture recorded in
 // mcpp-mock.json, for what a real mcpp cannot be made to do on demand: fail, change
 // its answer, or take std from a package at a path of the fixture's choosing. mcpp
 // 2026.9.15.1 ships the command; the recorded data is its output.
 //
-//   lsp-mcpp-mock-mcpp --protocol-version
-//   lsp-mcpp-mock-mcpp emit build-database --format json
+//   mcppls-mock-mcpp --protocol-version
+//   mcppls-mock-mcpp emit build-database --format json
 //
 // In mcpp-mock.json every string may use ${root} (the directory the command runs
 // in) and ${env:NAME} or ${env:NAME|fallback}. {"database": <S1>, "watch": [...]}
@@ -13,13 +13,13 @@
 // as xlings answers for an mcpp a project pins but that is not installed.
 import std;
 import nlohmann.json;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
-import lspmcpp.platform.env;
-import lspmcpp.platform.fs;
+import mcppls.base.path;
+import mcppls.base.text;
+import mcppls.platform.env;
+import mcppls.platform.fs;
 
-namespace base = lspmcpp::base;
-namespace fs = lspmcpp::platform::fs;
+namespace base = mcppls::base;
+namespace fs = mcppls::platform::fs;
 using Json = nlohmann::ordered_json;
 
 namespace {
@@ -42,7 +42,7 @@ std::string expand(std::string_view text, const std::string& root) {
                         fallback = std::string { variable.substr(bar + 1) };
                         variable = variable.substr(0, bar);
                     }
-                    out += base::normalize_path(lspmcpp::platform::env::get(variable).value_or(fallback));
+                    out += base::normalize_path(mcppls::platform::env::get(variable).value_or(fallback));
                 } else {
                     out += text.substr(i, close - i + 1);
                 }
@@ -168,6 +168,6 @@ int main(int argc, char* argv[]) {
     // leaves the mark a real one would, a compile_commands.json in the project, so that a fixture's
     // workspace-unchanged check sees it was run.
     if (!arguments.empty() && arguments[0] == "build") (void)fs::write_file(base::join_path(fs::current_directory(), "compile_commands.json"), "[]\n");
-    std::println(std::cerr, "lsp-mcpp-mock-mcpp: '{}' is not simulated", base::join(arguments, " "));
+    std::println(std::cerr, "mcppls-mock-mcpp: '{}' is not simulated", base::join(arguments, " "));
     return arguments.empty() ? 2 : 127;
 }

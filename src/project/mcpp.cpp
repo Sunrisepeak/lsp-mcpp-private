@@ -1,22 +1,22 @@
-module lspmcpp.project.mcpp;
+module mcppls.project.mcpp;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
-import lspmcpp.base.log;
-import lspmcpp.platform.fs;
-import lspmcpp.platform.dirs;
-import lspmcpp.platform.process;
-import lspmcpp.spec.database;
-import lspmcpp.spec.discovery;
-import lspmcpp.project.detect;
-import lspmcpp.project.compdb;
-import lspmcpp.project.infer;
-import lspmcpp.project.provider;
+import mcppls.base.error;
+import mcppls.base.path;
+import mcppls.base.text;
+import mcppls.base.log;
+import mcppls.platform.fs;
+import mcppls.platform.dirs;
+import mcppls.platform.process;
+import mcppls.spec.database;
+import mcppls.spec.discovery;
+import mcppls.project.detect;
+import mcppls.project.compdb;
+import mcppls.project.infer;
+import mcppls.project.provider;
 
-namespace lspmcpp::project {
+namespace mcppls::project {
 
 std::string mcpp_package_name(std::string_view manifestText) {
     bool inPackage { false };
@@ -278,9 +278,9 @@ base::Result<InferredDatabase> load_mcpp(const Detection& detection, const Provi
         if (std::string package { mcpp_package_name(*manifest) }; !package.empty()) name = package;
     }
     auto database = database_from_commands(*commands, name, context.scanner, context.prober);
-    database.database.generator = spec::Generator { "lsp-mcpp", "mcpp compile_commands.json" };
+    database.database.generator = spec::Generator { "mcppls", "mcpp compile_commands.json" };
     database.notices = std::move(notices);
     return database;
 }
 
-} // namespace lspmcpp::project
+} // namespace mcppls::project

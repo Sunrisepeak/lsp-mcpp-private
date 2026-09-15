@@ -1,13 +1,13 @@
 import std;
-import lspmcpp.testing;
-import lspmcpp.os;
-import lspmcpp.base.path;
-import lspmcpp.base.uri;
+import mcppls.testing;
+import mcppls.os;
+import mcppls.base.path;
+import mcppls.base.uri;
 
-using namespace lspmcpp::base;
+using namespace mcppls::base;
 
 int main() {
-    using namespace lspmcpp::testing;
+    using namespace mcppls::testing;
 
     "POSIX URIs round-trip with percent encoding"_test = [] {
         expect(uri_to_path("file:///home/u/a%20b.cpp", PathStyle::posix).value_or("") == "/home/u/a b.cpp");
@@ -29,7 +29,7 @@ int main() {
     };
 
     "native style follows the target"_test = [] {
-        if constexpr (lspmcpp::os::FAMILY == lspmcpp::os::Family::windows) {
+        if constexpr (mcppls::os::FAMILY == mcppls::os::Family::windows) {
             expect(NATIVE_PATH_STYLE == PathStyle::windows);
         } else {
             expect(NATIVE_PATH_STYLE == PathStyle::posix);

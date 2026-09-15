@@ -1,11 +1,11 @@
 // Child processes over openkal.process: start a program, talk to it through
 // pipes, wait for it with or without a bound, and end it.
-export module lspmcpp.platform.process;
+export module mcppls.platform.process;
 
 import std;
-import lspmcpp.base.error;
+import mcppls.base.error;
 
-export namespace lspmcpp::platform {
+export namespace mcppls::platform {
 
 struct SpawnOptions {
     std::string program;                                   // absolute path of the executable
@@ -16,6 +16,12 @@ struct SpawnOptions {
     bool pipeOutput { true };                              // false: the child writes to this process's stderr,
                                                            // because this process's stdout carries the protocol
     bool pipeError { false };                              // false: the child writes to this process's stderr
+    bool ownUnit { false };                                // the child starts a unit that kill() ends with everything in it
+    bool detached { false };                               // the child outlives this process (the workspace daemon)
+    // No standard streams given at all (pipe* are ignored). On Windows the child then inherits no handle
+    // of this process: a start that places streams passes every inheritable handle along, this
+    // process's own standard streams among them, and a detached child would hold them open.
+    bool noStreams { false };
 };
 
 class Process {
@@ -40,6 +46,11 @@ public:
     // nullopt when the bound expired and the child is still running.
     base::Result<std::optional<int>> wait_for(std::chrono::milliseconds timeout);
     void terminate();
+    // Lets the child go on without this process: its channels are closed, and nothing waits for it or ends it.
+    void detach();
+    // Ends the child without asking: a child that does not end when asked (clangd stuck building a
+    // module does not) is killed, with its unit when it has one.
+    void kill();
 
 private:
     struct State;
@@ -64,4 +75,4 @@ struct PreopenMatch {
 };
 std::optional<PreopenMatch> match_preopen(std::string_view absolutePath);
 
-} // namespace lspmcpp::platform
+} // namespace mcppls::platform

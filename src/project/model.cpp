@@ -1,25 +1,25 @@
-module lspmcpp.project.model;
+module mcppls.project.model;
 
 import std;
-import lspmcpp.os;
-import lspmcpp.base.error;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
-import lspmcpp.base.log;
-import lspmcpp.platform.fs;
-import lspmcpp.spec.database;
-import lspmcpp.spec.kit;
-import lspmcpp.spec.options;
-import lspmcpp.toolchain.probe;
-import lspmcpp.toolchain.discover;
-import lspmcpp.project.detect;
-import lspmcpp.project.compdb;
-import lspmcpp.project.infer;
-import lspmcpp.project.provider;
-import lspmcpp.project.mcpp;
-import lspmcpp.project.cmake;
+import mcppls.os;
+import mcppls.base.error;
+import mcppls.base.path;
+import mcppls.base.text;
+import mcppls.base.log;
+import mcppls.platform.fs;
+import mcppls.spec.database;
+import mcppls.spec.kit;
+import mcppls.spec.options;
+import mcppls.toolchain.probe;
+import mcppls.toolchain.discover;
+import mcppls.project.detect;
+import mcppls.project.compdb;
+import mcppls.project.infer;
+import mcppls.project.provider;
+import mcppls.project.mcpp;
+import mcppls.project.cmake;
 
-namespace lspmcpp::project {
+namespace mcppls::project {
 
 namespace {
 
@@ -197,7 +197,7 @@ ProjectModel load_project(std::string_view rootInput, const LoadOptions& options
             if (!infer.facts && options.discoverCompilers && !kitRequested) {
                 const auto candidates = toolchain::discover_compilers(options.runner);
                 // On Windows the machine's own Visual Studio comes first when it has the std module (design 9.3, D27).
-                if constexpr (lspmcpp::os::FAMILY == lspmcpp::os::Family::windows) {
+                if constexpr (mcppls::os::FAMILY == mcppls::os::Family::windows) {
                     for (const auto& candidate : candidates) {
                         if (candidate.origin != "visual-studio" || candidate.family != spec::Family::msvc) continue;
                         auto facts = prober(candidate.driver, std::vector<std::string> {});
@@ -247,4 +247,4 @@ ProjectModel load_project(std::string_view rootInput, const LoadOptions& options
     return model;
 }
 
-} // namespace lspmcpp::project
+} // namespace mcppls::project

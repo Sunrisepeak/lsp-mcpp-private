@@ -1,17 +1,17 @@
 // Compile databases, driver classification and probing with recorded answers.
 import std;
-import lspmcpp.testing;
+import mcppls.testing;
 import nlohmann.json;
-import lspmcpp.base.error;
-import lspmcpp.platform.process;
-import lspmcpp.platform.fs;
-import lspmcpp.platform.dirs;
-import lspmcpp.base.path;
-import lspmcpp.spec.database;
-import lspmcpp.toolchain.probe;
-import lspmcpp.project.compdb;
+import mcppls.base.error;
+import mcppls.platform.process;
+import mcppls.platform.fs;
+import mcppls.platform.dirs;
+import mcppls.base.path;
+import mcppls.spec.database;
+import mcppls.toolchain.probe;
+import mcppls.project.compdb;
 
-using namespace lspmcpp;
+using namespace mcppls;
 using Json = nlohmann::json;
 
 namespace {
@@ -39,7 +39,7 @@ toolchain::Runner recorded(std::map<std::string, std::string> answers, std::map<
 } // namespace
 
 int main() {
-    using namespace lspmcpp::testing;
+    using namespace mcppls::testing;
 
     "POSIX command splitting"_test = [] {
         using project::CommandSyntax;
@@ -73,16 +73,16 @@ int main() {
     };
 
     "driver families"_test = [] {
-        expect(toolchain::classify_driver("/usr/bin/g++") == lspmcpp::spec::Family::gcc);
-        expect(toolchain::classify_driver("/opt/gcc/bin/x86_64-w64-mingw32-g++") == lspmcpp::spec::Family::gcc);
-        expect(toolchain::classify_driver("/usr/bin/g++-15") == lspmcpp::spec::Family::gcc);
-        expect(toolchain::classify_driver("/usr/bin/c++") == lspmcpp::spec::Family::gcc);
-        expect(toolchain::classify_driver("/llvm/bin/clang++") == lspmcpp::spec::Family::clang);
-        expect(toolchain::classify_driver("/llvm/bin/x86_64-w64-mingw32-clang++") == lspmcpp::spec::Family::clang);
-        expect(toolchain::classify_driver("C:/LLVM/bin/clang-cl.exe") == lspmcpp::spec::Family::clang_cl);
-        expect(toolchain::classify_driver("C:/VS/VC/Tools/MSVC/14.44/bin/Hostx64/x64/cl.exe") == lspmcpp::spec::Family::msvc);
-        expect(toolchain::classify_driver("/usr/bin/ccache") == lspmcpp::spec::Family::other);
-        expect(toolchain::classify_driver("/usr/bin/nvcc") == lspmcpp::spec::Family::other);
+        expect(toolchain::classify_driver("/usr/bin/g++") == mcppls::spec::Family::gcc);
+        expect(toolchain::classify_driver("/opt/gcc/bin/x86_64-w64-mingw32-g++") == mcppls::spec::Family::gcc);
+        expect(toolchain::classify_driver("/usr/bin/g++-15") == mcppls::spec::Family::gcc);
+        expect(toolchain::classify_driver("/usr/bin/c++") == mcppls::spec::Family::gcc);
+        expect(toolchain::classify_driver("/llvm/bin/clang++") == mcppls::spec::Family::clang);
+        expect(toolchain::classify_driver("/llvm/bin/x86_64-w64-mingw32-clang++") == mcppls::spec::Family::clang);
+        expect(toolchain::classify_driver("C:/LLVM/bin/clang-cl.exe") == mcppls::spec::Family::clang_cl);
+        expect(toolchain::classify_driver("C:/VS/VC/Tools/MSVC/14.44/bin/Hostx64/x64/cl.exe") == mcppls::spec::Family::msvc);
+        expect(toolchain::classify_driver("/usr/bin/ccache") == mcppls::spec::Family::other);
+        expect(toolchain::classify_driver("/usr/bin/nvcc") == mcppls::spec::Family::other);
     };
 
     "relevant arguments"_test = [] {
@@ -102,7 +102,7 @@ int main() {
         });
         auto facts = toolchain::probe_toolchain(g, std::vector<std::string> {}, runner);
         expect(fatal(facts.has_value())) << (facts ? "" : facts.error().message);
-        expect(facts->toolchain.family == lspmcpp::spec::Family::gcc);
+        expect(facts->toolchain.family == mcppls::spec::Family::gcc);
         expect(facts->toolchain.version == "16.1.0");
         expect(facts->toolchain.target == "x86_64-linux-gnu");
         expect(fatal(facts->toolchain.stdlib.has_value()));
@@ -146,14 +146,14 @@ int main() {
     };
 
     "Clang with libc++ chosen by include paths"_test = [] {
-        const std::string root { lspmcpp::base::join_path(lspmcpp::platform::dirs::temp_directory(),
-            std::format("lsp-mcpp-test-probe-{}", std::chrono::steady_clock::now().time_since_epoch().count())) };
-        const std::string manifest { lspmcpp::base::join_path(root, "llvm/lib/x86_64-unknown-linux-gnu/libc++.modules.json") };
-        (void)lspmcpp::platform::fs::create_directories(lspmcpp::base::parent_path(manifest));
-        (void)lspmcpp::platform::fs::write_file(manifest, "{}");
-        const std::string c { lspmcpp::base::join_path(root, "llvm/bin/clang++") };
+        const std::string root { mcppls::base::join_path(mcppls::platform::dirs::temp_directory(),
+            std::format("mcppls-test-probe-{}", std::chrono::steady_clock::now().time_since_epoch().count())) };
+        const std::string manifest { mcppls::base::join_path(root, "llvm/lib/x86_64-unknown-linux-gnu/libc++.modules.json") };
+        (void)mcppls::platform::fs::create_directories(mcppls::base::parent_path(manifest));
+        (void)mcppls::platform::fs::write_file(manifest, "{}");
+        const std::string c { mcppls::base::join_path(root, "llvm/bin/clang++") };
         const std::vector<std::string> command { c, "-std=c++23", "--no-default-config", "-nostdinc++",
-                                                 "-isystem" + lspmcpp::base::join_path(root, "llvm/include/c++/v1"), "-c", "a.cpp" };
+                                                 "-isystem" + mcppls::base::join_path(root, "llvm/include/c++/v1"), "-c", "a.cpp" };
         const auto relevant = toolchain::probe_relevant_arguments(command);
         expect(relevant.size() == 3u) << std::format("{}", relevant);
         std::string prefix { c };
@@ -168,7 +168,7 @@ int main() {
         expect(fatal(facts->toolchain.stdlib.has_value()));
         expect(facts->toolchain.stdlib->name == "libc++");
         expect(facts->toolchain.stdlib->moduleMetadata == manifest) << facts->toolchain.stdlib->moduleMetadata;
-        lspmcpp::platform::fs::remove_all(root);
+        mcppls::platform::fs::remove_all(root);
     };
 
     "Clang building against libstdc++"_test = [] {
@@ -200,7 +200,7 @@ int main() {
         const auto runner = recorded({}, { { cl, "Microsoft (R) C/C++ Optimizing Compiler Version 19.44.35211 for x64\nCopyright (C) Microsoft Corporation.  All rights reserved.\n" } });
         auto facts = toolchain::probe_toolchain(cl, std::vector<std::string> {}, runner);
         expect(fatal(facts.has_value()));
-        expect(facts->toolchain.family == lspmcpp::spec::Family::msvc);
+        expect(facts->toolchain.family == mcppls::spec::Family::msvc);
         expect(facts->toolchain.version == "19.44.35211");
         expect(facts->toolchain.target == "x86_64-pc-windows-msvc");
     };
@@ -213,11 +213,11 @@ int main() {
 
     "facts survive the cache format"_test = [] {
         toolchain::ToolchainFacts facts;
-        facts.toolchain.family = lspmcpp::spec::Family::gcc;
+        facts.toolchain.family = mcppls::spec::Family::gcc;
         facts.toolchain.version = "16.1.0";
         facts.toolchain.driver = "/g++";
         facts.toolchain.target = "x86_64-linux-gnu";
-        facts.toolchain.stdlib = lspmcpp::spec::Stdlib { "libstdc++", "16.1.0", "/m.json" };
+        facts.toolchain.stdlib = mcppls::spec::Stdlib { "libstdc++", "16.1.0", "/m.json" };
         facts.gccInstallDirectory = "/lib/gcc";
         const auto restored = toolchain::facts_from_json(toolchain::facts_to_json(facts));
         expect(fatal(restored.has_value()));

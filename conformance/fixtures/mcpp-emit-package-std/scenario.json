@@ -1,6 +1,6 @@
 {
   "name": "mcpp-emit-package-std",
-  "description": "mcpp's build database for a project whose std module comes from a dependency package (as openkal-llvm-runtime's llvm-generated/std.cppm does), simulated by lsp-mcpp-mock-mcpp: std and std.compat are units of mcpp:std at a path no manifest names, and they are used instead of the toolchain's.",
+  "description": "mcpp's build database for a project whose std module comes from a dependency package (as openkal-llvm-runtime's llvm-generated/std.cppm does), simulated by mcppls-mock-mcpp: std and std.compat are units of mcpp:std at a path no manifest names, and they are used instead of the toolchain's.",
   "prepare": [
     [
       "cmake",
@@ -12,7 +12,7 @@
   ],
   "server-arguments": [
     "--mcpp",
-    "{runner-dir}/lsp-mcpp-mock-mcpp{exe}"
+    "{runner-dir}/mcppls-mock-mcpp{exe}"
   ],
   "checks": [
     {

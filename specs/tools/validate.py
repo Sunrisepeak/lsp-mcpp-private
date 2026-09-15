@@ -322,7 +322,8 @@ for path in map(pathlib.Path, sys.argv[1:]):
 # 8. traceability (usable plan W10.2): every requirement keyword carries a rule identifier S<n>-<section>-<ordinal>,
 #    and conformance/traceability.json names evidence for each: a check above, a unit test, a conformance check, a
 #    line of a script that enforces the rule, or the reason no automated evidence can exist.
-TRACED_SPECS = {"S1": "s1-build-database.md", "S2": "s2-discovery.md", "S3": "s3-lsp-extensions.md", "S4": "s4-semantic-kit.md"}
+TRACED_SPECS = {"S1": "s1-build-database.md", "S2": "s2-discovery.md", "S3": "s3-lsp-extensions.md", "S4": "s4-semantic-kit.md",
+                "S5": "s5-semantic-query.md"}
 KEYWORD = re.compile(r"\b(MUST NOT|MUST|SHALL NOT|SHALL|SHOULD NOT|SHOULD|REQUIRED|RECOMMENDED)\b")
 HEADING = re.compile(r"^#{2,4}\s+(\d+(?:\.\d+)*)\.?\s")
 RULE_ID = re.compile(r'<a id="(S\d-[\d.]+-\d+)"></a>')
@@ -369,6 +370,8 @@ def evidence_ok(entry):
         return entry["test"] in tests, f"no unit test {entry['test']!r}"
     if "check" in entry:
         return entry["check"] in fixture_checks, f"no conformance check {entry['check']!r}"
+    if "review" in entry:
+        return (repository / "bench" / "review" / entry["review"] / "review.json").is_file(), f"no review fixture {entry['review']!r}"
     if "script" in entry:
         path = repository / entry["script"]
         return path.is_file() and entry.get("contains", "\0") in path.read_text(encoding="utf-8"), \

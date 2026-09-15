@@ -1,12 +1,12 @@
 // JSON-RPC 2.0 over the Language Server Protocol base protocol: framing with
 // Content-Length headers, message classification and constructors.
-export module lspmcpp.lsp.jsonrpc;
+export module mcppls.lsp.jsonrpc;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
+import mcppls.base.error;
 
-export namespace lspmcpp::lsp {
+export namespace mcppls::lsp {
 
 using Json = nlohmann::json;
 
@@ -56,4 +56,4 @@ const Json* find(const Json& object, std::string_view key);
 // Walks object keys; nullptr when any step is missing.
 const Json* find_path(const Json& object, std::initializer_list<std::string_view> keys);
 
-} // namespace lspmcpp::lsp
+} // namespace mcppls::lsp

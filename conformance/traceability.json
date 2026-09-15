@@ -1,12 +1,12 @@
 {
- "$comment": "Rule identifiers of specifications S1 to S4 mapped to evidence (usable plan W10.2), checked by specs/tools/validate.py. Evidence: validate (a passing check of validate.py, by label prefix), test (tests/<file>.cpp: <name>), check (<fixture>/<check id>), script (a file and a line that enforces the rule), manual (why no automated evidence can exist).",
+ "$comment": "Rule identifiers of specifications S1 to S5 mapped to evidence (usable plan W10.2), checked by specs/tools/validate.py. Evidence: validate (a passing check of validate.py, by label prefix), test (tests/<file>.cpp: <name>), check (<fixture>/<check id>), review (a review fixture under bench/review), script (a file and a line that enforces the rule), manual (why no automated evidence can exist).",
  "$pending": {},
  "S1-3-1": [
   {
    "test": "tests/test_spec.cpp: private units are not visible and duplicates are ambiguous"
   },
   {
-   "script": "src/server/cli.cpp",
+   "script": "src/cli/commands.cpp",
    "contains": "spec::to_compile_commands(loaded.model.database)"
   }
  ],
@@ -466,7 +466,7 @@
  ],
  "S1-12-1": [
   {
-   "script": "src/server/cli.cpp",
+   "script": "src/cli/commands.cpp",
    "contains": "format == \"compile-commands\""
   },
   {
@@ -480,7 +480,7 @@
  ],
  "S1-12-3": [
   {
-   "script": "src/server/cli.cpp",
+   "script": "src/cli/commands.cpp",
    "contains": "compile_commands.json has no module graph, toolchain or role information"
   }
  ],
@@ -494,7 +494,7 @@
  ],
  "S1-14-2": [
   {
-   "manual": "Driver queries run only in trusted workspaces and only for drivers the workspace's build description names; lsp-mcpp offers no allow-list setting yet (recorded in issue #2)."
+   "manual": "Driver queries run only in trusted workspaces and only for drivers the workspace's build description names; mcppls offers no allow-list setting yet (recorded in issue #2)."
   }
  ],
  "S1-14-3": [
@@ -512,7 +512,7 @@
  ],
  "S2-2-1": [
   {
-   "manual": "Stream-mode producers are outside this repository; the only producer here, lsp-mcpp-mock-mcpp, answers in single-document mode and writes no database file."
+   "manual": "Stream-mode producers are outside this repository; the only producer here, mcppls-mock-mcpp, answers in single-document mode and writes no database file."
   }
  ],
  "S2-3.1-1": [
@@ -815,7 +815,7 @@
    "test": "tests/test_glob.cpp: segments, stars and double stars"
   },
   {
-   "script": "src/server/workspace.cpp",
+   "script": "src/orchestrator/workspace.cpp",
    "contains": "void register_model_watch() {"
   },
   {
@@ -827,7 +827,7 @@
  ],
  "S2-5-2": [
   {
-   "script": "src/server/workspace.cpp",
+   "script": "src/orchestrator/workspace.cpp",
    "contains": "void schedule_reload() { reloadAt = Clock::now() + std::chrono::milliseconds { 1500 }; }"
   }
  ],
@@ -856,7 +856,7 @@
    "test": "tests/test_server.cpp: merging"
   },
   {
-   "script": "src/server/workspace.cpp",
+   "script": "src/orchestrator/workspace.cpp",
    "contains": "if (!clientSupportsStatus) return;"
   }
  ],
@@ -874,13 +874,13 @@
    "check": "mcpp-emit-watch/S4-fresh"
   },
   {
-   "script": "src/server/workspace.cpp",
+   "script": "src/orchestrator/workspace.cpp",
    "contains": "if (statusFlushAt && *statusFlushAt <= now) {"
   }
  ],
  "S3-4-2": [
   {
-   "script": "src/server/workspace.cpp",
+   "script": "src/orchestrator/workspace.cpp",
    "contains": "if (lastStatusSentAt && state == lastSentState && now - *lastStatusSentAt < STATUS_COALESCE) {"
   }
  ],
@@ -889,7 +889,7 @@
    "check": "inferred/S1"
   },
   {
-   "script": "src/server/workspace.cpp",
+   "script": "src/orchestrator/workspace.cpp",
    "contains": "impl_->initializeAnswered = true;"
   }
  ],
@@ -902,6 +902,19 @@
   },
   {
    "check": "multi-root/W1-mcpp-watched"
+  }
+ ],
+ "S3-5.5-1": [
+  {
+   "check": "module-faults/F0-stand-in"
+  },
+  {
+   "check": "module-faults/F8-no-restart-nothing-set-aside"
+  }
+ ],
+ "S3-5.5-2": [
+  {
+   "manual": "The VS Code extension only shows the report as a document (editors/vscode/src/commands.ts, collectReport); no feature reads it."
   }
  ],
  "S3-6-1": [
@@ -1050,6 +1063,521 @@
   },
   {
    "test": "tests/test_spec.cpp: kit examples load and bad kits are refused"
+  }
+ ],
+ "S3-4-5": [
+  {
+   "check": "inferred/S1"
+  },
+  {
+   "check": "engine-none/S1"
+  }
+ ],
+ "S3-4-6": [
+  {
+   "check": "engine-none/S1"
+  },
+  {
+   "check": "inferred/S1"
+  }
+ ],
+ "S3-4-7": [
+  {
+   "manual": "The VS Code extension shows whatever engine names the status carries (editors/vscode/src/status.ts); it matches no name."
+  }
+ ],
+ "S5-2.1-1": [
+  {
+   "test": "tests/test_query.cpp: columns count Unicode scalar values, LSP characters UTF-16 code units"
+  }
+ ],
+ "S5-2.1-2": [
+  {
+   "script": "src/spec/query.cpp",
+   "contains": "location.text = line_of(text, start.line);"
+  },
+  {
+   "check": "mcpp-split/Q2-references-importers"
+  }
+ ],
+ "S5-2.1-3": [
+  {
+   "script": "src/ai/query/view.cpp",
+   "contains": "std::ranges::replace(name, '\\\\', '/');"
+  },
+  {
+   "check": "mcpp-split/Q1-symbol"
+  }
+ ],
+ "S5-2.2-1": [
+  {
+   "check": "mcpp-split/Q1-symbol"
+  },
+  {
+   "script": "src/ai/query/symbols.cpp",
+   "contains": "found.snapshot = view.snapshot();"
+  }
+ ],
+ "S5-2.2-2": [
+  {
+   "check": "engine-none/Q9-disk-read"
+  },
+  {
+   "script": "src/orchestrator/kernel.cpp",
+   "contains": "if (document.overlay) {"
+  }
+ ],
+ "S5-2.3-1": [
+  {
+   "script": "src/ai/query/symbols.cpp",
+   "contains": "if (auto known = recall(view, target.id)) {"
+  }
+ ],
+ "S5-2.3-2": [
+  {
+   "check": "mcpp-split/Q1-id"
+  }
+ ],
+ "S5-2.4-1": [
+  {
+   "script": "src/ai/query/symbols.cpp",
+   "contains": "std::ranges::sort(found.symbols, before);"
+  },
+  {
+   "script": "src/ai/query/modules.cpp",
+   "contains": "sort_unique(description.importedBy);"
+  }
+ ],
+ "S5-2.5-1": [
+  {
+   "script": "src/ai/query/symbols.cpp",
+   "contains": "return std::unexpected { Failure { \"ambiguous\","
+  }
+ ],
+ "S5-2.5-2": [
+  {
+   "check": "engine-none/Q2-unavailable"
+  }
+ ],
+ "S5-3.1-1": [
+  {
+   "check": "mcpp-split/Q1-symbol"
+  },
+  {
+   "check": "mcpp-split/Q1-not-found"
+  }
+ ],
+ "S5-3.1-2": [
+  {
+   "check": "mcpp-all-cppm/Q1-kind"
+  }
+ ],
+ "S5-3.1-3": [
+  {
+   "check": "mcpp-all-cppm/Q1-symbol-partition"
+  }
+ ],
+ "S5-3.1-4": [
+  {
+   "check": "mcpp-split/Q1-position"
+  }
+ ],
+ "S5-3.1-5": [
+  {
+   "check": "mcpp-split/Q2-callers-partition"
+  }
+ ],
+ "S5-3.2-1": [
+  {
+   "check": "mcpp-split/Q2-references-importers"
+  },
+  {
+   "check": "mcpp-all-cppm/Q2-references-reexported"
+  }
+ ],
+ "S5-3.2-2": [
+  {
+   "script": "src/ai/query/symbols.cpp",
+   "contains": "for (const auto& left : neighbourhood.left) scope.unsearched.push_back(view.display(left));"
+  }
+ ],
+ "S5-3.3-1": [
+  {
+   "check": "mcpp-all-cppm/Q2-callers"
+  }
+ ],
+ "S5-3.3-2": [
+  {
+   "check": "mcpp-split/Q2-callees"
+  }
+ ],
+ "S5-3.4-1": [
+  {
+   "check": "mcpp-split/Q3-outline"
+  }
+ ],
+ "S5-3.5-1": [
+  {
+   "check": "mcpp-split/Q4-module"
+  }
+ ],
+ "S5-3.5-2": [
+  {
+   "check": "engine-none/Q4-module"
+  }
+ ],
+ "S5-3.6-1": [
+  {
+   "check": "mcpp-split/Q6-diagnostics"
+  },
+  {
+   "script": "src/ai/query/files.cpp",
+   "contains": "return std::ranges::all_of(paths, [&](const std::string& path) { return diagnostics_fresh(view, path).first; });"
+  }
+ ],
+ "S5-3.6-2": [
+  {
+   "script": "src/ai/query/files.cpp",
+   "contains": "if (*published < *version) return { false, \"the core engine's diagnostics are for an earlier version of the file\" };"
+  }
+ ],
+ "S5-4.1-1": [
+  {
+   "check": "mcpp-split/Q5-build-context"
+  },
+  {
+   "check": "mcpp-all-cppm/Q5-build-context"
+  }
+ ],
+ "S5-4.1-2": [
+  {
+   "script": "src/ai/context/build.cpp",
+   "contains": "context.issues.push_back(BuildIssue { \"not-in-model\","
+  }
+ ],
+ "S5-6-1": [
+  {
+   "check": "mcpp-split/Q7-tools"
+  },
+  {
+   "check": "mcpp-split/W1"
+  }
+ ],
+ "S5-6-2": [
+  {
+   "check": "mcpp-split/Q1-symbol"
+  },
+  {
+   "script": "src/ai/mcp/server.cpp",
+   "contains": "answer[\"structuredContent\"] = result.value;"
+  }
+ ],
+ "S5-6-3": [
+  {
+   "check": "mcpp-split/Q1-not-found"
+  }
+ ],
+ "S5-6-4": [
+  {
+   "script": "src/ai/mcp/server.cpp",
+   "contains": "protocolVersion_ = known ? requested : std::string { PROTOCOL_VERSIONS.front() };"
+  }
+ ],
+ "S5-6-5": [
+  {
+   "script": "src/ai/mcp/server.cpp",
+   "contains": "platform::stdio::write_output(message.dump() + \"\\n\")"
+  }
+ ],
+ "S5-7-1": [
+  {
+   "check": "mcpp-split/Q8-cli-symbol"
+  }
+ ],
+ "S5-7-2": [
+  {
+   "check": "mcpp-split/Q8-cli-diagnostics"
+  },
+  {
+   "script": "src/cli/query.cpp",
+   "contains": "return result.error().code == \"not-found\" || result.error().code == \"ambiguous\" ? EXIT_NOTHING : EXIT_FAILED;"
+  }
+ ],
+ "S5-4.2-1": [
+  {
+   "check": "engine-none/Q4-interface"
+  },
+  {
+   "check": "mcpp-all-cppm/Q4-module-reexports"
+  }
+ ],
+ "S5-4.2-2": [
+  {
+   "script": "src/ai/context/interface.cpp",
+   "contains": "for (auto& declaration : all) declaration.documentation.clear();"
+  }
+ ],
+ "S5-4.2-3": [
+  {
+   "check": "engine-none/Q1-exported-symbol"
+  }
+ ],
+ "S5-3.7-1": [
+  {
+   "check": "verify-changes/V2-importer-breaks"
+  }
+ ],
+ "S5-3.7-2": [
+  {
+   "check": "verify-changes/V4-restored-passes"
+  },
+  {
+   "script": "src/ai/verify/changes.cpp",
+   "contains": "if (why == \"importer\" && view.kernel().is_open(path)) view.kernel().touch(path);"
+  }
+ ],
+ "S5-3.7-3": [
+  {
+   "check": "verify-changes/V1-snippet-leaves-no-overlay"
+  },
+  {
+   "script": "src/ai/verify/changes.cpp",
+   "contains": "view.kernel().revert(path);"
+  }
+ ],
+ "S5-3.7-4": [
+  {
+   "script": "src/ai/verify/changes.cpp",
+   "contains": "} else if (!before.contains({ diagnostic.message, std::string { base::trim(diagnostic.location.text) } })) {"
+  }
+ ],
+ "S5-3.7-5": [
+  {
+   "script": "src/ai/verify/changes.cpp",
+   "contains": "verification.verdict = errors ? \"errors\" : incomplete ? \"incomplete\" : \"pass\";"
+  }
+ ],
+ "S5-3.7-6": [
+  {
+   "script": "src/ai/verify/changes.cpp",
+   "contains": "if (!workspace.trusted()) return std::unexpected { query::Failure { \"untrusted\", \"the workspace is not trusted, so git is not run\", nullptr } };"
+  }
+ ],
+ "S5-5.1-1": [
+  {
+   "test": "tests/test_query.cpp: a finding's fingerprint survives lines moving and reindenting"
+  }
+ ],
+ "S5-5.1-2": [
+  {
+   "script": "src/ai/review/rules.cpp",
+   "contains": "Builder::evidence(finding, \"diff\", *change.baseLocation, \"-\" + change.before);"
+  },
+  {
+   "review": "removed-export-split"
+  }
+ ],
+ "S5-5.2-1": [
+  {
+   "script": "src/ai/review/changes.cpp",
+   "contains": "if (!workspace.trusted()) return std::unexpected { query::Failure { \"untrusted\", \"the workspace is not trusted, so git is not run\", nullptr } };"
+  }
+ ],
+ "S5-5.2-2": [
+  {
+   "script": "bench/review.py",
+   "contains": "problems.append(\"the review changed the workspace\")"
+  }
+ ],
+ "S5-5.2-3": [
+  {
+   "test": "tests/test_review.cpp: a semantic diff compares exports, imports and the module a unit provides"
+  }
+ ],
+ "S5-5.2-4": [
+  {
+   "test": "tests/test_review.cpp: uses of a name are identifiers in code, qualified or in its namespace"
+  }
+ ],
+ "S5-5.2-5": [
+  {
+   "review": "removed-export-split"
+  },
+  {
+   "review": "removed-export-reexported-all-cppm"
+  },
+  {
+   "review": "module-renamed-all-cppm"
+  }
+ ],
+ "S5-5.2-6": [
+  {
+   "review": "signature-changed-all-cppm"
+  },
+  {
+   "script": "src/ai/review/rules.cpp",
+   "contains": "Builder::evidence(finding, \"diff\", *change.headLocation, \"+\" + change.after);"
+  }
+ ],
+ "S5-5.2-7": [
+  {
+   "review": "partition-implementation-exported-split"
+  },
+  {
+   "review": "partition-imported-outside-split"
+  }
+ ],
+ "S5-5.2-8": [
+  {
+   "review": "unresolved-import-all-cppm"
+  },
+  {
+   "script": "src/ai/review/rules.cpp",
+   "contains": "if (import.isHeaderUnit || !file.changed_head_line(import.nameRange.start.line + 1)) continue;"
+  }
+ ],
+ "S5-5.2-9": [
+  {
+   "review": "introduced-diagnostic-split"
+  },
+  {
+   "review": "clean-implementation-change-split"
+  }
+ ],
+ "S5-5.2-10": [
+  {
+   "review": "partition-implementation-exported-split"
+  },
+  {
+   "script": "src/ai/review/rules.cpp",
+   "contains": "Builder::evidence(*owner, \"diagnostic\", diagnostic->location, diagnostic->message);"
+  }
+ ],
+ "S5-5.2-11": [
+  {
+   "review": "signature-changed-callers-updated-all-cppm"
+  }
+ ],
+ "S5-5.2-12": [
+  {
+   "script": "src/ai/review/pipeline.cpp",
+   "contains": "value[\"complete\"] = result.unbuilt.empty() && result.impact.unsearched.empty() && !result.toolchainFailure;"
+  }
+ ],
+ "S5-5.3-1": [
+  {
+   "test": "tests/test_review.cpp: findings become SARIF results and LSP diagnostics"
+  }
+ ],
+ "S5-5.3-2": [
+  {
+   "test": "tests/test_review.cpp: findings become SARIF results and LSP diagnostics"
+  }
+ ],
+ "S5-5.4-1": [
+  {
+   "script": "src/ai/mcp/tools.cpp",
+   "contains": "model source is enabled only by whoever starts the server (mcppls mcp --model-source {}), not by a tool call"
+  }
+ ],
+ "S5-5.4-2": [
+  {
+   "test": "tests/test_model.cpp: review: findings with empty or unknown evidence ids are dropped, a valid one is kept and backfilled"
+  },
+  {
+   "review": "model-evidence-checked-split"
+  }
+ ],
+ "S5-5.4-3": [
+  {
+   "test": "tests/test_model.cpp: review: schema-invalid output is dropped entirely and reported, not partially kept"
+  }
+ ],
+ "S5-5.4-4": [
+  {
+   "test": "tests/test_model.cpp: prompt: excluded paths become a marker, their evidence text is withheld, others are unaffected"
+  }
+ ],
+ "S5-5.4-5": [
+  {
+   "test": "tests/test_model.cpp: review: a proposed fix is dropped without a verifier, and kept only when one accepts it"
+  },
+  {
+   "review": "model-evidence-checked-split"
+  },
+  {
+   "script": "src/ai/verify/changes.cpp",
+   "contains": "verification.passes = verification.complete && verification.introduced.empty();"
+  }
+ ],
+ "S5-5.4-6": [
+  {
+   "test": "tests/test_model.cpp: prompt: escapes delimiter-looking text so evidence cannot forge a data block boundary"
+  }
+ ],
+ "S5-5.4-7": [
+  {
+   "test": "tests/test_model.cpp: review: an over-budget prompt stops before any call, cache write, or output"
+  }
+ ],
+ "S5-5.2-13": [
+  {
+   "review": "toolchain-divergence-all-cppm"
+  },
+  {
+   "script": "src/ai/verify/toolchains.cpp",
+   "contains": "const std::string copy { base::join_path(workspace.cache_directory(), base::join_path(\"toolchains\", sanitized(toolchain))) };"
+  }
+ ],
+ "S5-5.2-14": [
+  {
+   "script": "src/ai/verify/toolchains.cpp",
+   "contains": "if (other.built) others.push_back(other.toolchain);"
+  },
+  {
+   "test": "tests/test_review.cpp: compiler output of every family becomes diagnostics in the workspace"
+  }
+ ],
+ "S5-6.1-1": [
+  {
+   "test": "tests/test_net.cpp: a loopback connection carries bytes both ways and ends when one side is done"
+  },
+  {
+   "script": "src/platform/net.cpp",
+   "contains": "endpoint.addr[0] = 127;"
+  }
+ ],
+ "S5-6.1-2": [
+  {
+   "script": "src/ai/mcp/daemon.cpp",
+   "contains": "message.value(\"token\", std::string {}) != token"
+  }
+ ],
+ "S5-6.1-3": [
+  {
+   "script": "src/ai/mcp/daemon.cpp",
+   "contains": "if (daemon.port <= 0 || daemon.token.empty() || daemon.version != base::VERSION) return std::nullopt;"
+  }
+ ],
+ "S5-6.1-4": [
+  {
+   "check": "engine-none/D1-daemon-stop"
+  },
+  {
+   "script": "src/ai/mcp/daemon.cpp",
+   "contains": "if (sessions.empty() && controls.empty() && Clock::now() - lastActive > options.idle) {"
+  }
+ ],
+ "S5-6.1-5": [
+  {
+   "check": "engine-none/D1-daemon-mcp"
+  },
+  {
+   "check": "mcpp-split/D1-daemon-references"
+  },
+  {
+   "script": "src/ai/mcp/daemon.cpp",
+   "contains": "sessions[id] = std::make_unique<Session>(*kernel, options.server.toolTimeout,"
   }
  ]
 }

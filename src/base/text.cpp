@@ -1,8 +1,8 @@
-module lspmcpp.base.text;
+module mcppls.base.text;
 
 import std;
 
-namespace lspmcpp::base {
+namespace mcppls::base {
 
 namespace {
 
@@ -159,4 +159,4 @@ bool is_identifier_char(char c) {
     return is_identifier_start(c) || (c >= '0' && c <= '9');
 }
 
-} // namespace lspmcpp::base
+} // namespace mcppls::base

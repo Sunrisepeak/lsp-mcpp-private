@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/mcpp-community/lsp-mcpp/specs/schema/s1-build-database/0.2.0",
+  "$id": "https://github.com/mcpp-community/mcpp-language-server/specs/schema/s1-build-database/0.2.0",
   "title": "C++ Build Database: IDE Profile 0.2.0 (S1)",
   "description": "A P2977R2-compatible build database with the IDE profile fields of S1. Unknown fields are permitted everywhere; consumers ignore them.",
   "type": "object",

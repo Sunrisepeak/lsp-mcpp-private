@@ -1,13 +1,13 @@
-module lspmcpp.spec.database;
+module mcppls.spec.database;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
-import lspmcpp.base.path;
-import lspmcpp.platform.fs;
-import lspmcpp.spec.metadata;
+import mcppls.base.error;
+import mcppls.base.path;
+import mcppls.platform.fs;
+import mcppls.spec.metadata;
 
-namespace lspmcpp::spec {
+namespace mcppls::spec {
 
 using Json = nlohmann::json;
 using OrderedJson = nlohmann::ordered_json;
@@ -473,4 +473,4 @@ MetadataReader caching_metadata_reader() {
     };
 }
 
-} // namespace lspmcpp::spec
+} // namespace mcppls::spec

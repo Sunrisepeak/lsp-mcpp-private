@@ -1,32 +1,32 @@
 // Project detection, inference from sources and compile databases, and model loading.
 import std;
-import lspmcpp.testing;
+import mcppls.testing;
 import nlohmann.json;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
-import lspmcpp.platform.fs;
-import lspmcpp.platform.dirs;
-import lspmcpp.spec.database;
-import lspmcpp.spec.kit;
-import lspmcpp.spec.metadata;
-import lspmcpp.toolchain.probe;
-import lspmcpp.project.detect;
-import lspmcpp.project.infer;
-import lspmcpp.project.mcpp;
-import lspmcpp.project.model;
-import lspmcpp.project.compdb;
-import lspmcpp.project.cmake;
+import mcppls.base.path;
+import mcppls.base.text;
+import mcppls.platform.fs;
+import mcppls.platform.dirs;
+import mcppls.spec.database;
+import mcppls.spec.kit;
+import mcppls.spec.metadata;
+import mcppls.toolchain.probe;
+import mcppls.project.detect;
+import mcppls.project.infer;
+import mcppls.project.mcpp;
+import mcppls.project.model;
+import mcppls.project.compdb;
+import mcppls.project.cmake;
 
-namespace fs = lspmcpp::platform::fs;
-namespace b = lspmcpp::base;
-namespace p = lspmcpp::project;
-namespace s = lspmcpp::spec;
+namespace fs = mcppls::platform::fs;
+namespace b = mcppls::base;
+namespace p = mcppls::project;
+namespace s = mcppls::spec;
 
 namespace {
 
 std::string make_root(std::string_view name) {
-    const std::string root { b::join_path(lspmcpp::platform::dirs::temp_directory(),
-        std::format("lsp-mcpp-test-project-{}-{}", name, std::chrono::steady_clock::now().time_since_epoch().count())) };
+    const std::string root { b::join_path(mcppls::platform::dirs::temp_directory(),
+        std::format("mcppls-test-project-{}-{}", name, std::chrono::steady_clock::now().time_since_epoch().count())) };
     (void)fs::create_directories(root);
     return root;
 }
@@ -48,7 +48,7 @@ void write_fixture(const std::string& root) {
 } // namespace
 
 int main() {
-    using namespace lspmcpp::testing;
+    using namespace mcppls::testing;
 
     "detection order"_test = [] {
         const std::string mcpp { make_root("mcpp") };
@@ -106,8 +106,8 @@ int main() {
             commands.push_back(p::CompileCommand { root, path, "", { "/opt/gcc/bin/g++", "-std=c++23", "-c", path } });
         }
         commands.push_back(p::CompileCommand { root, b::join_path(root, "src/c.c"), "", { "/opt/gcc/bin/gcc", "-c", "src/c.c" } });
-        const p::Prober prober = [](std::string_view driver, std::span<const std::string>) -> std::optional<lspmcpp::toolchain::ToolchainFacts> {
-            lspmcpp::toolchain::ToolchainFacts facts;
+        const p::Prober prober = [](std::string_view driver, std::span<const std::string>) -> std::optional<mcppls::toolchain::ToolchainFacts> {
+            mcppls::toolchain::ToolchainFacts facts;
             facts.toolchain.family = s::Family::gcc;
             facts.toolchain.version = "16.1.0";
             facts.toolchain.driver = std::string { driver };
@@ -280,9 +280,9 @@ int main() {
         auto database = s::load_database(b::join_path(build, "build_database.json"));
         expect(fatal(database.has_value()));
         int probes { 0 };
-        const p::Prober prober = [&](std::string_view driver, std::span<const std::string>) -> std::optional<lspmcpp::toolchain::ToolchainFacts> {
+        const p::Prober prober = [&](std::string_view driver, std::span<const std::string>) -> std::optional<mcppls::toolchain::ToolchainFacts> {
             ++probes;
-            lspmcpp::toolchain::ToolchainFacts facts;
+            mcppls::toolchain::ToolchainFacts facts;
             facts.toolchain.family = s::Family::clang;
             facts.toolchain.version = "22.1.8";
             facts.toolchain.driver = std::string { driver };
@@ -298,7 +298,7 @@ int main() {
     };
 
     "mcpp manifests"_test = [] {
-        expect(p::mcpp_package_name("# c\n[package]\nname        = \"lsp-mcpp\"\nversion = \"0.1.0\"\n[dependencies]\nname = \"x\"\n") == "lsp-mcpp");
+        expect(p::mcpp_package_name("# c\n[package]\nname        = \"mcppls\"\nversion = \"0.1.0\"\n[dependencies]\nname = \"x\"\n") == "mcppls");
         expect(p::mcpp_package_name("[dependencies]\nname = \"x\"\n").empty());
     };
 
@@ -345,10 +345,10 @@ int main() {
 
     "a Visual Studio without the std module is named in a notice"_test = [] {
         const std::string root { make_root("visual-studio") };
-        lspmcpp::toolchain::ToolchainFacts facts;
+        mcppls::toolchain::ToolchainFacts facts;
         facts.toolchain.family = s::Family::msvc;
         facts.toolchain.version = "19.29.30133";
-        facts.msvc = lspmcpp::toolchain::MsvcEnvironment { b::join_path(root, "MSVC/14.29.30133"), "14.29.30133", "", "" };
+        facts.msvc = mcppls::toolchain::MsvcEnvironment { b::join_path(root, "MSVC/14.29.30133"), "14.29.30133", "", "" };
         facts.toolchain.stdlib = s::Stdlib { "msvc-stl", "14.29.30133", "" };
         const auto notice = p::visual_studio_notice(facts);
         expect(fatal(notice.has_value()));

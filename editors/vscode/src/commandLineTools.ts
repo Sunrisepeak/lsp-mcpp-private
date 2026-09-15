@@ -11,13 +11,13 @@ import * as vscode from 'vscode';
 import { askOnce } from './prompt';
 import type { CxxModulesStatus, IssueCommand } from './status';
 
-export const INSTALL_COMMAND_ID = 'lspMcpp.installCommandLineTools';
-export const ASKED_KEY = 'lspMcpp.commandLineToolsAsked';
+export const INSTALL_COMMAND_ID = 'mcppls.installCommandLineTools';
+export const ASKED_KEY = 'mcppls.commandLineToolsAsked';
 const SDK_MISSING_CODE = 'sdk-missing';
 export const INSTALL = 'Install';
 export const NOT_NOW = 'Not now';
 
-const TEST_MODE = process.env.LSP_MCPP_TEST === '1';
+const TEST_MODE = process.env.MCPPLS_TEST === '1';
 
 function errorText(error: unknown): string {
     return error instanceof Error ? error.message : String(error);

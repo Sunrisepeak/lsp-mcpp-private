@@ -1,19 +1,19 @@
 // Visual Studio and Windows SDK facts from installation trees laid out in a temporary directory.
 import std;
-import lspmcpp.testing;
-import lspmcpp.base.path;
-import lspmcpp.platform.fs;
-import lspmcpp.platform.dirs;
-import lspmcpp.toolchain.visualstudio;
+import mcppls.testing;
+import mcppls.base.path;
+import mcppls.platform.fs;
+import mcppls.platform.dirs;
+import mcppls.toolchain.visualstudio;
 
-using namespace lspmcpp;
-namespace vs = lspmcpp::toolchain::visualstudio;
+using namespace mcppls;
+namespace vs = mcppls::toolchain::visualstudio;
 
 namespace {
 
 std::string scratch(std::string_view name) {
     const std::string root { base::join_path(platform::dirs::temp_directory(),
-        std::format("lsp-mcpp-test-vs-{}-{}", name, std::chrono::steady_clock::now().time_since_epoch().count())) };
+        std::format("mcppls-test-vs-{}-{}", name, std::chrono::steady_clock::now().time_since_epoch().count())) };
     (void)platform::fs::create_directories(root);
     return root;
 }
@@ -43,7 +43,7 @@ void sdk(const std::string& root, std::string_view version, bool complete) {
 } // namespace
 
 int main() {
-    using namespace lspmcpp::testing;
+    using namespace mcppls::testing;
 
     "paths a build records"_test = [] {
         expect(vs::tools_directory_of_cl("C:/VS/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe") == "C:/VS/VC/Tools/MSVC/14.44.35207")

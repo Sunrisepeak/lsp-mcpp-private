@@ -2,12 +2,12 @@
 // SemanticOptions, so that level 3 comes from this library instead of from every
 // producer. mcpp emits level 2 and leaves level 3 to the S1 library
 // (mcpp-community/mcpp#636).
-export module lspmcpp.spec.options;
+export module mcppls.spec.options;
 
 import std;
-import lspmcpp.spec.database;
+import mcppls.spec.database;
 
-export namespace lspmcpp::spec {
+export namespace mcppls::spec {
 
 // Arguments in the dialect of `family`, without the driver and the source, as SemanticOptions:
 // the fields S1 section 9 structures; every other argument that affects meaning under
@@ -23,4 +23,4 @@ SemanticOptions structure_arguments(std::span<const std::string> arguments, Fami
 // applies to what a producer stated).
 void complete_options(Database& database);
 
-} // namespace lspmcpp::spec
+} // namespace mcppls::spec

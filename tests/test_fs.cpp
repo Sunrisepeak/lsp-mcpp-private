@@ -1,16 +1,16 @@
 import std;
-import lspmcpp.testing;
-import lspmcpp.base.path;
-import lspmcpp.platform.fs;
-import lspmcpp.platform.dirs;
+import mcppls.testing;
+import mcppls.base.path;
+import mcppls.platform.fs;
+import mcppls.platform.dirs;
 
-namespace fs = lspmcpp::platform::fs;
-namespace base = lspmcpp::base;
+namespace fs = mcppls::platform::fs;
+namespace base = mcppls::base;
 
 int main() {
-    using namespace lspmcpp::testing;
-    const std::string root { base::join_path(lspmcpp::platform::dirs::temp_directory(),
-        std::format("lsp-mcpp-test-fs-{}", std::chrono::steady_clock::now().time_since_epoch().count())) };
+    using namespace mcppls::testing;
+    const std::string root { base::join_path(mcppls::platform::dirs::temp_directory(),
+        std::format("mcppls-test-fs-{}", std::chrono::steady_clock::now().time_since_epoch().count())) };
 
     "temporary directory is absolute"_test = [&] {
         expect(base::is_absolute_path(root)) << root;
@@ -132,7 +132,7 @@ int main() {
     "a file reached by another name has one canonical name"_test = [&] {
         if constexpr (base::NATIVE_PATH_STYLE == base::PathStyle::windows) {
             expect(fs::canonical_path("c:\\dir\\f.txt") == "C:/dir/f.txt") << fs::canonical_path("c:\\dir\\f.txt");
-            const std::string temporary { lspmcpp::platform::dirs::temp_directory() };
+            const std::string temporary { mcppls::platform::dirs::temp_directory() };
             std::string aliased;
             if (temporary.contains('~')) aliased = temporary;
             else if (fs::is_directory("C:/PROGRA~1")) aliased = "C:/PROGRA~1";
@@ -140,9 +140,9 @@ int main() {
                 const std::string resolved { fs::canonical_path(aliased) };
                 expect(!resolved.contains('~')) << aliased << " -> " << resolved;
                 expect(fs::file_identity(resolved) == fs::file_identity(aliased)) << resolved;
-                const std::string file { base::join_path(aliased, "lsp-mcpp-canonical-alias.txt") };
+                const std::string file { base::join_path(aliased, "mcppls-canonical-alias.txt") };
                 if (fs::write_file(file, "x")) {
-                    expect(fs::canonical_path(file) == base::join_path(resolved, "lsp-mcpp-canonical-alias.txt")) << fs::canonical_path(file);
+                    expect(fs::canonical_path(file) == base::join_path(resolved, "mcppls-canonical-alias.txt")) << fs::canonical_path(file);
                     fs::remove_all(file);
                 }
             }

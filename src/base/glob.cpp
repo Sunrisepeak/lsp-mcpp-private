@@ -1,9 +1,9 @@
-module lspmcpp.base.glob;
+module mcppls.base.glob;
 
 import std;
-import lspmcpp.base.text;
+import mcppls.base.text;
 
-namespace lspmcpp::base {
+namespace mcppls::base {
 
 namespace {
 
@@ -134,4 +134,4 @@ bool glob_match(std::string_view pattern, std::string_view path, bool caseInsens
     return false;
 }
 
-} // namespace lspmcpp::base
+} // namespace mcppls::base

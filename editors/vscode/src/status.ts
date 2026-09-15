@@ -32,15 +32,19 @@ export interface CxxModulesStatus {
         level?: number;
     };
     profile: SemanticProfile;
-    engine: { name: 'clangd'; version: string };
+    // The core semantic engine; "none" when a root has none (S3 4, S3-4-6).
+    engine: { name: string; version: string };
+    // Every engine serving the root, mcppls's own module engine included (S3-4-5).
+    engines?: { name: string; version: string; role: string; state: string }[];
     progress?: { done: number; total: number };
     issues?: ModuleIssue[];
     // Facts worth showing that reduce no feature, e.g. a Visual Studio without the std module (S3 4).
     notices?: ModuleIssue[];
 }
 
-const SHOW_LOGS: vscode.Command = { title: 'Show Logs', command: 'lspMcpp.showLogs' };
-const RESTART: vscode.Command = { title: 'Restart', command: 'lspMcpp.restartServer' };
+const SHOW_LOGS: vscode.Command = { title: 'Show Logs', command: 'mcppls.showLogs' };
+const COLLECT_REPORT: vscode.Command = { title: 'Collect Report', command: 'mcppls.collectReport' };
+const RESTART: vscode.Command = { title: 'Restart', command: 'mcppls.restartServer' };
 const BUSY_STATES: readonly ModuleState[] = ['starting', 'loading', 'preparing'];
 
 interface Waiter {
@@ -83,7 +87,7 @@ export class StatusController implements vscode.Disposable {
     private readonly waiters = new Set<Waiter>();
 
     constructor() {
-        this.item = vscode.languages.createLanguageStatusItem('lspMcpp.status', { language: 'cpp' });
+        this.item = vscode.languages.createLanguageStatusItem('mcppls.status', { language: 'cpp' });
         this.item.name = 'C++ Modules';
         this.showStarting();
     }
@@ -137,8 +141,10 @@ export class StatusController implements vscode.Disposable {
                 ? `${status.project.source} · level ${status.project.level}`
                 : status.project.source);
         }
-        if (status.engine) {
-            details.push(`${status.engine.name} ${status.engine.version}`);
+        if (status.engines && status.engines.length > 0) {
+            details.push(status.engines.map((engine) => `${engine.name} ${engine.version}`.trim()).join(' + '));
+        } else if (status.engine) {
+            details.push(`${status.engine.name} ${status.engine.version}`.trim());
         }
         const issues = status.issues ?? [];
         if ((status.state === 'degraded' || status.state === 'error') && issues.length > 0) {
@@ -155,9 +161,10 @@ export class StatusController implements vscode.Disposable {
                 ? vscode.LanguageStatusSeverity.Warning
                 : vscode.LanguageStatusSeverity.Information;
         const withCommand = issues.find((issue) => issue.command !== undefined);
+        // A limited state without a fix of its own offers the report a bug report needs (robustness design O4).
         this.item.command = withCommand?.command
             ? { title: withCommand.command.title, command: withCommand.command.command, arguments: withCommand.command.arguments }
-            : SHOW_LOGS;
+            : status.state === 'degraded' || status.state === 'error' ? COLLECT_REPORT : SHOW_LOGS;
 
         for (const waiter of [...this.waiters]) {
             if (waiter.states.includes(status.state)) {

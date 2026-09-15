@@ -1,12 +1,12 @@
-module lspmcpp.normalize.gnu;
+module mcppls.normalize.gnu;
 
 import std;
-import lspmcpp.base.path;
-import lspmcpp.spec.database;
-import lspmcpp.spec.kit;
-import lspmcpp.toolchain.probe;
+import mcppls.base.path;
+import mcppls.spec.database;
+import mcppls.spec.kit;
+import mcppls.toolchain.probe;
 
-namespace lspmcpp::normalize {
+namespace mcppls::normalize {
 
 namespace {
 
@@ -67,7 +67,7 @@ std::vector<std::string> translate_gnu(const GnuInput& input) {
         }
     }
     if (input.facts != nullptr && input.facts->toolchain.target.find("windows-msvc") != std::string::npos) {
-        for (auto& argument : windows_msvc_arguments(*input.facts, out)) out.push_back(std::move(argument));
+        for (auto& argument : windows_msvc_arguments(*input.facts, out, input.noAlignedAllocationWithMsvcStl)) out.push_back(std::move(argument));
     }
     if (input.importable) {
         out.emplace_back("-x");
@@ -76,7 +76,7 @@ std::vector<std::string> translate_gnu(const GnuInput& input) {
     return out;
 }
 
-std::vector<std::string> windows_msvc_arguments(const toolchain::ToolchainFacts& facts, std::span<const std::string> existing) {
+std::vector<std::string> windows_msvc_arguments(const toolchain::ToolchainFacts& facts, std::span<const std::string> existing, bool noAlignedAllocation) {
     std::vector<std::string> out;
     auto has = [&](std::string_view prefix) {
         const auto starts = [&](const std::string& argument) { return argument.starts_with(prefix); };
@@ -100,7 +100,7 @@ std::vector<std::string> windows_msvc_arguments(const toolchain::ToolchainFacts&
             }
         }
     }
-    if (facts.toolchain.stdlib && facts.toolchain.stdlib->name == "msvc-stl" && !has("-fno-aligned-allocation") && !has("-faligned-allocation")) {
+    if (noAlignedAllocation && facts.toolchain.stdlib && facts.toolchain.stdlib->name == "msvc-stl" && !has("-fno-aligned-allocation") && !has("-faligned-allocation")) {
         out.emplace_back("-fno-aligned-allocation");
     }
     return out;
@@ -160,4 +160,4 @@ std::vector<std::string> kit_arguments(const spec::Kit& kit, std::string_view la
     return out;
 }
 
-} // namespace lspmcpp::normalize
+} // namespace mcppls::normalize

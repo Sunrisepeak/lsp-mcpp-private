@@ -1,11 +1,11 @@
 // JSON Compilation Databases (compile_commands.json) and command-line splitting.
-export module lspmcpp.project.compdb;
+export module mcppls.project.compdb;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
+import mcppls.base.error;
 
-export namespace lspmcpp::project {
+export namespace mcppls::project {
 
 struct CompileCommand {
     std::string directory;
@@ -25,4 +25,4 @@ std::vector<std::string> expand_response_files(std::span<const std::string> argu
 base::Result<std::vector<CompileCommand>> parse_compile_commands(const nlohmann::json& document, CommandSyntax syntax);
 base::Result<std::vector<CompileCommand>> read_compile_commands(std::string_view path);
 
-} // namespace lspmcpp::project
+} // namespace mcppls::project

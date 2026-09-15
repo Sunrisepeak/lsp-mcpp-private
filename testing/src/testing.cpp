@@ -1,8 +1,8 @@
-module lspmcpp.testing;
+module mcppls.testing;
 
 import std;
 
-namespace lspmcpp::testing {
+namespace mcppls::testing {
 
 namespace {
 
@@ -80,4 +80,4 @@ int report() {
     return state.failedCases == 0 ? 0 : 1;
 }
 
-} // namespace lspmcpp::testing
+} // namespace mcppls::testing

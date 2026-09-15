@@ -1,13 +1,13 @@
 // S1: the build database with its IDE profile (specs/s1-build-database.md).
 // A conforming document is also a P2977R2 build database.
-export module lspmcpp.spec.database;
+export module mcppls.spec.database;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
-import lspmcpp.spec.metadata;
+import mcppls.base.error;
+import mcppls.spec.metadata;
 
-export namespace lspmcpp::spec {
+export namespace mcppls::spec {
 
 inline constexpr std::string_view PROFILE_VERSION { "0.2.0" };
 
@@ -154,4 +154,4 @@ Resolution resolve_module(const Database& database, std::size_t setIndex, std::s
 // A reader that caches manifests by path and ignores unreadable ones.
 MetadataReader caching_metadata_reader();
 
-} // namespace lspmcpp::spec
+} // namespace mcppls::spec

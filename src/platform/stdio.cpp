@@ -1,11 +1,11 @@
-module lspmcpp.platform.stdio;
+module mcppls.platform.stdio;
 
 import std;
 import openkal.types;
 import openkal.stream;
-import lspmcpp.base.error;
+import mcppls.base.error;
 
-namespace lspmcpp::platform::stdio {
+namespace mcppls::platform::stdio {
 
 namespace {
 
@@ -45,4 +45,4 @@ base::Result<void> write_error(std::string_view bytes) {
     return write_all(kal_stderr(), bytes);
 }
 
-} // namespace lspmcpp::platform::stdio
+} // namespace mcppls::platform::stdio

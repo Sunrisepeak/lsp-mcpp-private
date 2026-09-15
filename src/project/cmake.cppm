@@ -1,14 +1,14 @@
 // CMake as a data source: its build database when exported, its compile
 // database otherwise, and a private configure in trusted workspaces (design D12).
-export module lspmcpp.project.cmake;
+export module mcppls.project.cmake;
 
 import std;
-import lspmcpp.base.error;
-import lspmcpp.project.detect;
-import lspmcpp.project.infer;
-import lspmcpp.project.provider;
+import mcppls.base.error;
+import mcppls.project.detect;
+import mcppls.project.infer;
+import mcppls.project.provider;
 
-export namespace lspmcpp::project {
+export namespace mcppls::project {
 
 base::Result<InferredDatabase> load_cmake(const Detection& detection, std::string_view privateBuildDirectory, const ProviderContext& context);
 
@@ -28,4 +28,4 @@ std::optional<std::string> build_database_gate_uuid(std::string_view versionOutp
 std::vector<std::string> cmake_configure_arguments(std::string_view root, std::string_view buildDirectory, bool useNinja,
                                                    const std::optional<std::string>& gateUuid);
 
-} // namespace lspmcpp::project
+} // namespace mcppls::project

@@ -67,10 +67,18 @@ interface CxxModulesStatusParams {
     level?: 1 | 2 | 3 | 4;        // S1 conformance level of the project model
   };
   profile: SemanticProfile;        // semantic profile of the default context
-  engine: { name: "clangd"; version: string };
+  engine: { name: string; version: string };   // the core semantic engine, e.g. "clangd"; "none" when there is none
+  engines?: EngineStatus[];        // every engine serving the root (overall design 5)
   progress?: { done: number; total: number };
   issues?: CxxModulesIssue[];      // reasons for degradation; absent or empty when there are none
   notices?: CxxModulesIssue[];     // facts worth showing that reduce no feature, e.g. a producer that writes into the project
+}
+
+interface EngineStatus {
+  name: string;                    // e.g. "clangd", or "mcppls" for the server's own module engine
+  version: string;
+  role: "core" | "modules" | string;
+  state: "starting" | "ready" | "preparing" | "unavailable" | string;
 }
 
 interface SemanticProfile {
@@ -84,6 +92,8 @@ interface CxxModulesIssue {
   code: "unresolved-module" | "ambiguous-module" | "engine-timeout" | "engine-crashed"
       | "toolchain-not-found" | "sdk-missing" | "untrusted-workspace" | "module-build-failed"
       | "model-stale"               // the producer failed to answer again; the last model is kept (S2 5)
+      | "std-fallback-kit"          // the engine could not build the toolchain's standard library module; a semantic kit reads the files
+      | "file-quarantined"          // the engine stopped answering for some files; they are answered from the module index until they change
       | string;
   message: string;
   command?: Command;               // an optional action that fixes the issue
@@ -104,6 +114,8 @@ States:
 A server **MUST** send the notification whenever any field changes, **SHOULD** coalesce changes that occur within a short interval, and **MUST** send at least one notification after `initialized`. `project.source` names where the model came from: an mcpp project, a CMake project, an S1 database, a `compile_commands.json`, or inference from sources alone. `profile.kind` is `semantic-kit` when the server analyzes the project with an [S4](s4-semantic-kit.md) semantic kit because no suitable compiler was found. <a id="S3-4-1"></a><a id="S3-4-2"></a><a id="S3-4-3"></a><sup>S3-4-1, S3-4-2, S3-4-3</sup>
 
 A server that manages more than one workspace root (multiple `workspaceFolders`, or folders added or removed later through `workspace/didChangeWorkspaceFolders`) **MUST** send one notification per root, each with that root's own `project.root`, rather than one notification describing all of them; a client that presents status per folder tells them apart by it. This is a backward-compatible addition: `project.root` already existed in protocol version 1, and a single-root server's one notification already satisfied "at least one notification" above. A request that names a document (for example `cxxModules/setContext`) is answered by the root that owns it; `cxxModules/graph` and a bare-name `cxxModules/moduleInfo` name no document and so, until a later protocol version adds a way to select one, are answered by the first root. <a id="S3-4-4"></a><sup>S3-4-4</sup>
+
+A server whose semantic capabilities come from more than one engine **SHOULD** list each in `engines` with its role and state, and **MUST** name the engine that provides the core C++ semantics in `engine`, or `"none"` when the root has none. A client **MUST** accept engine names other than `"clangd"`. <a id="S3-4-5"></a><a id="S3-4-6"></a><a id="S3-4-7"></a><sup>S3-4-5, S3-4-6, S3-4-7</sup>
 
 ## 5. Requests
 
@@ -177,6 +189,25 @@ interface CxxModulesSetContextParams { textDocument: TextDocumentIdentifier; con
 
 After answering, the server rewrites the engine's input for the new context and sends `cxxModules/status` as the engine prepares. A `context` that is not in the file's `available` list is answered with the LSP error `InvalidParams`.
 
+### 5.5 `cxxModules/report`
+
+Direction: client → server. What a report of a problem needs, gathered by the server for a person or a bug report.
+
+```ts
+// Params: {}
+interface CxxModulesReport {
+  generatedAt: string;             // UTC, ISO 8601
+  server: { name: string; version: string; platform: string; uptimeSeconds: number; logLevel: string; logFile: string };
+  client: { name: string; version?: string } | null;   // the client's clientInfo, as it sent it
+  roots: object[];                 // one entry per workspace root
+  logTail: string[];               // the latest lines of the server's log
+}
+```
+
+A server **SHOULD** answer at once with what it knows rather than wait for its engines. <a id="S3-5.5-1"></a><sup>S3-5.5-1</sup>
+
+The content of each `roots` entry is the server's own and may change between server versions: a client **MUST NOT** base features on it. <a id="S3-5.5-2"></a><sup>S3-5.5-2</sup>
+
 ## 6. Module features through standard LSP
 
 | Feature | Standard message | Answered by |
@@ -186,10 +217,10 @@ After answering, the server rewrites the engine's input for the new context and 
 | Module-name hover: providers, role, semantic profile | `textDocument/hover` | the server's module index |
 | Module declaration as a top-level outline node | `textDocument/documentSymbol` | merged with the semantic engine's result |
 | Search by module name | `workspace/symbol` | merged with the semantic engine's result |
-| Unresolved and ambiguous modules, import of another module's partition | `textDocument/publishDiagnostics` | the server's module index, with `source` `"lsp-mcpp"` |
+| Unresolved and ambiguous modules, import of another module's partition | `textDocument/publishDiagnostics` | the server's module index, with `source` `"mcppls"` |
 | Changes to build descriptions | `workspace/didChangeWatchedFiles`, registered dynamically by the server | the editor watches the files |
 
-Diagnostics produced from the module index use these `code` values: `unresolved-module`, `ambiguous-module` and `partition-outside-module`. A server **SHOULD** name the semantic profile in the `source` of diagnostics it forwards from the semantic engine, for example `"lsp-mcpp · gcc 16"`, so that a user can tell which compiler's semantics a diagnostic reflects. <a id="S3-6-1"></a><sup>S3-6-1</sup>
+Diagnostics produced from the module index use these `code` values: `unresolved-module`, `ambiguous-module` and `partition-outside-module`. A server **SHOULD** name the semantic profile in the `source` of diagnostics it forwards from the semantic engine, for example `"mcppls · gcc 16"`, so that a user can tell which compiler's semantics a diagnostic reflects. <a id="S3-6-1"></a><sup>S3-6-1</sup>
 
 ## 7. Versioning
 

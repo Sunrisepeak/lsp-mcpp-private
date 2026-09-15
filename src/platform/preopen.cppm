@@ -1,12 +1,12 @@
 // Absolute names over openkal's supplied directories. openkal names a file
 // relative to a directory the program holds; this finds the supplied directory
 // an absolute name begins with and the rest of the name beneath it.
-export module lspmcpp.platform.preopen;
+export module mcppls.platform.preopen;
 
 import std;
 import openkal.fs;
 
-export namespace lspmcpp::platform {
+export namespace mcppls::platform {
 
 struct ResolvedName {
     kal_dir directory {};
@@ -18,4 +18,4 @@ struct ResolvedName {
 // name is beneath none of them.
 std::optional<ResolvedName> resolve_name(std::string_view absolutePath);
 
-} // namespace lspmcpp::platform
+} // namespace mcppls::platform

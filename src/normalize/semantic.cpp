@@ -1,9 +1,9 @@
-module lspmcpp.normalize.semantic;
+module mcppls.normalize.semantic;
 
 import std;
-import lspmcpp.spec.database;
+import mcppls.spec.database;
 
-namespace lspmcpp::normalize {
+namespace mcppls::normalize {
 
 namespace {
 
@@ -88,4 +88,4 @@ std::vector<std::string> options_arguments(const spec::SemanticOptions& options,
     return arguments;
 }
 
-} // namespace lspmcpp::normalize
+} // namespace mcppls::normalize

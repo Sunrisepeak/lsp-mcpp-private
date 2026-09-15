@@ -1,15 +1,18 @@
-// A Language Server Protocol peer running as a child process: frames written to
-// its standard input, frames read from its standard output on a reader thread,
-// and its standard error drained on another.
-export module lspmcpp.lsp.connection;
+// A JSON-RPC peer running as a child process: messages written to its standard
+// input, messages read from its standard output on a reader thread, and its
+// standard error drained on another. Messages are LSP frames, or single lines
+// the way the Model Context Protocol's standard streams carry them.
+export module mcppls.lsp.connection;
 
 import std;
 import nlohmann.json;
-import lspmcpp.base.error;
-import lspmcpp.platform.process;
-import lspmcpp.lsp.jsonrpc;
+import mcppls.base.error;
+import mcppls.platform.process;
+import mcppls.lsp.jsonrpc;
 
-export namespace lspmcpp::lsp {
+export namespace mcppls::lsp {
+
+enum class Framing { content_length, lines };
 
 class Connection {
 public:
@@ -22,6 +25,7 @@ private:
     std::jthread reader_;
     std::jthread errorReader_;
     std::atomic<bool> closed_ { false };
+    Framing framing_ { Framing::content_length };
 
 public:
     Connection() = default;
@@ -33,7 +37,8 @@ public:
     // Handlers run on the connection's own threads. `onClosed` runs once, after
     // the peer's output ended.
     static base::Result<std::unique_ptr<Connection>> start(platform::SpawnOptions options, MessageHandler onMessage,
-                                                           ClosedHandler onClosed, ErrorLineHandler onErrorLine = {});
+                                                           ClosedHandler onClosed, ErrorLineHandler onErrorLine = {},
+                                                           Framing framing = Framing::content_length);
     base::Result<void> send(const Json& message);
     // Ends the peer: closes its input, waits up to `grace`, then terminates it.
     void stop(std::chrono::milliseconds grace);
@@ -41,4 +46,4 @@ public:
     std::optional<int> exit_code();
 };
 
-} // namespace lspmcpp::lsp
+} // namespace mcppls::lsp

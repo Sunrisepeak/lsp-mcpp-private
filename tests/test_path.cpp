@@ -1,11 +1,11 @@
 import std;
-import lspmcpp.testing;
-import lspmcpp.base.path;
+import mcppls.testing;
+import mcppls.base.path;
 
-using namespace lspmcpp::base;
+using namespace mcppls::base;
 
 int main() {
-    using namespace lspmcpp::testing;
+    using namespace mcppls::testing;
     constexpr auto WIN { PathStyle::windows };
     constexpr auto POSIX { PathStyle::posix };
 

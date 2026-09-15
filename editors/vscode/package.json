@@ -1,5 +1,5 @@
 {
-  "name": "lsp-mcpp",
+  "name": "mcpp-language-server",
   "displayName": "C++ Modules",
   "description": "C++20/23 named modules that just work: go to definition, completion, hover and references across modules for any compiler, with clangd and a standard library kit built in.",
   "version": "0.1.0",
@@ -45,7 +45,7 @@
       "supported": "limited",
       "description": "In Restricted Mode only the module index and the built-in standard library kit are used. No compiler, build system or discovery command from the workspace is run.",
       "restrictedConfigurations": [
-        "lspMcpp.compiler"
+        "mcppls.compiler"
       ]
     },
     "virtualWorkspaces": false
@@ -65,41 +65,58 @@
     ],
     "commands": [
       {
-        "command": "lspMcpp.selectContext",
+        "command": "mcppls.selectContext",
         "title": "Select Context",
         "category": "C++ Modules"
       },
       {
-        "command": "lspMcpp.showModuleGraph",
+        "command": "mcppls.showModuleGraph",
         "title": "Show Module Graph",
         "category": "C++ Modules"
       },
       {
-        "command": "lspMcpp.restartServer",
+        "command": "mcppls.restartServer",
         "title": "Restart Language Server",
         "category": "C++ Modules"
       },
       {
-        "command": "lspMcpp.showLogs",
+        "command": "mcppls.showLogs",
         "title": "Show Logs",
         "category": "C++ Modules"
       },
       {
-        "command": "lspMcpp.installCommandLineTools",
+        "command": "mcppls.installCommandLineTools",
         "title": "Install Command Line Tools",
+        "category": "C++ Modules"
+      },
+      {
+        "command": "mcppls.review.run",
+        "title": "Review Changes",
+        "category": "C++ Modules",
+        "enablement": "config.mcppls.ai.enabled"
+      },
+      {
+        "command": "mcppls.review.clear",
+        "title": "Clear Review",
+        "category": "C++ Modules",
+        "enablement": "config.mcppls.ai.enabled"
+      },
+      {
+        "command": "mcppls.collectReport",
+        "title": "Collect Diagnostic Report",
         "category": "C++ Modules"
       }
     ],
     "configuration": {
       "title": "C++ Modules",
       "properties": {
-        "lspMcpp.compiler": {
+        "mcppls.compiler": {
           "type": "string",
           "default": "",
           "scope": "machine-overridable",
           "markdownDescription": "Compiler whose semantics the language server follows, as an absolute path or a name on `PATH`. Empty means discovered automatically from the build system and the machine."
         },
-        "lspMcpp.semanticKit": {
+        "mcppls.semanticKit": {
           "type": "string",
           "enum": [
             "auto",
@@ -112,12 +129,30 @@
           "default": "auto",
           "description": "Whether the built-in standard library kit may be used."
         },
-        "lspMcpp.detectConflicts": {
+        "mcppls.engine": {
+          "type": "string",
+          "enum": [
+            "clangd",
+            "none"
+          ],
+          "enumDescriptions": [
+            "The built-in clangd provides C++ semantics; mcppls's own engine answers module-level requests.",
+            "No core engine: only mcppls's own module-level features (module navigation, import completion, module diagnostics)."
+          ],
+          "default": "clangd",
+          "description": "The core semantic engine. mcppls's own module engine always runs beside it."
+        },
+        "mcppls.ai.enabled": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Show the AI-era features: **Review Changes** reviews the workspace's changes against `HEAD` with mcppls's rules and shows the findings, with their evidence, as problems. Nothing is sent to a model."
+        },
+        "mcppls.detectConflicts": {
           "type": "boolean",
           "default": true,
           "description": "Offer once to turn off the language features of other C++ extensions in this workspace, so results are not shown twice."
         },
-        "lspMcpp.trace.server": {
+        "mcppls.trace.server": {
           "type": "string",
           "enum": [
             "off",
@@ -128,6 +163,18 @@
           "description": "Traces the communication between VS Code and the language server in the C++ Modules output."
         }
       }
+    },
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "mcppls.review.run",
+          "when": "config.mcppls.ai.enabled"
+        },
+        {
+          "command": "mcppls.review.clear",
+          "when": "config.mcppls.ai.enabled"
+        }
+      ]
     }
   },
   "scripts": {

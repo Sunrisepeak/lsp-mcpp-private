@@ -2,32 +2,32 @@
 // `inferred` conformance fixture: C++ modules with no build system.
 //
 // Modes (development path, the default, vs. the packaged VSIX):
-//   LSP_MCPP_E2E_VSIX=<path>       Test the packaged extension: install this
+//   MCPPLS_E2E_VSIX=<path>       Test the packaged extension: install this
 //                                  .vsix (built with `vsce package`) into a
 //                                  fresh --extensions-dir and load the tests
 //                                  through test/harness rather than loading
 //                                  the extension from source. This is the
 //                                  form CI runs (W6.3); omit it for fast
 //                                  local iteration against the source tree.
-//   LSP_MCPP_E2E_SCENARIO=conflicts
+//   MCPPLS_E2E_SCENARIO=conflicts
 //                                  Instead of the main suite, run the
 //                                  cpptools/clangd conflict-detection
 //                                  scenario (W6.4): requires
-//                                  LSP_MCPP_E2E_VSIX, since it needs the
+//                                  MCPPLS_E2E_VSIX, since it needs the
 //                                  stub extensions genuinely installed
 //                                  alongside the real one. Defaults to the
 //                                  main suite.
 //
 // Payload / server selection (read by the extension itself, see src/payload.ts):
-//   LSP_MCPP_PAYLOAD=<assembled payload>   (or a payload/ directory in this extension)
-//   LSP_MCPP_SERVER=<lsp-mcpp executable>  (optional; overrides payload/bin)
+//   MCPPLS_PAYLOAD=<assembled payload>   (or a payload/ directory in this extension)
+//   MCPPLS_SERVER=<mcppls executable>  (optional; overrides payload/bin)
 //
 // Other:
 //   VSCODE_TEST_VERSION=stable      (optional)
-//   LSP_MCPP_CACHE_DIR=<dir>        Reuse a server cache directory across runs.
-//   LSP_MCPP_E2E_ONLY=<glob>        Run only the main suite's test files matching this glob, for
+//   MCPPLS_CACHE_DIR=<dir>        Reuse a server cache directory across runs.
+//   MCPPLS_E2E_ONLY=<glob>        Run only the main suite's test files matching this glob, for
 //                                  example sdk-missing.test.js on a clean macOS machine.
-//   LSP_MCPP_E2E_EXPECT_SDK_MISSING=1
+//   MCPPLS_E2E_EXPECT_SDK_MISSING=1
 //                                  Tells test/suite/sdk-missing.test.ts to
 //                                  run its assertions instead of skipping;
 //                                  only meaningful on a clean-machine job
@@ -61,7 +61,7 @@ function prepareWorkspace(): string {
     if (!fixture) {
         throw new Error(`No fixture found; looked in:\n${candidates.join('\n')}`);
     }
-    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'lsp-mcpp-e2e-'));
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'mcppls-e2e-'));
     fs.cpSync(fixture, workspace, { recursive: true });
     // The inferred fixture has no build system; remove anything that would make it another kind.
     for (const name of BUILD_FILES) {
@@ -134,7 +134,7 @@ function assertWorkspaceUnchanged(workspace: string, before: Map<string, string>
 // npx's own (platform-varying) shell resolution.
 function packageStub(stubDir: string): string {
     const manifest = JSON.parse(fs.readFileSync(path.join(stubDir, 'package.json'), 'utf8')) as { name: string; version: string };
-    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lsp-mcpp-stub-'));
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcppls-stub-'));
     const outFile = path.join(outDir, `${manifest.name}-${manifest.version}.vsix`);
     const vsceScript = require.resolve('@vscode/vsce/vsce');
     // vsce package needs a publisher + version (both present) and either a
@@ -198,9 +198,9 @@ function runDevPathMode(options: RunOptions): Promise<number> {
             ...ROOT_ARGS,
         ],
         extensionTestsEnv: {
-            LSP_MCPP_TEST: '1',
-            LSP_MCPP_E2E_WORKSPACE: options.workspace,
-            LSP_MCPP_CACHE_DIR: options.cacheDirectory,
+            MCPPLS_TEST: '1',
+            MCPPLS_E2E_WORKSPACE: options.workspace,
+            MCPPLS_CACHE_DIR: options.cacheDirectory,
             ...options.extensionTestsEnv,
         },
     });
@@ -208,7 +208,7 @@ function runDevPathMode(options: RunOptions): Promise<number> {
 
 async function runVsixMode(options: RunOptions & { vsixPath: string; extraVsixPaths: readonly string[] }): Promise<number> {
     const vscodeExecutablePath = await downloadAndUnzipVSCode({ version: process.env.VSCODE_TEST_VERSION ?? 'stable' });
-    const extensionsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'lsp-mcpp-ext-'));
+    const extensionsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'mcppls-ext-'));
     installExtensions(vscodeExecutablePath, extensionsDirectory, options.userDataDirectory, [options.vsixPath, ...options.extraVsixPaths]);
 
     return runTests({
@@ -232,9 +232,9 @@ async function runVsixMode(options: RunOptions & { vsixPath: string; extraVsixPa
             ...ROOT_ARGS,
         ],
         extensionTestsEnv: {
-            LSP_MCPP_TEST: '1',
-            LSP_MCPP_E2E_WORKSPACE: options.workspace,
-            LSP_MCPP_CACHE_DIR: options.cacheDirectory,
+            MCPPLS_TEST: '1',
+            MCPPLS_E2E_WORKSPACE: options.workspace,
+            MCPPLS_CACHE_DIR: options.cacheDirectory,
             ...options.extensionTestsEnv,
         },
     });
@@ -250,12 +250,12 @@ async function runOnce(config: {
 }): Promise<void> {
     const workspace = prepareWorkspace();
     const beforeHashes = hashWorkspace(workspace);
-    const cacheDirectory = process.env.LSP_MCPP_CACHE_DIR ?? fs.mkdtempSync(path.join(os.tmpdir(), 'lsp-mcpp-e2e-cache-'));
+    const cacheDirectory = process.env.MCPPLS_CACHE_DIR ?? fs.mkdtempSync(path.join(os.tmpdir(), 'mcppls-e2e-cache-'));
     // A short user data directory of its own. VS Code listens on a socket
     // inside it, and macOS limits a socket path to 104 bytes: the default
     // under .vscode-test in a CI checkout is longer and fails with `listen
     // EINVAL`.
-    const userDataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'lsp-mcpp-ud-'));
+    const userDataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'mcppls-ud-'));
     console.log(`[${config.label}] workspace: ${workspace}`);
     console.log(`[${config.label}] server cache: ${cacheDirectory}`);
     console.log(`[${config.label}] user data: ${userDataDirectory}`);
@@ -279,14 +279,14 @@ async function runOnce(config: {
 }
 
 async function main(): Promise<void> {
-    const scenario = process.env.LSP_MCPP_E2E_SCENARIO ?? 'main';
-    const vsixPath = process.env.LSP_MCPP_E2E_VSIX;
+    const scenario = process.env.MCPPLS_E2E_SCENARIO ?? 'main';
+    const vsixPath = process.env.MCPPLS_E2E_VSIX;
 
     if (scenario === 'conflicts') {
         if (!vsixPath) {
             throw new Error(
-                'LSP_MCPP_E2E_SCENARIO=conflicts installs the cpptools/clangd stub extensions alongside the packaged '
-                + 'extension, which needs LSP_MCPP_E2E_VSIX=<path to the lsp-mcpp .vsix> (build one with '
+                'MCPPLS_E2E_SCENARIO=conflicts installs the cpptools/clangd stub extensions alongside the packaged '
+                + 'extension, which needs MCPPLS_E2E_VSIX=<path to the mcppls .vsix> (build one with '
                 + '`npx --no-install vsce package --out <path>`).',
             );
         }
@@ -305,7 +305,7 @@ async function main(): Promise<void> {
                 extraVsixPaths: stubVsixPaths,
                 extensionTestsPath,
                 allowedNewFiles: ['.vscode/settings.json'],
-                extensionTestsEnv: { LSP_MCPP_E2E_CONFLICT_ANSWER: answer },
+                extensionTestsEnv: { MCPPLS_E2E_CONFLICT_ANSWER: answer },
             });
         }
         return;

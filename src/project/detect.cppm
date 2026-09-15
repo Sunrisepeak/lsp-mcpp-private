@@ -1,10 +1,10 @@
 // Which kind of project a workspace folder is, and where its build facts live
 // (design section 14.1).
-export module lspmcpp.project.detect;
+export module mcppls.project.detect;
 
 import std;
 
-export namespace lspmcpp::project {
+export namespace mcppls::project {
 
 enum class SourceKind { build_database, mcpp, cmake, compile_commands, inferred };
 
@@ -21,4 +21,4 @@ struct Detection {
 
 Detection detect_project(std::string_view root, std::string_view configuredDatabase = {});
 
-} // namespace lspmcpp::project
+} // namespace mcppls::project

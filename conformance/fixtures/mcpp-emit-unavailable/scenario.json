@@ -1,9 +1,9 @@
 {
   "name": "mcpp-emit-unavailable",
-  "description": "A project whose .xlings.json asks for an mcpp that is not installed, simulated by lsp-mcpp-mock-mcpp: xlings answers every mcpp command with its own explanation and runs nothing. The status carries that explanation instead of a bare failure, sources are scanned meanwhile, and nothing is written into the project.",
+  "description": "A project whose .xlings.json asks for an mcpp that is not installed, simulated by mcppls-mock-mcpp: xlings answers every mcpp command with its own explanation and runs nothing. The status carries that explanation instead of a bare failure, sources are scanned meanwhile, and nothing is written into the project.",
   "server-arguments": [
     "--mcpp",
-    "{runner-dir}/lsp-mcpp-mock-mcpp{exe}"
+    "{runner-dir}/mcppls-mock-mcpp{exe}"
   ],
   "checks": [
     {

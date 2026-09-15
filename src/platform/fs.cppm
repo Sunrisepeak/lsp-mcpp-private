@@ -1,11 +1,11 @@
 // Files and directories. Paths are strings in the normalized '/' form of
-// lspmcpp.base.path; Windows paths keep their drive ("C:/Users/x").
-export module lspmcpp.platform.fs;
+// mcppls.base.path; Windows paths keep their drive ("C:/Users/x").
+export module mcppls.platform.fs;
 
 import std;
-import lspmcpp.base.error;
+import mcppls.base.error;
 
-export namespace lspmcpp::platform::fs {
+export namespace mcppls::platform::fs {
 
 struct FileStamp {
     std::uint64_t size { 0 };
@@ -50,4 +50,4 @@ std::optional<FileIdentity> file_identity(std::string_view path);
 // runneradmin). The part of a path that does not exist is kept as written.
 std::string canonical_path(std::string_view path);
 
-} // namespace lspmcpp::platform::fs
+} // namespace mcppls::platform::fs

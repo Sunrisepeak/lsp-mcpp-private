@@ -3,18 +3,18 @@
 // exception is on Windows, where the command interpreter is itself the subject:
 // build tools there are often batch files, and those run through it.
 import std;
-import lspmcpp.os;
-import lspmcpp.testing;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
-import lspmcpp.platform.process;
-import lspmcpp.platform.env;
-import lspmcpp.platform.fs;
-import lspmcpp.platform.dirs;
-import lspmcpp.platform.stdio;
+import mcppls.os;
+import mcppls.testing;
+import mcppls.base.path;
+import mcppls.base.text;
+import mcppls.platform.process;
+import mcppls.platform.env;
+import mcppls.platform.fs;
+import mcppls.platform.dirs;
+import mcppls.platform.stdio;
 
-namespace platform = lspmcpp::platform;
-namespace base = lspmcpp::base;
+namespace platform = mcppls::platform;
+namespace base = mcppls::base;
 
 namespace {
 
@@ -71,7 +71,7 @@ int main() {
     // A child leaves without running the test framework's report at exit.
     if (arguments.size() >= 2 && arguments[1].starts_with("--")) std::_Exit(child_main(arguments));
 
-    using namespace lspmcpp::testing;
+    using namespace mcppls::testing;
     const std::string self { self_path() };
 
     "self path is an existing absolute file"_test = [&] {
@@ -160,7 +160,7 @@ int main() {
 
     "work directory is where relative names resolve"_test = [&] {
         const std::string directory { base::join_path(platform::dirs::temp_directory(),
-            std::format("lsp-mcpp-test-process-{}", std::chrono::steady_clock::now().time_since_epoch().count())) };
+            std::format("mcppls-test-process-{}", std::chrono::steady_clock::now().time_since_epoch().count())) };
         expect(fatal(platform::fs::create_directories(directory).has_value())) << directory;
         expect(platform::fs::write_file(base::join_path(directory, "marker.txt"), "marker-content\n").has_value());
         auto result = platform::run({ .program = self, .arguments = { "--read-relative", "marker.txt" },
@@ -174,11 +174,11 @@ int main() {
     // ("UNC paths are not supported") and runs in the Windows directory instead,
     // so a batch file started in a project ran somewhere else.
     "the command interpreter runs in the work directory"_test = [&] {
-        if constexpr (lspmcpp::os::FAMILY != lspmcpp::os::Family::windows) {
+        if constexpr (mcppls::os::FAMILY != mcppls::os::Family::windows) {
             return;
         } else {
             const std::string directory { base::join_path(platform::dirs::temp_directory(),
-                std::format("lsp-mcpp-test-cmd-{}", std::chrono::steady_clock::now().time_since_epoch().count())) };
+                std::format("mcppls-test-cmd-{}", std::chrono::steady_clock::now().time_since_epoch().count())) };
             expect(fatal(platform::fs::create_directories(directory).has_value())) << directory;
             expect(platform::fs::write_file(base::join_path(directory, "marker.txt"), "marker-content").has_value());
             const std::string interpreter { base::normalize_path(platform::env::get("ComSpec").value_or("C:/Windows/System32/cmd.exe")) };

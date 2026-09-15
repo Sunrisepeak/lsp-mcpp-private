@@ -3,7 +3,6 @@ node_modules/
 editors/vscode/out/
 editors/vscode/payload/
 *.vsix
-.lsp-mcpp/
 __pycache__/
 compile_commands.json
 .cache/

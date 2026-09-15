@@ -1,10 +1,10 @@
-module lspmcpp.spec.options;
+module mcppls.spec.options;
 
 import std;
-import lspmcpp.base.path;
-import lspmcpp.spec.database;
+import mcppls.base.path;
+import mcppls.spec.database;
 
-namespace lspmcpp::spec {
+namespace mcppls::spec {
 
 namespace {
 
@@ -279,4 +279,4 @@ void complete_options(Database& database) {
     }
 }
 
-} // namespace lspmcpp::spec
+} // namespace mcppls::spec

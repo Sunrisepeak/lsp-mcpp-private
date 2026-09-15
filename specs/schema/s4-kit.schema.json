@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/mcpp-community/lsp-mcpp/specs/schema/s4-kit/1",
+  "$id": "https://github.com/mcpp-community/mcpp-language-server/specs/schema/s4-kit/1",
   "title": "Semantic Kit Manifest, kit-version 1 (S4)",
   "description": "kit.json at the root of a semantic kit. Paths are kit paths: relative to the kit root, '/'-separated, not absolute, without a drive prefix and without '..' components.",
   "type": "object",

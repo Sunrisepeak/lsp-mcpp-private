@@ -1,8 +1,8 @@
-module lspmcpp.base.error;
+module mcppls.base.error;
 
 import std;
 
-namespace lspmcpp::base {
+namespace mcppls::base {
 
 Error make_error(std::string_view code, std::string message) {
     return Error { std::string { code }, std::move(message) };
@@ -16,4 +16,4 @@ std::string to_string(const Error& error) {
     return std::format("[{}] {}", error.code, error.message);
 }
 
-} // namespace lspmcpp::base
+} // namespace mcppls::base

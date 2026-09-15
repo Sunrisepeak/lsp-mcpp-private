@@ -1,13 +1,13 @@
-module lspmcpp.platform.fs;
+module mcppls.platform.fs;
 
 import std;
-import lspmcpp.base.error;
-import lspmcpp.base.path;
-import lspmcpp.base.text;
+import mcppls.base.error;
+import mcppls.base.path;
+import mcppls.base.text;
 import openkal.fs;
-import lspmcpp.platform.preopen;
+import mcppls.platform.preopen;
 
-namespace lspmcpp::platform::fs {
+namespace mcppls::platform::fs {
 
 namespace {
 
@@ -196,4 +196,4 @@ std::string canonical_path(std::string_view path) {
     }
 }
 
-} // namespace lspmcpp::platform::fs
+} // namespace mcppls::platform::fs

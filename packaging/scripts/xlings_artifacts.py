@@ -7,10 +7,10 @@ DIR holds payload-<platform>.tar.gz from CI (each with payload/ inside). For eac
 platform this writes, following the XLINGS_RES naming convention
 `{name}-{version}-{os}-{arch}.tar.gz`:
 
-    lsp-mcpp-<V>-<os>-<arch>.tar.gz        lsp-mcpp-<V>-<os>-<arch>/bin/lsp-mcpp[.exe], LICENSE
-    lsp-mcpp-kit-<K>-<os>-<arch>.tar.gz    lsp-mcpp-kit-<K>-<os>-<arch>/kit.json, ...
+    mcpp-language-server-<V>-<os>-<arch>.tar.gz   mcpp-language-server-<V>-<os>-<arch>/bin/mcppls[.exe], LICENSE
+    mcppls-kit-<K>-<os>-<arch>.tar.gz    mcppls-kit-<K>-<os>-<arch>/kit.json, ...
 
-and renders packaging/xlings/*.lua.in into lsp-mcpp.lua and lsp-mcpp-kit.lua with
+and renders packaging/xlings/*.lua.in into mcpp-language-server.lua and mcppls-kit.lua with
 the sha256 of each archive. Versions default to mcpp.toml and payload.lock.json.
 """
 import argparse
@@ -84,12 +84,12 @@ def main():
                 archive.extractall(scratch, filter="data") if hasattr(tarfile, "data_filter") else archive.extractall(scratch)
             payload = os.path.join(scratch, "payload")
             exe = ".exe" if platform == "win32-x64" else ""
-            server_name = f"lsp-mcpp-{version}-{os_name}-{arch}"
+            server_name = f"mcpp-language-server-{version}-{os_name}-{arch}"
             server_archive = os.path.join(args.out, f"{server_name}.tar.gz")
             license_file = os.path.join(ROOT, "LICENSE")
-            write_archive(server_archive, server_name, [(os.path.join(payload, "bin", f"lsp-mcpp{exe}"), f"bin/lsp-mcpp{exe}"),
+            write_archive(server_archive, server_name, [(os.path.join(payload, "bin", f"mcppls{exe}"), f"bin/mcppls{exe}"),
                                                         (license_file, "LICENSE")])
-            kit_name = f"lsp-mcpp-kit-{kit_version}-{os_name}-{arch}"
+            kit_name = f"mcppls-kit-{kit_version}-{os_name}-{arch}"
             kit_archive = os.path.join(args.out, f"{kit_name}.tar.gz")
             kit_dir = os.path.join(payload, "kit")
             write_archive(kit_archive, kit_name, [(os.path.join(kit_dir, name), name) for name in sorted(os.listdir(kit_dir))])
@@ -99,7 +99,7 @@ def main():
         print(f"{platform}: {os.path.basename(server_archive)} {values[f'@SHA256_{key}@']}")
         print(f"{platform}: {os.path.basename(kit_archive)} {values[f'@KIT_SHA256_{key}@']}")
 
-    for template in ("lsp-mcpp.lua.in", "lsp-mcpp-kit.lua.in"):
+    for template in ("mcpp-language-server.lua.in", "mcppls-kit.lua.in"):
         with open(os.path.join(ROOT, "packaging", "xlings", template), encoding="utf-8") as stream:
             text = stream.read()
         for placeholder, value in values.items():

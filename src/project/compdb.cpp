@@ -1,13 +1,13 @@
-module lspmcpp.project.compdb;
+module mcppls.project.compdb;
 
 import std;
 import nlohmann.json;
-import lspmcpp.os;
-import lspmcpp.base.error;
-import lspmcpp.base.path;
-import lspmcpp.platform.fs;
+import mcppls.os;
+import mcppls.base.error;
+import mcppls.base.path;
+import mcppls.platform.fs;
 
-namespace lspmcpp::project {
+namespace mcppls::project {
 
 namespace {
 
@@ -160,8 +160,8 @@ base::Result<std::vector<CompileCommand>> read_compile_commands(std::string_view
     if (!text) return std::unexpected { text.error() };
     nlohmann::json document = nlohmann::json::parse(*text, nullptr, false);
     if (document.is_discarded()) return base::fail("compdb-invalid", std::format("{} is not valid JSON", path));
-    const CommandSyntax syntax { lspmcpp::os::FAMILY == lspmcpp::os::Family::windows ? CommandSyntax::windows : CommandSyntax::posix };
+    const CommandSyntax syntax { mcppls::os::FAMILY == mcppls::os::Family::windows ? CommandSyntax::windows : CommandSyntax::posix };
     return parse_compile_commands(document, syntax);
 }
 
-} // namespace lspmcpp::project
+} // namespace mcppls::project

@@ -1,8 +1,8 @@
 [package]
-name        = "lsp-mcpp-os-windows"
+name        = "mcppls-os-windows"
 version     = "0.1.0"
-description = "Platform facts of windows for lsp-mcpp, exported as module lspmcpp.os"
+description = "Platform facts of windows for mcppls, exported as module mcppls.os"
 license     = "Apache-2.0"
 
-[targets.lsp-mcpp-os-windows]
+[targets.mcppls-os-windows]
 kind = "lib"

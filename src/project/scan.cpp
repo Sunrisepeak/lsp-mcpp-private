@@ -1,11 +1,11 @@
-module lspmcpp.project.scan;
+module mcppls.project.scan;
 
 import std;
-import lspmcpp.base.text;
-import lspmcpp.base.path;
-import lspmcpp.spec.database;
+import mcppls.base.text;
+import mcppls.base.path;
+import mcppls.spec.database;
 
-namespace lspmcpp::project {
+namespace mcppls::project {
 
 namespace {
 
@@ -351,4 +351,4 @@ bool is_cxx_source_name(std::string_view path) {
     return std::ranges::any_of(EXTENSIONS, [&](std::string_view candidate) { return base::iequals_ascii(candidate, extension); });
 }
 
-} // namespace lspmcpp::project
+} // namespace mcppls::project

@@ -1,7 +1,7 @@
 # Packaging
 
-Everything lsp-mcpp ships besides its own source: a **payload** per platform,
-holding the server, a trimmed clangd 23.1 and the `lsp-mcpp-kit` semantic kit.
+Everything mcppls ships besides its own source: a **payload** per platform,
+holding the server, a trimmed clangd 23.1 and the `mcppls-kit` semantic kit.
 The VS Code extension carries a payload inside its platform VSIX; the xlings
 packages carry the same parts as two archives (design §15 and §17).
 
@@ -14,7 +14,7 @@ packaging/
     build_kit.py           assemble the semantic kit for one platform (kits/README.md)
     assemble_payload.py    put the three parts into the payload layout, and verify one
     xlings_artifacts.py    split release payloads into xlings-res archives
-  xlings/                  xpkg descriptor templates for lsp-mcpp and lsp-mcpp-kit
+  xlings/                  xpkg descriptor templates for mcpp-language-server and mcppls-kit
   kits/README.md           what each platform's kit contains and why
 ```
 
@@ -28,13 +28,14 @@ its manifest.
 
 ```
 <payload>/
-  payload.json                      payload-version 1, platform, and the version
-                                    and relative path of each part
-  bin/lsp-mcpp[.exe]
+  payload.json                      payload-version 3, platform, the version and
+                                    relative path of each part, and `engines`: per
+                                    engine its executable, version and matching kit
+  bin/mcppls[.exe]
   clangd/bin/clangd[.exe]
   clangd/lib/clang/<major>/include/  clang's builtin headers, found beside clangd
   kit/kit.json + kit data            spec S4
-  licenses/                          lsp-mcpp and LLVM license texts
+  licenses/                          mcppls and LLVM license texts
 ```
 
 The server takes the payload named by `--payload`, or else the payload that
@@ -65,7 +66,7 @@ mcpp build --profile release                 # --target x86_64-windows-gnu | --t
 python3 packaging/scripts/trim_clangd.py --platform linux-x64 --out work/clangd --cache .payload-cache
 python3 packaging/scripts/build_kit.py   --platform linux-x64 --out work/kit --cache .payload-cache --work work/kit-build
 python3 packaging/scripts/assemble_payload.py --platform linux-x64 \
-    --server target/<triple>/<fingerprint>/bin/lsp-mcpp --clangd work/clangd --kit work/kit --out payload
+    --server target/<triple>/<fingerprint>/bin/mcppls --clangd work/clangd --kit work/kit --out payload
 python3 packaging/scripts/assemble_payload.py --verify payload
 ```
 
@@ -81,7 +82,7 @@ openkal-llvm-runtime 0.9.6 (design §12.9, K7 and K13), and CI runs the unit
 tests in both profiles on every host.
 
 To run the VS Code extension against a local payload, put it at
-`editors/vscode/payload` or point `LSP_MCPP_PAYLOAD` at it.
+`editors/vscode/payload` or point `MCPPLS_PAYLOAD` at it.
 
 ## What the verification checks
 
@@ -125,8 +126,8 @@ ecosystem installs, named by the xlings-res convention, and renders
 `xlings/*.lua.in` with their hashes:
 
 ```
-lsp-mcpp-<version>-<os>-<arch>.tar.gz          the server and its license
-lsp-mcpp-kit-<kit version>-<os>-<arch>.tar.gz  the semantic kit
+mcpp-language-server-<version>-<os>-<arch>.tar.gz   the server (mcppls) and its license
+mcppls-kit-<kit version>-<os>-<arch>.tar.gz          the semantic kit
 ```
 
 clangd is not part of either archive: the xlings package depends on
