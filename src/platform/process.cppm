@@ -18,6 +18,10 @@ struct SpawnOptions {
     bool pipeError { false };                              // false: the child writes to this process's stderr
     bool ownUnit { false };                                // the child starts a unit that kill() ends with everything in it
     bool detached { false };                               // the child outlives this process (the workspace daemon)
+    // No standard streams given at all (pipe* are ignored). On Windows the child then inherits no handle
+    // of this process: a start that places streams passes every inheritable handle along, this
+    // process's own standard streams among them, and a detached child would hold them open.
+    bool noStreams { false };
 };
 
 class Process {

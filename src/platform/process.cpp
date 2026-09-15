@@ -168,9 +168,9 @@ base::Result<Process> Process::spawn(const SpawnOptions& options) {
     if (unit) how.job = &job;
     // A zero stream inherits the parent's; kal_stdin() is zero on openkal-linux, which is the same act.
     const kal_spawn_streams streams {
-        options.pipeInput ? childIn : kal_stream {},
-        options.pipeOutput ? childOut : kal_stderr(),
-        options.pipeError ? childErr : kal_stderr(),
+        options.noStreams ? kal_stream {} : options.pipeInput ? childIn : kal_stream {},
+        options.noStreams ? kal_stream {} : options.pipeOutput ? childOut : kal_stderr(),
+        options.noStreams ? kal_stream {} : options.pipeError ? childErr : kal_stderr(),
     };
     const int result { kal_process_spawn(&how, program->remainder.data(), program->remainder.size(),
                                          argv.data(), argvLengths.data(), argv.size(),

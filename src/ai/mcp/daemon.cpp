@@ -2,6 +2,7 @@ module mcppls.ai.mcp.daemon;
 
 import std;
 import nlohmann.json;
+import mcppls.os;
 import mcppls.base.error;
 import mcppls.base.log;
 import mcppls.base.path;
@@ -57,7 +58,7 @@ base::Result<std::pair<std::string, std::string>> read_first_line(net::Connectio
     return std::pair { buffer.substr(0, end), buffer.substr(end + 1) };
 }
 
-base::Result<std::pair<net::Connection, std::string>> open_session(const DaemonInfo& daemon, std::string_view session) {
+base::Result<std::pair<net::Connection, std::string>> open_session_now(const DaemonInfo& daemon, std::string_view session) {
     auto connection = net::Connection::connect_local(daemon.port);
     if (!connection) return std::unexpected { connection.error() };
     if (!send_line(*connection, Json { { "token", daemon.token }, { "session", std::string { session } } })) {
@@ -70,6 +71,15 @@ base::Result<std::pair<net::Connection, std::string>> open_session(const DaemonI
         return base::fail("daemon-refused", answer.is_object() ? answer.value("error", std::string { "refused" }) : std::string { "refused" });
     }
     return std::pair { std::move(*connection), std::move(greeting->second) };
+}
+
+// A daemon that accepts but never answers (a stale port now used by something else) must not hold an entry forever.
+base::Result<std::pair<net::Connection, std::string>> open_session(const DaemonInfo& daemon, std::string_view session) {
+    auto opening = std::make_shared<std::promise<base::Result<std::pair<net::Connection, std::string>>>>();
+    auto opened = opening->get_future();
+    std::thread { [opening, daemon, name = std::string { session }] { opening->set_value(open_session_now(daemon, name)); } }.detach();
+    if (opened.wait_for(std::chrono::seconds { 30 }) != std::future_status::ready) return base::fail("daemon-timeout", "the daemon did not answer the connection in time");
+    return opened.get();
 }
 
 } // namespace
@@ -91,10 +101,10 @@ std::optional<DaemonInfo> find_daemon(std::string_view root) {
 }
 
 int run_daemon(const DaemonOptions& options) {
-    auto kernel = orchestrator::Kernel::start(options.server.kernel);
-    const std::string root { kernel->root() };
-    const std::string discovery { discovery_path(root) };
-    // Nobody reads a daemon's standard error; its log is a file beside its discovery file.
+    const std::string discovery { discovery_path(options.server.kernel.root.empty() ? platform::fs::current_directory() : options.server.kernel.root) };
+    // Nobody reads a daemon's standard error, from its first line on: its log is a file beside its
+    // discovery file. A line written to a channel nobody drains blocks once the channel is full.
+    (void)platform::fs::create_directories(base::parent_path(discovery));
     const std::string logPath { base::join_path(base::parent_path(discovery), "daemon.log") };
     auto logFile = std::make_shared<std::ofstream>(std::filesystem::path { logPath }, std::ios::app);
     log::set_sink([logFile](std::string_view line) {
@@ -103,6 +113,8 @@ int run_daemon(const DaemonOptions& options) {
             logFile->flush();
         }
     });
+    auto kernel = orchestrator::Kernel::start(options.server.kernel);
+    const std::string root { kernel->root() };
 
     auto listener = net::Listener::listen_local();
     if (!listener) {
@@ -239,11 +251,16 @@ base::Result<DaemonInfo> start_daemon(std::string_view executable, std::string_v
     spawn.arguments = { "daemon", "run", "--root", std::string { root } };
     spawn.arguments.insert(spawn.arguments.end(), arguments.begin(), arguments.end());
     spawn.workDirectory = std::string { root };
-    // Fresh channels, closed once the daemon is up: a daemon holding its starter's standard output would
-    // keep an agent waiting for that output to end.
-    spawn.pipeInput = true;
-    spawn.pipeOutput = true;
-    spawn.pipeError = true;
+    // A daemon holding its starter's standard output would keep an agent waiting for that output to end.
+    // POSIX: fresh channels, closed once the daemon is up. Windows: no streams at all, since a start that
+    // places streams hands the child every inheritable handle, the starter's own streams among them.
+    if constexpr (mcppls::os::FAMILY == mcppls::os::Family::windows) {
+        spawn.noStreams = true;
+    } else {
+        spawn.pipeInput = true;
+        spawn.pipeOutput = true;
+        spawn.pipeError = true;
+    }
     spawn.detached = true;
     auto process = platform::Process::spawn(spawn);
     if (!process) return std::unexpected { process.error() };
