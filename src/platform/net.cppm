@@ -20,7 +20,8 @@ public:
     static base::Result<Connection> connect_local(int port);
 
     bool valid() const;
-    // Blocks until bytes arrive; an empty string means the peer closed its side.
+    // Blocks until bytes arrive; an empty string means the peer closed its side, or close() was called.
+    // One thread reads while others write, shut down or close: a connection is used both ways at once.
     base::Result<std::string> read();
     base::Result<void> write(std::string_view bytes);   // thread-safe
     // No more writes: the peer reads the end of the stream, and can still answer.
