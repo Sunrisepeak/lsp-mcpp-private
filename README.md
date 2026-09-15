@@ -21,6 +21,20 @@ mcppls 把任何构建（mcpp、CMake、`compile_commands.json`，甚至什么�
 模块级功能由语法模块索引直接回答：模块名跳转（含分区与实现单元）、`import` 补全、模块悬停、大纲中的模块节点、
 按模块名搜索、无法解析 / 歧义 / 跨模块导入分区的诊断，以及 S3 扩展 `cxxModules/status`、`graph`、`moduleInfo`、`contexts`、`setContext`。
 其余请求转发给 clangd 23.1，并带看门狗、崩溃重启与导入可解析性检查（避开 clangd 23.1 在模块无法解析时的挂起）。
+引擎抽象层让 mcppls 自己的模块引擎与 clangd 并列服务同一工作区（`--engine none` 时只用前者）。
+
+### 面向代理与 CI（规范 S5）
+
+| 能力 | 入口 |
+|---|---|
+| 符号、引用、调用者与被调用者（在符号所在模块及其所有导入方中查找，含重导出） | MCP `cxx_symbol`、`cxx_references`；`mcppls query symbol/refs/calls` |
+| 文件大纲、模块描述与接口摘要、模块图、文件的构建上下文 | `cxx_outline`、`cxx_module`、`cxx_build_context`；`mcppls query outline/module/context` |
+| 按当前磁盘内容的新鲜诊断；编辑后校验（改动文件及其导入方）、候选片段原位校验、跨工具链校验 | `cxx_diagnostics`、`cxx_verify`；`mcppls diagnostics`、`mcppls verify` |
+| 变更审查：语义 diff、影响分析、带证据的确定性规则发现，SARIF / LSP / Markdown 输出 | `cxx_impact`、`cxx_review`；`mcppls impact`、`mcppls review`；编辑器命令“Review Changes” |
+| 模型判断（可选，默认关闭）：代理自身、模型网关 `mcppls-model`、MCP sampling；证据校验与修复校验 | `cxx_review {model}`；`mcppls review --model` |
+| 共享的工作区守护进程 | `mcppls mcp --daemon`、`mcppls daemon` |
+
+接入 Claude Code、GitHub Copilot CLI 与其他 MCP 客户端见 [editors/agents/README.md](editors/agents/README.md)。
 
 ## 构建与测试
 
@@ -42,22 +56,31 @@ mcppls-conformance run --server <mcppls> --fixture conformance/fixtures/inferred
 命令行：
 
 ```bash
-mcppls [serve] [--payload DIR] [--clangd PATH] [--kit DIR] [--untrusted]   # 以 stdio 运行语言服务器
+mcppls [serve] [--payload DIR] [--clangd PATH] [--kit DIR] [--engine clangd|none] [--untrusted]   # LSP over stdio
+mcppls mcp [--root DIR] [--daemon]        # MCP over stdio，代理工具（S5 第 6 节）
+mcppls query symbol|refs|calls|outline|module|context ...   # 语义查询，输出 S5 JSON
+mcppls diagnostics <file>... | verify [--changed] | impact | review [--base REV] [--format sarif]
+mcppls daemon run|start|status|stop       # 工作区守护进程
 mcppls check <file>                       # 输出工程模型、语义配置、模块诊断，并运行 clangd --check
 mcppls model [--root DIR] [--export s1|compile-commands|engine]
 mcppls version
 ```
 
+审查夹具（精确率与召回率）见 [bench/README.md](bench/README.md)：`python3 bench/review.py --server <mcppls> --payload <payload>`。
+
 ## 仓库结构
 
 | 目录 | 内容 |
 |---|---|
-| [specs/](specs/) | 规范：S1 构建数据库 IDE Profile、S2 发现协议、S3 LSP 模块扩展、S4 语义工具包，含 JSON Schema 与示例 |
+| [specs/](specs/) | 规范：S1 构建数据库 IDE Profile、S2 发现协议、S3 LSP 模块扩展、S4 语义工具包、S5 语义查询与审查，含 JSON Schema 与示例 |
 | [src/](src/) | 服务端，`src/<目录>/<名字>.cppm` 对应模块 `mcppls.<目录>.<名字>` |
 | [os/](os/) | 按目标选择的 `mcppls.os` 平台常量包，代码中以 `if constexpr` 使用 |
 | [tests/](tests/)、[testing/](testing/) | 单元测试与测试支持包 |
 | [conformance/](conformance/) | 一致性测试用例与说明 |
 | [editors/vscode/](editors/vscode/) | VS Code 扩展“C++ Modules”（`mcpp-community.mcpp-language-server`） |
+| [editors/claude-code/](editors/claude-code/)、[editors/copilot-cli/](editors/copilot-cli/)、[editors/agents/](editors/agents/) | 编码代理接入：LSP 插件、MCP 配置与说明 |
+| [bench/](bench/) | 代理任务基准与审查夹具 |
+| [model-gateway/](model-gateway/) | 模型网关参考实现 `mcppls-model`（独立的 mcpp 包） |
 | [packaging/](packaging/) | clangd 与语义工具包 `mcppls-kit` 的锁文件与组装脚本 |
 | [tools/lspgen/](tools/lspgen/) | LSP 3.18 meta model，协议模块由 `mcppls-lspgen` 生成 |
 | [.agents/docs/](.agents/docs/) | 设计、调研、实验与实现计划 |
